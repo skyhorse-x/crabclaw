@@ -1,0 +1,83 @@
+{
+  "id": "create-node-project",
+  "name": "创建 Node.js 项目",
+  "description": "自动创建 Node.js 项目结构并初始化",
+  "category": "development",
+  "version": "1.0.0",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "projectName": {
+        "type": "string",
+        "description": "项目名称",
+        "required": true
+      },
+      "description": {
+        "type": "string",
+        "description": "项目描述",
+        "default": "My Node.js Project"
+      },
+      "installDependencies": {
+        "type": "boolean",
+        "description": "是否安装依赖",
+        "default": true
+      }
+    },
+    "required": ["projectName"]
+  },
+  "steps": [
+    {
+      "id": "create-dir",
+      "description": "创建项目目录",
+      "tool": "create_directory",
+      "input": {
+        "path": "./${input.projectName}"
+      }
+    },
+    {
+      "id": "init-package",
+      "description": "初始化 package.json",
+      "tool": "shell",
+      "input": {
+        "command": "npm init -y",
+        "cwd": "./${input.projectName}"
+      },
+      "dependsOn": ["create-dir"]
+    },
+    {
+      "id": "create-src-dir",
+      "description": "创建 src 目录",
+      "tool": "create_directory",
+      "input": {
+        "path": "./${input.projectName}/src"
+      },
+      "dependsOn": ["init-package"]
+    },
+    {
+      "id": "create-index-file",
+      "description": "创建入口文件",
+      "tool": "write_file",
+      "input": {
+        "path": "./${input.projectName}/src/index.js",
+        "content": "// ${input.projectName}\nconsole.log('Hello, World!');\n"
+      },
+      "dependsOn": ["create-src-dir"]
+    },
+    {
+      "id": "install-deps",
+      "description": "安装依赖",
+      "tool": "shell",
+      "input": {
+        "command": "npm install",
+        "cwd": "./${input.projectName}"
+      },
+      "dependsOn": ["init-package"],
+      "optional": true,
+      "condition": "${input.installDependencies}"
+    }
+  ],
+  "metadata": {
+    "author": "HelixAgent",
+    "tags": ["nodejs", "project", "template"]
+  }
+}

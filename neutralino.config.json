@@ -1,0 +1,49 @@
+{
+  "applicationId": "com.study.desktopagent",
+  "applicationName": "Desktop Agent Studio",
+  "version": "2.0.0",
+  "defaultMode": "window",
+  "port": 0,
+  "enableServer": true,
+  "enableNativeAPI": true,
+  "documentRoot": "/resources/",
+  "url": "/",
+  "cli": {
+    "binaryName": "desktop-agent-studio",
+    "resourcesPath": "/resources/",
+    "extensionsPath": "/extensions/",
+    "clientLibrary": "/resources/neutralino.js",
+    "binaryVersion": "6.5.0",
+    "clientVersion": "6.5.0",
+    "distributionPath": "/dist/",
+    "autoReloadExclude": ".*\\.log$|.*agent-debug\\.log$",
+    "frontendLibrary": {
+      "projectPath": "/",
+      "devCommand": " npm run dev",
+      "buildCommand": "npm run frontend:build",
+      "devUrl": "http://127.0.0.1:4173",
+      "patchFile": "/frontend/index.html",
+      "waitTimeout": 30000
+    }
+  },
+  "nativeAllowList": [
+    "window.*",
+    "app.*",
+    "clipboard.*",
+    "os.execCommand"
+  ],
+  "modes": {
+    "window": {
+      "title": "Desktop Agent Studio",
+      "width": 1480,
+      "height": 980,
+      "minWidth": 1180,
+      "minHeight": 760,
+      "resizable": true,
+      "maximize": false,
+      "enableInspector": true,
+      "injectClientLibrary": true,
+      "useSavedState": true
+    }
+  }
+}

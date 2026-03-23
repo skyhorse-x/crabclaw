@@ -1,0 +1,26 @@
+{
+  "settings": {
+    "backendPort": 17873,
+    "theme": "light",
+    "language": "zh-CN",
+    "activeModelId": "doubao-default",
+    "userDataDir": "C:\\Users\\admin.DESKTOP-2EJU89O\\Desktop\\开发项目\\agent\\DesktopAgentStudio"
+  },
+  "models": [
+    {
+      "id": "doubao-default",
+      "name": "豆包 Doubao",
+      "provider": "bytedance",
+      "customProviderName": "豆包",
+      "apiKeyEncrypted": "e1838af935659071b28fe5ff80188366:a5b59ef567fa3153a13c898aea5e73657601fbb98c80a452bcc997dc67f9a029f307e2e03e14da6e7578be352571b94f",
+      "modelName": "doubao-seed-2-0-lite-260215",
+      "apiBaseUrl": "https://ark.cn-beijing.volces.com/api/v3/responses",
+      "isBuiltIn": true,
+      "isActive": true,
+      "createdAt": "2026-03-18T00:00:00.000Z",
+      "updatedAt": "2026-03-18T07:36:17.536Z"
+    }
+  ],
+  "skills": [],
+  "tasks": []
+}

@@ -1,0 +1,54 @@
+{
+  "name": "desktop-agent-studio",
+  "version": "2.0.0",
+  "description": "Neutralino shell + Bun backend desktop agent studio",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"bun --watch server/main.ts\" \"vite --config frontend/vite.config.js\"",
+    "backend": "bun run server/main.ts",
+    "backend:watch": "bun --watch server/main.ts",
+    "frontend:dev": "vite --config frontend/vite.config.js",
+    "frontend:build": "vite build --config frontend/vite.config.js",
+    "shell": "npx @neutralinojs/neu run",
+    "build:shell": "npx @neutralinojs/neu build",
+    "agent": "bun server/agent.ts"
+  },
+  "dependencies": {
+    "@brave/brave-search-mcp-server": "^2.0.75",
+    "@f4ww4z/mcp-mysql-server": "^0.1.0",
+    "@mako10k/mcp-shell-server": "^2.7.1",
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "@modelcontextprotocol/server-brave-search": "^0.6.2",
+    "@modelcontextprotocol/server-filesystem": "^2026.1.14",
+    "@modelcontextprotocol/server-memory": "^2026.1.26",
+    "@modelcontextprotocol/server-puppeteer": "^2025.5.12",
+    "@wong2/mcp-cli": "^1.13.0",
+    "axios": "^1.6.0",
+    "chrome-devtools-mcp": "^0.20.0",
+    "mcp-fetch-server": "^1.1.2",
+    "open": "^9.1.0",
+    "screenshot-desktop": "^1.15.3"
+  },
+  "devDependencies": {
+    "@element-plus/icons-vue": "^2.3.1",
+    "@types/node": "^25.5.0",
+    "@typescript-eslint/eslint-plugin": "^8.32.1",
+    "@typescript-eslint/parser": "^8.32.1",
+    "@vitejs/plugin-vue": "^6.0.1",
+    "bun-types": "^1.2.15",
+    "concurrently": "^9.2.1",
+    "element-plus": "^2.11.4",
+    "eslint": "^9.27.0",
+    "prettier": "^3.5.3",
+    "typescript": "^5.8.3",
+    "vite": "^7.1.3",
+    "vue": "^3.5.21"
+  },
+  "keywords": [
+    "neutralino",
+    "bun",
+    "desktop-agent",
+    "automation"
+  ],
+  "license": "MIT"
+}

@@ -1,0 +1,48 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "node",
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "allowSyntheticDefaultImports": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "allowJs": true,
+    "checkJs": false,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["server/*"],
+      "@shared/*": ["server/shared/*"],
+      "@services/*": ["server/services/*"],
+      "@routes/*": ["server/routes/*"],
+      "@middleware/*": ["server/middleware/*"],
+      "@repositories/*": ["server/repositories/*"],
+      "@api/*": ["server/api/*"],
+      "@llm/*": ["server/llm/*"],
+      "@skill/*": ["server/skill/*"],
+      "@agent/*": ["server/agent/*"],
+      "@tools/*": ["server/tools/*"],
+      "@memory/*": ["server/memory/*"],
+      "@core/*": ["server/core/*"]
+    }
+  },
+  "include": [
+    "server/**/*",
+    "scripts/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "resources"
+  ]
+}
