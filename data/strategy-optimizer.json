@@ -1,0 +1,158 @@
+{
+  "strategies": [
+    {
+      "id": "default_planning",
+      "name": "默认规划策略",
+      "type": "planning",
+      "rules": [
+        {
+          "id": "rule1",
+          "condition": "简单任务",
+          "action": "直接执行",
+          "priority": 1,
+          "confidence": 0.9,
+          "source": "manual"
+        },
+        {
+          "id": "rule2",
+          "condition": "复杂任务",
+          "action": "分解步骤",
+          "priority": 2,
+          "confidence": 0.8,
+          "source": "manual"
+        }
+      ],
+      "performance": {
+        "totalAttempts": 0,
+        "successCount": 0,
+        "avgDuration": 0,
+        "recentResults": [],
+        "maxRecentResults": 10,
+        "trend": "stable",
+        "lastUpdated": 1774499956455
+      },
+      "conditions": [
+        "planning"
+      ],
+      "createdAt": 1774499956455,
+      "updatedAt": 1774499956455
+    },
+    {
+      "id": "default_execution",
+      "name": "默认执行策略",
+      "type": "execution",
+      "rules": [
+        {
+          "id": "rule2",
+          "condition": "多步执行",
+          "action": "逐步验证",
+          "priority": 2,
+          "confidence": 0.8,
+          "source": "manual"
+        },
+        {
+          "id": "rule-aae50f98-075d-43ef-b086-52373fbf3243",
+          "condition": "当任务类型为\"execution\"时，执行\"chrome-devtools/chrome\"可成功",
+          "action": "chrome-devtools/chrome",
+          "priority": 1,
+          "confidence": 1,
+          "source": "learned"
+        },
+        {
+          "id": "rule-4fda5e16-53b3-4cf1-9d2f-2c652c7b9953",
+          "condition": "当任务类型为\"navigation\"时，执行\"chrome-devtools/chrome\"可成功",
+          "action": "chrome-devtools/chrome",
+          "priority": 1,
+          "confidence": 1,
+          "source": "learned"
+        },
+        {
+          "id": "rule-c518b4b5-2a4b-48ca-b8f3-ea82496d0746",
+          "condition": "当任务类型为\"navigation\"时，执行\"chrome-devtools/navigate\"可成功",
+          "action": "chrome-devtools/navigate",
+          "priority": 1,
+          "confidence": 1,
+          "source": "learned"
+        },
+        {
+          "id": "rule-cd6eb930-08ac-41b1-8b1e-3ea083b98e7a",
+          "condition": "当任务类型为\"navigation\"时，执行\"chrome-devtools/click\"可成功",
+          "action": "chrome-devtools/click",
+          "priority": 1,
+          "confidence": 1,
+          "source": "learned"
+        },
+        {
+          "id": "rule1",
+          "condition": "单步执行",
+          "action": "顺序执行",
+          "priority": 1,
+          "confidence": 0.9,
+          "source": "manual"
+        }
+      ],
+      "performance": {
+        "totalAttempts": 0,
+        "successCount": 0,
+        "avgDuration": 0,
+        "recentResults": [],
+        "maxRecentResults": 10,
+        "trend": "stable",
+        "lastUpdated": 1774499956455
+      },
+      "conditions": [
+        "execution"
+      ],
+      "createdAt": 1774499956455,
+      "updatedAt": 1774501101176
+    },
+    {
+      "id": "default_recovery",
+      "name": "默认恢复策略",
+      "type": "recovery",
+      "rules": [
+        {
+          "id": "rule1",
+          "condition": "可恢复错误",
+          "action": "自动重试",
+          "priority": 1,
+          "confidence": 0.7,
+          "source": "manual"
+        },
+        {
+          "id": "rule2",
+          "condition": "不可恢复错误",
+          "action": "回退方案",
+          "priority": 2,
+          "confidence": 0.8,
+          "source": "manual"
+        }
+      ],
+      "performance": {
+        "totalAttempts": 21,
+        "successCount": 21,
+        "avgDuration": 4166.666666666667,
+        "recentResults": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "maxRecentResults": 10,
+        "trend": "stable",
+        "lastUpdated": 1774501101176
+      },
+      "conditions": [
+        "recovery"
+      ],
+      "createdAt": 1774499956455,
+      "updatedAt": 1774501101176
+    }
+  ]
+}

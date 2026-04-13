@@ -1,0 +1,76 @@
+:root {
+  --color-primary: #409eff;
+  --color-success: #67c23a;
+  --color-warning: #e6a23c;
+  --color-danger: #f56c6c;
+  --color-info: #909399;
+
+  --color-success-light: #f0f9eb;
+  --color-warning-light: #fdf6ec;
+  --color-danger-light: #fef0f0;
+  --color-info-light: #f4f4f5;
+
+  --border-radius-base: 8px;
+  --border-radius-sm: 4px;
+
+  --shadow-light: 0 2px 8px rgba(0, 0, 0, 0.08);
+  --shadow-base: 0 4px 12px rgba(0, 0, 0, 0.12);
+  --shadow-dark: 0 8px 24px rgba(0, 0, 0, 0.18);
+
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+
+  --transition-duration: 0.3s;
+  --transition-timing: ease-in-out;
+}
+
+.notification-enter-active,
+.notification-leave-active {
+  transition: all var(--transition-duration) var(--transition-timing);
+}
+
+.notification-enter-from {
+  opacity: 0;
+  transform: translateX(100%);
+}
+
+.notification-leave-to {
+  opacity: 0;
+  transform: translateX(100%);
+}
+
+.card-base {
+  padding: var(--spacing-md);
+  border-radius: var(--border-radius-base);
+  background: #fff;
+  box-shadow: var(--shadow-base);
+}
+
+.icon-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+}
+
+.btn-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: var(--border-radius-sm);
+  transition: background var(--transition-duration);
+}
+
+.btn-close:hover {
+  background: rgba(0, 0, 0, 0.06);
+}

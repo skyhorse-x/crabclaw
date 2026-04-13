@@ -32,6 +32,7 @@ export interface AppSettings {
   language?: string
   activeModelId?: string
   userDataDir?: string
+  skillsDir?: string
 }
 
 /**

@@ -180,24 +180,43 @@ export class McpService {
       }
 
       const tool = mcpClient.tools.find(t => t.name === toolName)
-      if (!tool) {
-        const availableTools = mcpClient.tools.map(t => t.name).join(", ")
-        return { 
-          ok: false, 
-          error: `工具「${toolName}」不存在。可用工具：${availableTools}` 
+      let selectedToolName = toolName
+      let selectedTool = tool
+      const isShellAlias =
+        serverId === 'shell' &&
+        ['shell_execute', 'execute', 'run_shell', 'shell_execute_command', 'run_process'].includes(toolName)
+      if (!selectedTool && isShellAlias) {
+        const names = mcpClient.tools.map((t) => t.name)
+        const aliasTargets = ['shell_execute', 'run_process', toolName]
+        const resolved = aliasTargets.find((name) => names.includes(name))
+        if (resolved) {
+          selectedToolName = resolved
+          selectedTool = mcpClient.tools.find((t) => t.name === resolved)
+          logger.warn('[MCP] Shell tool alias mapped', { requested: toolName, resolved: selectedToolName })
         }
       }
 
-      logger.debug(`[MCP] Calling tool ${serverId}/${toolName}`, { args })
+      if (!selectedTool) {
+        const availableTools = mcpClient.tools.map(t => t.name).join(", ")
+        return { 
+          ok: false, 
+          error: `工具「${toolName}」不存在。可用工具：${availableTools}`
+        }
+      }
+
+      logger.debug(`[MCP] Calling tool ${serverId}/${selectedToolName}`, { args })
 
       // 为 shell MCP 的 run_process 工具添加默认 mode 参数
       let finalArgs = { ...args }
-      if (serverId === 'shell' && toolName === 'run_process' && !finalArgs.mode) {
+      if (serverId === 'shell' && selectedToolName === 'run_process' && !finalArgs.mode) {
         finalArgs.mode = 'shell'
+      }
+      if (serverId === 'shell' && selectedToolName === 'shell_execute' && finalArgs.mode) {
+        delete finalArgs.mode
       }
 
       const result = await mcpClient.client.callTool({
-        name: toolName,
+        name: selectedToolName,
         arguments: finalArgs
       })
 

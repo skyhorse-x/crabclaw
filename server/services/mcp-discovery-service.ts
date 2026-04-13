@@ -5,9 +5,9 @@
 
 import { watch } from 'node:fs'
 import { readFile, stat } from 'node:fs/promises'
-import path from 'node:path'
 import { mcpToolRegistry } from './mcp-tool-registry'
 import { logger } from './logger.service'
+import { PATHS } from '../shared/constants'
 
 /**
  * MCP 服务器发现配置
@@ -58,7 +58,7 @@ export class McpDiscoveryService {
   constructor(config: Partial<McpDiscoveryConfig> = {}) {
     this.config = {
       discoveryInterval: config.discoveryInterval || 30000, // 30秒
-      configPaths: config.configPaths || [path.join(process.cwd(), 'mcp-config.json')],
+      configPaths: config.configPaths || [PATHS.MCP_CONFIG_PATH],
       autoReconnect: config.autoReconnect !== false,
       healthCheckInterval: config.healthCheckInterval || 60000 // 1分钟
     }

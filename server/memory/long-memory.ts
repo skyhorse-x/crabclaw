@@ -9,6 +9,7 @@ import { readFile, writeFile, mkdir } from 'fs/promises'
 import { existsSync } from 'fs'
 import { join } from 'path'
 import type { MemoryEntry, IMemory, LongMemoryConfig } from './memory.types'
+import { PATHS } from '../shared/constants'
 
 /**
  * 长期记忆类
@@ -20,7 +21,7 @@ export class LongMemory implements IMemory {
 
   constructor(config: LongMemoryConfig = {}) {
     this.config = {
-      storagePath: config.storagePath || './data/long-memory.json',
+      storagePath: config.storagePath || join(PATHS.DATA_DIR, 'long-memory.json'),
       persist: config.persist ?? true,
       ...config
     }

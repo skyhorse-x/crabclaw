@@ -6,6 +6,9 @@
 import { logger } from '../services/logger.service'
 import { getConfigService } from '../services/config.service'
 import { disconnectAllMcp } from '../services/mcp.service'
+import { skillRegistry } from '../skills/skill-registry'
+import { taskScheduler } from '../services/task-scheduler.service'
+import { PATHS } from '../shared/constants'
 
 const TASK_TIMERS = new Map<string, ReturnType<typeof setInterval>>()
 
@@ -26,11 +29,18 @@ export async function bootstrap() {
       tasksCount: config.tasks.length 
     })
 
-    // 2. 初始化 MCP 连接（如果有配置）
+    // 2. 加载本地技能
+    logger.debug('Loading local skills from directory...')
+    const skillsDir = config.settings?.skillsDir || PATHS.SKILLS_DIR
+    await skillRegistry.migrateJsonSkillsToFolders(skillsDir)
+    const loadedCount = await skillRegistry.loadFromDirectory(skillsDir)
+    logger.info('Local skills loaded', { count: loadedCount })
+
+    // 3. 初始化 MCP 连接（如果有配置）
     logger.debug('Initializing MCP connections...')
     // MCP 连接会在首次调用时自动建立
 
-    // 3. 应用任务调度
+    // 4. 应用任务调度
     logger.debug('Applying task schedules...')
     applyTaskSchedules(config)
 
@@ -91,11 +101,15 @@ export async function gracefulShutdown() {
     logger.debug('Disconnecting MCP servers...')
     await disconnectAllMcp()
 
-    // 2. 清除所有任务定时器
+    // 2. 关闭任务调度器
+    logger.debug('Shutting down task scheduler...')
+    taskScheduler.shutdown()
+
+    // 3. 清除所有任务定时器
     logger.debug('Clearing task timers...')
     // 这里会由 server.ts 处理
 
-    // 3. 关闭日志服务
+    // 4. 关闭日志服务
     logger.debug('Stopping logger...')
     // logger.stopCleanup() // 如果需要的话
 

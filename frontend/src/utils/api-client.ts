@@ -6,7 +6,7 @@
 import { errorHandler, ErrorType } from './error-handler'
 
 // 基础配置
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:17871'
+const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:17870'
 const TIMEOUT = 30000 // 30 秒超时
 
 interface ApiClientOptions {
@@ -28,7 +28,7 @@ function fetchWithTimeout(url: string, options: RequestInit = {}, timeout: numbe
   return Promise.race([
     fetch(url, options),
     new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('请求超时')), timeout)
+      setTimeout(() => reject(new Error('请求中断')), timeout)
     )
   ])
 }
@@ -229,8 +229,7 @@ export class ApiClient {
     if (body) {
       if (body instanceof FormData) {
         fetchOptions.body = body
-        // 如果是 FormData，移除 Content-Type，让浏览器自动设置
-        delete fetchOptions.headers['Content-Type']
+        delete (fetchOptions.headers as Record<string, string>)['Content-Type']
       } else {
         fetchOptions.body = JSON.stringify(body)
       }
@@ -241,7 +240,7 @@ export class ApiClient {
       return await this.handleResponse(response, endpoint)
     } catch (error) {
       // 网络错误处理
-      if ((error as Error).message === 'Failed to fetch' || (error as Error).message === '请求超时') {
+      if ((error as Error).message === 'Failed to fetch' || (error as Error).message === '请求中断') {
         throw errorHandler.handleError(
           errorHandler.createAPIError('网络连接失败，请检查您的网络设置', endpoint)
         )

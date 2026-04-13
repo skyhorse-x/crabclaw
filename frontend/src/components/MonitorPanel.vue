@@ -3,8 +3,13 @@
     {{ visible ? labels.hide : labels.show }}
   </button>
 
-  <aside class="monitor-panel" :class="{ collapsed: !visible }">
-    <div class="monitor-panel-header">
+  <aside
+    class="monitor-panel"
+    :class="{ collapsed: !visible }"
+    :style="panelStyle"
+    @mousedown.stop="startDrag"
+  >
+    <div class="monitor-panel-header drag-handle">
       <span>{{ labels.title }}</span>
       <el-button text size="small" @click="$emit('toggle')">
         {{ visible ? labels.hide : labels.show }}
@@ -56,6 +61,8 @@
 </template>
 
 <script setup lang="ts">
+import { ref, computed } from 'vue'
+
 interface MonitorExecInfo {
   model: string
   token: string
@@ -79,7 +86,7 @@ interface MonitorLabels {
   autoRun: string
 }
 
-defineProps<{
+const props = defineProps<{
   visible: boolean
   execInfo: MonitorExecInfo
   currentBotName: string
@@ -92,6 +99,48 @@ defineEmits<{
   (e: 'open-bot-dialog'): void
   (e: 'update:auto-run', value: boolean): void
 }>()
+
+const isDragging = ref(false)
+const dragOffset = ref({ x: 0, y: 0 })
+const position = ref({ x: null as number | null, y: null as number | null })
+
+const panelStyle = computed(() => {
+  const style: Record<string, string> = {}
+  if (position.value.x !== null) {
+    style.right = 'auto'
+    style.left = position.value.x + 'px'
+  }
+  if (position.value.y !== null) {
+    style.top = position.value.y + 'px'
+    style.bottom = 'auto'
+  }
+  return style
+})
+
+function startDrag(e: MouseEvent) {
+  if ((e.target as HTMLElement).closest('.el-button')) return
+  isDragging.value = true
+  dragOffset.value = {
+    x: e.clientX - (position.value.x ?? 300),
+    y: e.clientY - (position.value.y ?? 46)
+  }
+  document.addEventListener('mousemove', onDrag)
+  document.addEventListener('mouseup', stopDrag)
+}
+
+function onDrag(e: MouseEvent) {
+  if (!isDragging.value) return
+  position.value = {
+    x: Math.max(0, e.clientX - dragOffset.value.x),
+    y: Math.max(0, e.clientY - dragOffset.value.y)
+  }
+}
+
+function stopDrag() {
+  isDragging.value = false
+  document.removeEventListener('mousemove', onDrag)
+  document.removeEventListener('mouseup', stopDrag)
+}
 </script>
 
 <style scoped>
@@ -131,7 +180,8 @@ defineEmits<{
   pointer-events: none;
 }
 
-.monitor-panel-header {
+.monitor-panel-header,
+.drag-handle {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -140,6 +190,8 @@ defineEmits<{
   color: var(--el-text-color-primary);
   font-size: 13px;
   font-weight: 600;
+  cursor: move;
+  user-select: none;
 }
 
 .monitor-panel-body {

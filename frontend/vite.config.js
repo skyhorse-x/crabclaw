@@ -6,13 +6,18 @@ export default defineConfig({
   root: path.resolve(__dirname),
   plugins: [vue()],
   base: "./",
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "src")
+    }
+  },
   server: {
     host: "127.0.0.1",
     port: 4173,
     strictPort: true,
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:17872",
+        target: "http://127.0.0.1:17870",
         changeOrigin: true,
         secure: false
       }

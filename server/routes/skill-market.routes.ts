@@ -7,9 +7,19 @@ import { readJsonBody } from '../shared/utils'
 import { logger } from '../services/logger.service'
 import { getConfigService } from '../services/config.service'
 import { getSkillMarketService } from '../services/skill-market.service'
+import { skillRegistry } from '../skills/skill-registry'
 import type { SkillCategory } from '../shared/types'
 
 const configService = getConfigService()
+const JSON_HEADERS = { 'content-type': 'application/json' }
+
+function jsonResponse(data: unknown, status = 200) {
+  return new Response(JSON.stringify(data), { status, headers: JSON_HEADERS })
+}
+
+function errorResponse(error: string, status = 500) {
+  return jsonResponse({ ok: false, error }, status)
+}
 
 function toSkillCategory(input: string): SkillCategory {
   const normalized = String(input || '').toLowerCase()
@@ -30,24 +40,10 @@ export async function handleSkillMarketRoute(pathname: string, request: Request)
     try {
       await service.refreshIfNeeded(true)
       const meta = service.getMeta()
-      return new Response(JSON.stringify({
-        ok: true,
-        message: '技能市场已刷新',
-        data: { meta }
-      }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' }
-      })
+      return jsonResponse({ ok: true, message: '技能市场已刷新', data: { meta } })
     } catch (error) {
       logger.error('[SkillMarket] Force refresh failed', error)
-      const errorMessage = error instanceof Error ? error.message : String(error)
-      return new Response(JSON.stringify({
-        ok: false,
-        error: `刷新失败：${errorMessage}`
-      }), {
-        status: 500,
-        headers: { 'content-type': 'application/json' }
-      })
+      return errorResponse(`刷新失败：${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
@@ -59,8 +55,56 @@ export async function handleSkillMarketRoute(pathname: string, request: Request)
       const pageSize = parseInt(url.searchParams.get('pageSize') || '10')
 
       await service.refreshIfNeeded()
-      const marketResult = service.listSkills(page, pageSize)
+      let marketResult = service.listSkills(page, pageSize)
       const meta = service.getMeta()
+
+      if (marketResult.total === 0) {
+        logger.info('[SkillMarket] Remote market empty, loading local skills')
+        const localSkills = skillRegistry.listSkills()
+        const installedIds = new Set(appConfig.skills.map((s) => s.id))
+        const localSkillsWithInstalled = localSkills.map(skill => ({
+          id: skill.id,
+          name: skill.name,
+          description: skill.description,
+          category: skill.category,
+          author: 'local',
+          downloads: 0,
+          rating: 0,
+          tags: [],
+          stepsCount: skill.stepsCount,
+          installed: installedIds.has(skill.id)
+        }))
+
+        logger.info('[SkillMarket] Local skills loaded', { count: localSkills.length })
+
+        return new Response(JSON.stringify({
+          ok: true,
+          message: 'success',
+          skills: localSkillsWithInstalled,
+          pagination: {
+            total: localSkills.length,
+            page: 1,
+            pageSize: pageSize,
+            totalPages: 1,
+            hasMore: false
+          },
+          data: {
+            skills: localSkillsWithInstalled,
+            pagination: {
+              total: localSkills.length,
+              page: 1,
+              pageSize: pageSize,
+              totalPages: 1,
+              hasMore: false
+            },
+            meta: { ...meta, source: 'local' }
+          }
+        }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' }
+        })
+      }
+
       const installedIds = new Set(appConfig.skills.map((s) => s.id))
       const skillsWithInstalled = marketResult.skills.map((skill) => ({
         ...skill,
@@ -101,14 +145,7 @@ export async function handleSkillMarketRoute(pathname: string, request: Request)
       })
     } catch (error) {
       logger.error('[SkillMarket] Get skills failed', error)
-      const errorMessage = error instanceof Error ? error.message : String(error)
-      return new Response(JSON.stringify({
-        ok: false,
-        error: `获取技能市场失败：${errorMessage}`
-      }), {
-        status: 500,
-        headers: { 'content-type': 'application/json' }
-      })
+      return errorResponse(`获取技能市场失败：${error instanceof Error ? error.message : String(error)}`)
     }
   }
   
@@ -120,35 +157,15 @@ export async function handleSkillMarketRoute(pathname: string, request: Request)
       const skill = service.getSkill(skillId)
       
       if (!skill) {
-        return new Response(JSON.stringify({
-          ok: false,
-          error: '技能不存在'
-        }), {
-          status: 404,
-          headers: { 'content-type': 'application/json' }
-        })
+        return errorResponse('技能不存在', 404)
       }
-      
+
       logger.info('[SkillMarket] Skill detail retrieved', { skillId })
-      
-      return new Response(JSON.stringify({
-        ok: true,
-        skill,
-        data: { skill }
-      }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' }
-      })
+
+      return jsonResponse({ ok: true, skill, data: { skill } })
     } catch (error) {
       logger.error('[SkillMarket] Get skill detail failed', error)
-      const errorMessage = error instanceof Error ? error.message : String(error)
-      return new Response(JSON.stringify({
-        ok: false,
-        error: `获取技能详情失败：${errorMessage}`
-      }), {
-        status: 500,
-        headers: { 'content-type': 'application/json' }
-      })
+      return errorResponse(`获取技能详情失败：${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
@@ -159,13 +176,7 @@ export async function handleSkillMarketRoute(pathname: string, request: Request)
       const id = body?.id
 
       if (!id) {
-        return new Response(JSON.stringify({
-          ok: false,
-          error: '缺少技能 id'
-        }), {
-          status: 400,
-          headers: { 'content-type': 'application/json' }
-        })
+        return errorResponse('缺少技能 id', 400)
       }
 
       await service.refreshIfNeeded()
@@ -175,13 +186,7 @@ export async function handleSkillMarketRoute(pathname: string, request: Request)
         skill = service.getSkill(id)
       }
       if (!skill) {
-        return new Response(JSON.stringify({
-          ok: false,
-          error: '技能不存在'
-        }), {
-          status: 404,
-          headers: { 'content-type': 'application/json' }
-        })
+        return errorResponse('技能不存在', 404)
       }
 
       const config = await configService.getConfig()
@@ -200,23 +205,10 @@ export async function handleSkillMarketRoute(pathname: string, request: Request)
         await configService.saveConfig(config)
       }
 
-      return new Response(JSON.stringify({
-        ok: true,
-        message: '技能已安装'
-      }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' }
-      })
+      return jsonResponse({ ok: true, message: '技能已安装' })
     } catch (error) {
       logger.error('[SkillMarket] Install skill failed', error)
-      const errorMessage = error instanceof Error ? error.message : String(error)
-      return new Response(JSON.stringify({
-        ok: false,
-        error: `安装失败：${errorMessage}`
-      }), {
-        status: 500,
-        headers: { 'content-type': 'application/json' }
-      })
+      return errorResponse(`安装失败：${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
@@ -227,13 +219,7 @@ export async function handleSkillMarketRoute(pathname: string, request: Request)
       const id = body?.id
 
       if (!id) {
-        return new Response(JSON.stringify({
-          ok: false,
-          error: '缺少技能 id'
-        }), {
-          status: 400,
-          headers: { 'content-type': 'application/json' }
-        })
+        return errorResponse('缺少技能 id', 400)
       }
 
       const config = await configService.getConfig()
@@ -243,23 +229,10 @@ export async function handleSkillMarketRoute(pathname: string, request: Request)
         await configService.saveConfig(config)
       }
 
-      return new Response(JSON.stringify({
-        ok: true,
-        message: '技能已卸载'
-      }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' }
-      })
+      return jsonResponse({ ok: true, message: '技能已卸载' })
     } catch (error) {
       logger.error('[SkillMarket] Uninstall skill failed', error)
-      const errorMessage = error instanceof Error ? error.message : String(error)
-      return new Response(JSON.stringify({
-        ok: false,
-        error: `卸载失败：${errorMessage}`
-      }), {
-        status: 500,
-        headers: { 'content-type': 'application/json' }
-      })
+      return errorResponse(`卸载失败：${error instanceof Error ? error.message : String(error)}`)
     }
   }
 

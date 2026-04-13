@@ -1,0 +1,51 @@
+{
+  "settings": {
+    "backendPort": 17870,
+    "theme": "light",
+    "language": "zh-CN",
+    "activeModelId": "doubao-default",
+    "userDataDir": "/Users/472733389qq.com/Desktop/学习项目/crabclaw/server",
+    "skillsDir": "/Users/472733389qq.com/Desktop/学习项目/crabclaw/server/data/skills"
+  },
+  "models": [
+    {
+      "id": "doubao-default",
+      "name": "豆包 Doubao",
+      "provider": "bytedance",
+      "customProviderName": "豆包",
+      "apiKeyEncrypted": "e1838af935659071b28fe5ff80188366:a5b59ef567fa3153a13c898aea5e73657601fbb98c80a452bcc997dc67f9a029f307e2e03e14da6e7578be352571b94f",
+      "modelName": "doubao-seed-2-0-mini-260215",
+      "apiBaseUrl": "https://ark.cn-beijing.volces.com/api/v3/responses",
+      "isBuiltIn": true,
+      "isActive": true,
+      "createdAt": "2026-03-18T00:00:00.000Z",
+      "updatedAt": "2026-03-27T03:53:51.771Z"
+    },
+    {
+      "id": "model-1774583736490",
+      "name": "deepseek-3.2",
+      "provider": "bytedance",
+      "apiKeyEncrypted": "a6ce2365aef1b48d85c67a8c45f7f616:ab7d592cb9065814a11e6ff921a59bfa6366209335312ff3c84be9fbff50056f08d135fef1ab8578c611487b8687a5f1",
+      "modelName": "deepseek-v3-2-251201",
+      "apiBaseUrl": "https://ark.cn-beijing.volces.com/api/v3/responses",
+      "isBuiltIn": false,
+      "isActive": true,
+      "createdAt": "2026-03-27T03:55:36.490Z",
+      "updatedAt": "2026-03-27T03:55:36.491Z"
+    },
+    {
+      "id": "model-1774600213090",
+      "name": "Gpt5.4",
+      "provider": "openrouter",
+      "apiKeyEncrypted": "de28ff4aac3d645780a06ffded17bb17:481485fa694f5bf948dd081e1f4cfcd099fbb2f3e15611ee5ddd36abc2a804130d7789c39916a16b563a75e2d2c4cc4f41074e64fde7823d22114319ea46ea105ab671840d7d908a80ebf6c997f8828f",
+      "modelName": "openai/gpt-5.4-20260305",
+      "apiBaseUrl": "https://openrouter.ai/api/v1/chat/completions",
+      "isBuiltIn": false,
+      "isActive": true,
+      "createdAt": "2026-03-27T08:30:13.090Z",
+      "updatedAt": "2026-03-27T08:30:13.090Z"
+    }
+  ],
+  "skills": [],
+  "tasks": []
+}

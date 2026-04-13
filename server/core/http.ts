@@ -6,26 +6,33 @@
 import { logger } from '../services/logger.service'
 import http from 'node:http'
 import type { ServerResponse } from 'node:http'
+import { wsService } from '../services/websocket.service'
+import { registerWSChatHandler } from '../handlers/chat.handler'
 
-/**
- * 创建 HTTP 服务器
- */
+let wsInitialized = false
+
 export function createHttpServer(
   port: number,
   fetchHandler: (request: Request) => Promise<Response>
 ) {
   const server = http.createServer(async (req: any, res: any) => {
+    // 检查是否是 WebSocket 升级请求，如果是，不处理，让 upgrade 事件处理器处理
+    if (req.headers['upgrade']?.toLowerCase() === 'websocket') {
+      return
+    }
+
     try {
-      // 将 Node.js 请求转换为 Web Request
+      const chunks = req.method !== 'GET' && req.method !== 'HEAD'
+        ? await readBody(req)
+        : null
+      const bodyBuffer = chunks && chunks.length > 0 ? Buffer.concat(chunks) : null
+
       const request = new Request(`http://${req.headers.host}${req.url}`, {
         method: req.method,
         headers: req.headers,
-        body: req.method !== 'GET' && req.method !== 'HEAD'
-          ? new Uint8Array(await readBody(req))
-          : null
+        body: bodyBuffer
       })
 
-      // 调用处理函数
       const response = await fetchHandler(request)
       await writeWebResponse(response, res)
     } catch (error) {
@@ -37,63 +44,51 @@ export function createHttpServer(
       res.end(JSON.stringify({ ok: false, error: 'Internal server error' }))
     }
   })
-  
+
   server.listen(port, () => {
     logger.info('HTTP server created', { port, url: `http://localhost:${port}`, hostname: 'localhost' })
+
+    if (!wsInitialized) {
+      wsInitialized = true
+      wsService.initializeWithServer(server, '/ws')
+      registerWSChatHandler(wsService)
+      logger.info('WebSocket service initialized on path: /ws')
+    }
   })
-  
+
   return {
     url: `http://localhost:${port}`,
-    stop: () => server.close()
-  }
-}
-
-async function writeWebResponse(response: Response, res: ServerResponse): Promise<void> {
-  res.statusCode = response.status
-
-  response.headers.forEach((value, name) => {
-    res.setHeader(name, value)
-  })
-
-  if (!response.body) {
-    res.end()
-    return
-  }
-
-  const reader = response.body.getReader()
-  try {
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      if (value && value.length > 0) {
-        res.write(Buffer.from(value))
-      }
+    stop: () => {
+      wsService.close()
+      server.close()
     }
-    res.end()
-  } finally {
-    reader.releaseLock()
   }
 }
 
-/**
- * 读取请求体
- */
-async function readBody(req: any): Promise<Buffer> {
+async function readBody(req: any): Promise<Buffer[]> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = []
     req.on('data', (chunk: Buffer) => chunks.push(chunk))
-    req.on('end', () => resolve(Buffer.concat(chunks)))
+    req.on('end', () => resolve(chunks))
     req.on('error', reject)
   })
 }
 
-/**
- * 获取服务器信息
- */
-export function getServerInfo(server: any) {
-  return {
-    hostname: server.hostname,
-    port: server.port,
-    url: `http://${server.hostname}:${server.port}`
+async function writeWebResponse(response: Response, res: ServerResponse): Promise<void> {
+  res.statusCode = response.status
+  response.headers.forEach((value, key) => {
+    res.setHeader(key, value)
+  })
+
+  if (response.body) {
+    const reader = response.body.getReader()
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      res.write(value)
+    }
+    res.end()
+  } else {
+    res.end()
   }
 }

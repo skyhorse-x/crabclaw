@@ -1,8 +1,7 @@
-import { mkdirSync, existsSync } from 'node:fs'
-import path from 'node:path'
 import { Database } from 'bun:sqlite'
 import { logger } from './logger.service'
-import { getDefaultUserDataDir } from './chat-history.service'
+import { ENV } from '../shared/constants'
+import { getUnifiedDbPath } from './unified-db-path'
 
 export interface SkillMarketItem {
   id: string
@@ -14,10 +13,7 @@ export interface SkillMarketItem {
   tags: string[]
   category?: string
   url?: string
-  steps: Array<{
-    type: string
-    [key: string]: any
-  }>
+  steps: Record<string, unknown>[]
 }
 
 interface SkillMarketRow {
@@ -40,12 +36,12 @@ interface SkillMarketMeta {
   total: number
 }
 
-function toNumber(input: any, fallback = 0): number {
+function toNumber(input: unknown, fallback = 0): number {
   const value = Number(input)
   return Number.isFinite(value) ? value : fallback
 }
 
-function parseTags(raw: any): string[] {
+function parseTags(raw: unknown): string[] {
   if (Array.isArray(raw)) {
     return raw.map((t) => String(t || '').trim()).filter(Boolean)
   }
@@ -126,21 +122,10 @@ export class SkillMarketService {
   private sourceUrl: string
   private refreshIntervalMs: number
 
-  constructor(userDataDir?: string) {
-    let baseDir = path.resolve(userDataDir || getDefaultUserDataDir())
-    
-    // 额外的安全检查：确保 baseDir 是有效的目录路径
-    if (!baseDir || baseDir.includes('@') || baseDir.includes('472733389qq.com')) {
-      baseDir = path.join(process.cwd(), 'DesktopAgentStudio')
-    }
-
-    if (!existsSync(baseDir)) {
-      mkdirSync(baseDir, { recursive: true })
-    }
-
-    this.dbPath = path.join(baseDir, 'skill-market.db')
+  constructor(_userDataDir?: string) {
+    this.dbPath = getUnifiedDbPath()
     this.db = new Database(this.dbPath)
-    this.sourceUrl = normalizeClawhubUrl(String(process.env.SKILL_MARKET_API || '').trim())
+    this.sourceUrl = normalizeClawhubUrl(String(ENV.SKILL_MARKET_API || '').trim())
     this.refreshIntervalMs = toNumber(process.env.SKILL_MARKET_REFRESH_MS, 10 * 60 * 1000)
 
     this.initSchema()
@@ -195,14 +180,15 @@ export class SkillMarketService {
   }
 
   private fetchRemoteUrl(): string {
-    if (!this.sourceUrl) {
-      throw new Error('未配置 SKILL_MARKET_API，无法从远程拉取技能市场')
-    }
-    return this.sourceUrl
+    return this.sourceUrl || ''
   }
 
   private async fetchRemoteSkills(): Promise<SkillMarketItem[]> {
     const url = this.fetchRemoteUrl()
+    if (!url) {
+      logger.warn('[SkillMarket] SKILL_MARKET_API not configured, returning empty list')
+      return []
+    }
     logger.info('[SkillMarket] Fetching remote market', { url })
 
     const response = await fetch(url, {
@@ -260,6 +246,12 @@ export class SkillMarketService {
   }
 
   async refreshIfNeeded(force = false): Promise<void> {
+    const url = this.fetchRemoteUrl()
+    if (!url) {
+      logger.debug('[SkillMarket] No remote URL configured, skipping sync')
+      return
+    }
+
     const count = this.fetchCount()
     const lastSyncAt = this.getMetaNumber('last_sync_at')
     const stale = Date.now() - lastSyncAt > this.refreshIntervalMs
@@ -276,7 +268,7 @@ export class SkillMarketService {
         logger.warn('[SkillMarket] Remote sync failed, using cached data', { error })
         return
       }
-      throw error
+      logger.error('[SkillMarket] Remote sync failed', { error })
     }
   }
 
@@ -358,17 +350,10 @@ export class SkillMarketService {
 }
 
 let skillMarketService: SkillMarketService | null = null
-let currentSkillMarketUserDataDir = ''
 
-export function getSkillMarketService(userDataDir?: string): SkillMarketService {
-  const resolved = path.resolve(userDataDir || getDefaultUserDataDir())
-
-  if (!skillMarketService || currentSkillMarketUserDataDir !== resolved) {
-    if (skillMarketService) {
-      skillMarketService.close()
-    }
-    skillMarketService = new SkillMarketService(resolved)
-    currentSkillMarketUserDataDir = resolved
+export function getSkillMarketService(_userDataDir?: string): SkillMarketService {
+  if (!skillMarketService) {
+    skillMarketService = new SkillMarketService()
   }
 
   return skillMarketService

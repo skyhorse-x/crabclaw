@@ -14,6 +14,7 @@ import type {
   TaskQueueConfig,
   TaskQueueStats 
 } from './task.types'
+import { PATHS } from '../shared/constants'
 
 /**
  * 任务队列类
@@ -34,7 +35,7 @@ export class TaskQueue {
       maxRetries: config.maxRetries || 3,
       interval: config.interval || 0,
       persist: config.persist ?? false,
-      persistPath: config.persistPath || './data/task-queue.json',
+      persistPath: config.persistPath || `${PATHS.DATA_DIR}/task-queue.json`,
       ...config
     }
   }

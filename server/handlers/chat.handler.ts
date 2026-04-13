@@ -1,21 +1,309 @@
 import { getConfigService } from '../services/config.service'
 import { getEncryptionService } from '../services/encryption.service'
 import { getMcpTools, callMcpTool } from '../services/mcp.service'
+import { builtinTools } from '../services/builtin-tools.service'
 import { logger } from '../services/logger.service'
 import { getChatHistoryService } from '../services/chat-history.service'
 import { randomUUID } from 'node:crypto'
+import os from 'os'
+import type { AppConfig, ModelConfig } from '../shared/types'
+import type { SkillConfig } from '../shared/types'
+import { HTTP } from '../shared/constants'
+import { buildToolProgressMessage } from './chat-progress'
+import { memoryManager } from '../memory/memory-manager'
+
+const sharedMemoryManager = memoryManager
+
+let memoryInitialized = false
+
+async function ensureMemoryInitialized() {
+  if (!memoryInitialized) {
+    await sharedMemoryManager.initialize()
+    memoryInitialized = true
+    logger.info('[Chat] Memory system initialized')
+  }
+}
+
+interface UserProfile {
+  name?: string
+  age?: number | string
+  gender?: string
+  location?: string
+  job?: string
+  family?: string[]
+  preferences?: string[]
+  otherInfo?: Record<string, string>
+}
+
+async function extractAndStoreUserInfo(
+  message: string,
+  _reply: string,
+  conversationHistory: Array<{ role: string; text: string }>
+): Promise<void> {
+  await ensureMemoryInitialized()
+
+  const userMessages = conversationHistory
+    .filter(m => m.role === 'user')
+    .map(m => m.text)
+    .concat(message)
+
+  const fullContext = userMessages.join('\n')
+
+  const profilePatterns: Array<{ key: keyof UserProfile; patterns: RegExp[] }> = [
+    {
+      key: 'name',
+      patterns: [
+        /(?:我叫|名字是|叫我|是\s*)([^\s啊呀呢呀😊!！]{2,10})/,
+        /(?:I am|I'm|call me)\s+([A-Za-z]{2,20})/i
+      ]
+    },
+    {
+      key: 'age',
+      patterns: [
+        /(?:我今年?|AGE|年龄|岁)(?:数)?(\d+)(?:岁)?/,
+        /(\d+)\s*(?:years?\s*old|岁)/
+      ]
+    },
+    {
+      key: 'gender',
+      patterns: [
+        /(?:我是|性别)([男女])/,
+        /(?:I am|I'm)\s*(male|female|man|woman)/i
+      ]
+    },
+    {
+      key: 'location',
+      patterns: [
+        /(?:在|住在|位于)([^\s]{2,10})(?:工作|居住|生活|市|省)?/,
+        /(?:I live in|work in|based in)\s+([A-Za-z\u4e00-\u9fa5]{2,20})/i
+      ]
+    },
+    {
+      key: 'job',
+      patterns: [
+        /(?:我是|做|当|职业是)([^\s]{2,20})(?:工作|师|员|家|工)/,
+        /(?:I work as|I'm a|position:)\s*([A-Za-z\u4e00-\u9fa5]{2,20})/i
+      ]
+    }
+  ]
+
+  const foundInfo: Partial<UserProfile> = {}
+
+  for (const { key, patterns } of profilePatterns) {
+    for (const pattern of patterns) {
+      const match = fullContext.match(pattern)
+      if (match && match[1]) {
+        const value: string | number = key === 'age' ? parseInt(match[1], 10) : match[1].trim()
+        ;(foundInfo as Record<string, string | number | undefined>)[key] = value
+        break
+      }
+    }
+  }
+
+  if (Object.keys(foundInfo).length > 0) {
+    const allMemories = await sharedMemoryManager.export()
+    const userProfileMemory = allMemories.find(
+      (m) => m.metadata?.type === 'user_profile'
+    )
+
+    let profile: UserProfile = {}
+    if (userProfileMemory?.content) {
+      try {
+        profile = JSON.parse(userProfileMemory.content)
+      } catch {
+        profile = {}
+      }
+    }
+
+    Object.assign(profile, foundInfo)
+
+    if (userProfileMemory) {
+      await sharedMemoryManager.deleteLong(userProfileMemory.id)
+    }
+
+    await sharedMemoryManager.addLong(JSON.stringify(profile), {
+      type: 'user_profile',
+      updatedAt: Date.now()
+    })
+
+    logger.info('[Chat] User profile updated', profile)
+  }
+}
+
+async function getUserProfile(): Promise<UserProfile | null> {
+  await ensureMemoryInitialized()
+
+  const allMemories = await sharedMemoryManager.export()
+  const userProfileMemory = allMemories.find(
+    (m) => m.metadata?.type === 'user_profile'
+  )
+
+  if (!userProfileMemory?.content) {
+    return null
+  }
+
+  try {
+    return JSON.parse(userProfileMemory.content)
+  } catch {
+    return null
+  }
+}
+
+async function buildUserContextPrompt(): Promise<string> {
+  const profile = await getUserProfile()
+  const recentContext = await buildRecentConversationContext()
+  
+  if (!profile && !recentContext) {
+    return ''
+  }
+
+  const parts: string[] = []
+  
+  if (recentContext) {
+    parts.push('【最近对话上下文】')
+    parts.push(recentContext)
+    parts.push('')
+  }
+
+  if (profile && Object.keys(profile).length > 0) {
+    parts.push('【用户信息】')
+    
+    for (const [key, value] of Object.entries(profile)) {
+      if (value !== undefined && value !== null && value !== '') {
+        let displayValue: string
+        if (key === 'family' && Array.isArray(value)) {
+          displayValue = (value as string[]).join(', ')
+        } else if (key === 'age' && typeof value === 'number') {
+          displayValue = `${value}岁`
+        } else if (typeof value === 'object') {
+          displayValue = JSON.stringify(value)
+        } else {
+          displayValue = String(value)
+        }
+        parts.push(`- ${key}: ${displayValue}`)
+      }
+    }
+  }
+
+  return parts.join('\n')
+}
+
+async function buildRecentConversationContext(): Promise<string | null> {
+  await ensureMemoryInitialized()
+  
+  const recent = await sharedMemoryManager.getContext('', 5)
+  if (!recent.short || recent.short.length === 0) {
+    return null
+  }
+
+  const lines: string[] = ['【重要】以下是你和用户之前的对话记录，请基于这些信息理解和回答后续问题：']
+  lines.push('')
+  
+  for (const entry of recent.short) {
+    if (entry.metadata?.type === 'conversation_turn') {
+      try {
+        const turns = JSON.parse(entry.content) as Array<{ role: string; text: string }>
+        for (const turn of turns) {
+          const roleLabel = turn.role === 'user' ? '用户' : '助手'
+          const content = turn.text.length > 300 
+            ? turn.text.substring(0, 300) + '...' 
+            : turn.text
+          lines.push(`[${roleLabel}]: ${content}`)
+        }
+        lines.push('---')
+      } catch {
+        const content = entry.content.length > 200 
+          ? entry.content.substring(0, 200) + '...' 
+          : entry.content
+        lines.push(`对话: ${content}`)
+      }
+    } else {
+      const content = entry.content.length > 200 
+        ? entry.content.substring(0, 200) + '...' 
+        : entry.content
+      lines.push(`[记忆]: ${content}`)
+    }
+  }
+  
+  return lines.join('\n')
+}
+
+async function storeConversationTurn(
+  userMessage: string,
+  assistantReply: string,
+  conversationHistory: Array<{ role: string; text: string }>
+): Promise<void> {
+  await ensureMemoryInitialized()
+
+  const fullContext = [
+    ...conversationHistory.map(m => ({ role: m.role, text: m.text })),
+    { role: 'user', text: userMessage },
+    { role: 'assistant', text: assistantReply }
+  ]
+
+  const contextJson = JSON.stringify(fullContext.slice(-10))
+  
+  await sharedMemoryManager.addShort(contextJson, {
+    type: 'conversation_turn',
+    roles: ['user', 'assistant'],
+    createdAt: Date.now()
+  })
+  
+  logger.debug('[Memory] Stored conversation turn', { 
+    historyLength: fullContext.length,
+    userMsgLength: userMessage.length,
+    assistantMsgLength: assistantReply.length
+  })
+}
+
+interface CausalNode {
+  action: string
+  result: string
+  cause: string
+  effect: string
+}
+
+interface ErrorDetail {
+  code: string
+  message: string
+  severity: 'recoverable' | 'fatal'
+  suggestion: string
+  alternativeTools?: string[]
+  retryable: boolean
+  rootCause?: string
+}
+
+interface LearningFeedback {
+  experienceGained: boolean
+  patternExtracted?: string
+  confidenceUpdated?: number
+  recommendations?: string[]
+}
+
+interface ProgressDetail {
+  percent: number
+  currentStep: string
+  estimatedTimeRemaining?: number
+  steps: {
+    total: number
+    completed: number
+    failed: number
+    pending: number
+  }
+}
 
 // 流式响应类型
 interface StreamChunk {
-  type: 'plan' | 'reply' | 'error' | 'done' | 'detail' | 'mcp' | 'confirm' | 'task'
-  plan?: any[]
+  type: 'plan' | 'reply' | 'error' | 'done' | 'detail' | 'mcp' | 'confirm' | 'task' | 'step' | 'reasoning' | 'learning'
+  plan?: SimpleStep[]
   reply?: string
   delta?: boolean
-  error?: string
+  error?: ErrorDetail | string
   detail?: {
     stage: string
     text: string
     time: string
+    reasoning?: string
   }
   mcp?: {
     server: string
@@ -23,12 +311,18 @@ interface StreamChunk {
     status: 'start' | 'success' | 'error'
     error?: string
     time: string
+    duration?: number
+    input?: Record<string, unknown>
+    result?: unknown
+    confidence?: number
+    causalChain?: CausalNode[]
   }
   confirm?: {
     server: string
     tool: string
-    args: Record<string, any>
+    args: Record<string, unknown>
     message: string
+    reasoning?: string
   }
   task?: {
     taskId: string
@@ -39,12 +333,28 @@ interface StreamChunk {
     error?: string
     retries?: number
     time: string
+    causalChain?: CausalNode[]
+  }
+  step?: {
+    status: 'start' | 'done' | 'error'
+    text: string
+    duration?: number
+    causalChain?: CausalNode[]
+    errorRisk?: 'low' | 'medium' | 'high'
+    expected_result?: string
   }
   usage?: {
     promptTokens: number
     completionTokens: number
     totalTokens: number
   }
+  reasoning?: {
+    type: 'tool_selection' | 'task_planning' | 'error_recovery' | 'optimization'
+    text: string
+    confidence: number
+  }
+  learning?: LearningFeedback
+  progress?: ProgressDetail
 }
 
 interface ChatStreamOptions {
@@ -53,12 +363,38 @@ interface ChatStreamOptions {
   executionMode?: 'auto' | 'manual'
   promptInstruction?: string
   allowedMcpServers?: string[]
+  signal?: AbortSignal
 }
 
 interface PlannerToolCall {
   server: string
   tool: string
-  args: Record<string, any>
+  args: Record<string, unknown>
+}
+
+interface SimpleStep {
+  id?: string
+  title: string
+  description: string
+  input?: string
+  output?: string
+  depends_on?: string[]
+  tool?: string
+  status?: 'pending' | 'running' | 'done' | 'failed'
+  completed?: boolean
+  active?: boolean
+  priority?: 'high' | 'medium' | 'low'
+  retry?: { max: number; backoff_ms: number }
+  timeout_ms?: number
+  success_criteria?: string
+  artifacts?: string[]
+  logs?: string[]
+  tool_call?: PlannerToolCall
+  expected_result?: string
+  fallback?: string
+  requires_confirmation?: boolean
+  side_effects?: string[]
+  rollback?: string
 }
 
 interface PlannerStep {
@@ -108,7 +444,7 @@ interface AgentEnvelope {
 }
 
 interface AgentRuntimeState {
-  targetUrl: string
+  targetUrl?: string
   currentUrl: string
   openedTargetUrl: boolean
   hasSnapshot: boolean
@@ -123,7 +459,6 @@ interface AgentRuntimeState {
 
 const DEFAULT_ARK_API_URL = 'https://ark.cn-beijing.volces.com/api/v3/responses'
 const DEFAULT_ARK_MODEL = 'doubao-seed-2-0-lite-260215'
-const MCP_CALL_TIMEOUT_MS = 20000
 const MCP_CALL_RETRY_MAX = 1
 
 function compactText(input: string, maxChars = 6000): string {
@@ -167,13 +502,13 @@ async function executeMcpToolWithPolicy(server: string, tool: string, args: Reco
     attempt += 1
     const startedAt = Date.now()
     const timeoutPromise = new Promise<{ ok: false; error: string }>((resolve) => {
-      setTimeout(() => resolve({ ok: false, error: `MCP 调用超时（>${MCP_CALL_TIMEOUT_MS}ms）` }), MCP_CALL_TIMEOUT_MS)
+      setTimeout(() => resolve({ ok: false, error: `MCP 调用超时（>${HTTP.MCP_TIMEOUT_MS}ms）` }), HTTP.MCP_TIMEOUT_MS)
     })
 
     const result = await Promise.race([
       callMcpTool(server, tool, args),
       timeoutPromise
-    ]) as { ok: boolean; result?: any; error?: string }
+    ]) as { ok: boolean; result?: unknown; error?: string }
 
     if (result.ok) {
       return { ...result, attempts: attempt, elapsedMs: Date.now() - startedAt }
@@ -194,7 +529,7 @@ function stripBearerPrefix(token: string): string {
   return String(token || '').replace(/^Bearer\s+/i, '').trim()
 }
 
-function resolveApiKey(activeModel: any, encryptionService: any): { apiKey: string; error?: string } {
+function resolveApiKey(activeModel: ModelConfig | null, encryptionService: { decrypt: (text: string) => string }): { apiKey: string; error?: string } {
   let apiKey = stripBearerPrefix(activeModel?.apiKey || '')
 
   if (activeModel?.apiKeyEncrypted) {
@@ -216,39 +551,79 @@ function resolveApiKey(activeModel: any, encryptionService: any): { apiKey: stri
   return { apiKey }
 }
 
-function resolveModelRuntime(activeModel: any, config: any): { apiBaseUrl: string; modelName: string } {
-  const isDoubao =
-    activeModel?.provider === 'bytedance' ||
-    String(activeModel?.customProviderName || '').includes('豆包')
-
+function resolveModelRuntime(activeModel: ModelConfig | null, _config: AppConfig): { apiBaseUrl: string; modelName: string } {
   return {
-    apiBaseUrl: String(
-      activeModel?.apiBaseUrl ||
-      config?.settings?.apiBaseUrl ||
-      (isDoubao ? DEFAULT_ARK_API_URL : DEFAULT_ARK_API_URL)
-    ),
-    modelName: String(
-      activeModel?.modelName ||
-      config?.settings?.modelName ||
-      (isDoubao ? DEFAULT_ARK_MODEL : DEFAULT_ARK_MODEL)
-    )
+    apiBaseUrl: String(activeModel?.apiBaseUrl || DEFAULT_ARK_API_URL),
+    modelName: String(activeModel?.modelName || DEFAULT_ARK_MODEL)
   }
 }
 
-function summarizeForLog(input: any, limit = 500): string {
+function summarizeForLog(input: unknown, limit = 500): string {
   const raw = typeof input === 'string' ? input : JSON.stringify(input)
   const safe = String(raw || '').replace(/\s+/g, ' ').trim()
   if (!safe) return ''
   return safe.length > limit ? `${safe.slice(0, limit)}...` : safe
 }
 
-interface LlmResponse {
-  reply: string
-  usage?: {
-    promptTokens: number
-    completionTokens: number
-    totalTokens: number
+function buildCausalChain(
+  server: string,
+  tool: string,
+  input: Record<string, unknown>,
+  result: unknown
+): CausalNode[] {
+  const nodes: CausalNode[] = []
+  const cause = `基于任务需求选择 ${server}/${tool} 工具`
+  const effect = (result as { ok?: boolean })?.ok === false ? '操作失败，需要错误恢复' : '操作成功执行'
+  nodes.push({
+    action: `${server}/${tool}`,
+    result: effect,
+    cause,
+    effect
+  })
+  if (input.url) {
+    nodes.push({
+      action: '参数解析',
+      result: 'URL 参数已提取',
+      cause: `解析输入参数`,
+      effect: `将访问 ${String(input.url).slice(0, 30)}...`
+    })
   }
+  return nodes
+}
+
+type LlmResponse = { reply: string; usage: { promptTokens: number; completionTokens: number; totalTokens: number } }
+
+interface McpCallResult {
+  ok: boolean
+  result?: unknown
+  error?: string
+  attempts?: number
+  elapsedMs?: number
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    const error = new Error('The user aborted a request')
+    ;(error as Error).name = 'AbortError'
+    throw error
+  }
+}
+
+function isAbortError(error: unknown): boolean {
+  if (!error) return false
+  const err = error as Error
+  return err?.name === 'AbortError' || String(err?.message || '').includes('aborted')
+}
+
+function attachAbortSignal(signal: AbortSignal | undefined, controller: AbortController): () => void {
+  if (!signal) return () => {}
+  const onAbort = () => controller.abort()
+  if (signal.aborted) {
+    controller.abort()
+  } else {
+    signal.addEventListener('abort', onAbort, { once: true })
+  }
+  return () => signal.removeEventListener('abort', onAbort)
 }
 
 async function requestModelReply(
@@ -257,17 +632,21 @@ async function requestModelReply(
   modelName: string,
   systemPrompt: string,
   userMessage: string,
-  conversationHistory?: Array<{ role: string; text: string }>
+  conversationHistory?: Array<{ role: string; text: string }>,
+  signal?: AbortSignal
 ): Promise<LlmResponse> {
-  const safeSystemPrompt = compactText(systemPrompt, 12000)
-  const safeUserMessage = compactText(userMessage, 6000)
+  throwIfAborted(signal)
+  const safeSystemPrompt = compactText(systemPrompt, HTTP.MAX_SYSTEM_PROMPT_CHARS)
+  const safeUserMessage = compactText(userMessage, HTTP.MAX_USER_MESSAGE_CHARS)
+  const historyWindow = Array.isArray(conversationHistory) ? conversationHistory.slice(-10) : []
+  const historyChars = historyWindow.reduce((sum, msg) => sum + String(msg?.text || '').length, 0)
 
   const input: Array<{ role: string; content: Array<{ type: string; text: string }> }> = [
     { role: 'system', content: [{ type: 'input_text', text: safeSystemPrompt }] }
   ]
 
-  if (conversationHistory && conversationHistory.length > 0) {
-    for (const msg of conversationHistory.slice(-10)) {
+  if (historyWindow.length > 0) {
+    for (const msg of historyWindow) {
       if (msg.role === 'user' || msg.role === 'assistant') {
         input.push({ role: msg.role, content: [{ type: 'input_text', text: msg.text }] })
       }
@@ -285,18 +664,21 @@ async function requestModelReply(
     apiBaseUrl,
     model: modelName,
     requestFormat: 'POST JSON { model, input:[{role,content:[{type,text}]}] }',
-    requestPayload: summarizeForLog(requestPayload, 1200),
-    userMessage: summarizeForLog(safeUserMessage, 400),
-    userMessageLength: String(safeUserMessage || '').length,
-    historyLength: conversationHistory?.length || 0
+    inputMessageCount: input.length,
+    systemPromptLength: safeSystemPrompt.length,
+    userMessageLength: safeUserMessage.length,
+    historyLength: conversationHistory?.length || 0,
+    historyWindowLength: historyWindow.length,
+    historyWindowChars: historyChars
   })
 
-  const timeoutMs = 45000
+  const timeoutMs = HTTP.TIMEOUT_MS
   const maxAttempts = 2
-  let lastError: any = null
+  let lastError: unknown = null
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const abortRunner = new AbortController()
+    const detachAbort = attachAbortSignal(signal, abortRunner)
     const timeout = setTimeout(() => abortRunner.abort(), timeoutMs)
 
     try {
@@ -316,7 +698,7 @@ async function requestModelReply(
         void logger.error('[AI] LLM request failed', {
           model: modelName,
           status: response.status,
-          body: summarizeForLog(err, 800),
+          body: summarizeForLog(err, 300),
           attempt
         })
         throw new Error(err)
@@ -326,7 +708,16 @@ async function requestModelReply(
       void logger.info('[AI] LLM raw response', {
         apiBaseUrl,
         model: modelName,
-        response: summarizeForLog(data, 1500),
+        responseId: data?.id || '',
+        status: data?.status || '',
+        outputItems: Array.isArray(data?.output) ? data.output.length : 0,
+        usage: data?.usage
+          ? {
+              inputTokens: data.usage?.input_tokens || 0,
+              outputTokens: data.usage?.output_tokens || 0,
+              totalTokens: data.usage?.total_tokens || 0
+            }
+          : undefined,
         attempt
       })
       let reply = ''
@@ -359,7 +750,6 @@ async function requestModelReply(
       const finalReply = reply || 'AI 未返回有效内容'
       void logger.info('[AI] LLM response', {
         model: modelName,
-        reply: summarizeForLog(finalReply, 700),
         replyLength: finalReply.length,
         attempt
       })
@@ -379,9 +769,14 @@ async function requestModelReply(
       }
 
       return { reply: finalReply, usage: { promptTokens, completionTokens, totalTokens } }
-    } catch (error: any) {
+    } catch (error: unknown) {
       lastError = error
-      const isAbort = error?.name === 'AbortError' || String(error?.message || '').includes('aborted')
+      if (signal?.aborted) {
+        const abortError = new Error('The user aborted a request')
+        ;(abortError as Error).name = 'AbortError'
+        throw abortError
+      }
+      const isAbort = (error as Error)?.name === 'AbortError' || String((error as Error)?.message || '').includes('aborted')
       if (isAbort && attempt < maxAttempts) {
         void logger.warn('[AI] LLM request aborted, retrying', { attempt, nextAttempt: attempt + 1, timeoutMs })
         continue
@@ -389,6 +784,7 @@ async function requestModelReply(
       throw error
     } finally {
       clearTimeout(timeout)
+      detachAbort()
     }
   }
 
@@ -422,14 +818,43 @@ function buildDetail(stage: string, text: string): StreamChunk {
   }
 }
 
-function buildMcpDisplayReply(server: string, tool: string, result: any): string {
-  const resultText = String(result?.result || '').trim()
-  const mcpErrorText = !result?.ok
-    ? String(result?.error || '未知错误')
-    : (/^MCP error\b/i.test(resultText) ? resultText : '')
+function buildMcpDisplayReply(server: string, tool: string, result: unknown): string {
+  void tool
+  let rawResult: unknown = result
+  if (result && typeof result === 'object' && 'result' in result) {
+    rawResult = (result as { result: unknown }).result
+  }
 
-  if (mcpErrorText) {
-    return `调用失败：${mcpErrorText}`
+  let resultText = ''
+  if (typeof rawResult === 'string' && rawResult.trim()) {
+    resultText = rawResult.trim()
+    try {
+      const parsed = JSON.parse(rawResult)
+      if (parsed.stdout) {
+        resultText = parsed.stdout
+      } else if (parsed.output) {
+        resultText = parsed.output
+      } else if (parsed.result) {
+        resultText = typeof parsed.result === 'string' ? parsed.result : JSON.stringify(parsed.result)
+      }
+    } catch {
+    }
+  } else if (rawResult && typeof rawResult === 'object') {
+    const candidate = rawResult as Record<string, unknown>
+    const pick = ['output', 'stdout', 'text', 'content', 'data']
+      .map((key) => (typeof candidate[key] === 'string' ? String(candidate[key]) : ''))
+      .find((value) => value.trim().length > 0)
+    if (pick) {
+      resultText = pick.trim()
+    }
+  }
+
+  if (!resultText) {
+    return '运行结束，已完成。'
+  }
+
+  if (server === 'shell') {
+    return resultText
   }
 
   // 浏览器 MCP 原始输出通常较长（例如 pages 列表），前端只显示完成状态即可
@@ -437,16 +862,103 @@ function buildMcpDisplayReply(server: string, tool: string, result: any): string
     return '运行结束，已完成。'
   }
 
-  if (!resultText) {
-    return '运行结束，已完成。'
+  // 其它 MCP 保留简短输出，避免刷屏
+  return resultText.length > 200 ? `${resultText.slice(0, 200)}…` : resultText
+}
+
+function userWantsTable(message: string): boolean {
+  const text = String(message || '').toLowerCase()
+  return /表格|table|表格式/.test(text)
+}
+
+function isMarkdownTable(text: string): boolean {
+  const lines = String(text || '').split('\n').map(line => line.trim()).filter(Boolean)
+  if (lines.length < 2) return false
+  const header = lines[0]
+  const divider = lines[1]
+  return header.includes('|') && /^\|?\s*[-:]+\s*(\|\s*[-:]+\s*)+\|?$/.test(divider)
+}
+
+function containsMarkdownTable(text: string): boolean {
+  const pattern = /\|.+\|\s*\n\|[-:| ]+\|\s*\n/;
+  return pattern.test(String(text || ''));
+}
+
+function tryConvertKeyValueToTable(text: string): string | null {
+  const lines = String(text || '')
+    .replace(/```[\s\S]*?```/g, (block) => block.replace(/```/g, ''))
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line && !line.startsWith('$') && !/^执行命令结果/.test(line))
+
+  const rows: Array<{ key: string; value: string }> = []
+  for (const rawLine of lines) {
+    const line = rawLine.replace(/^[\-\*\u2022]\s+/, '').trim()
+    const sectionMatch = /^-+\s*(.+?)\s*-+$/.exec(line)
+    if (sectionMatch) {
+      rows.push({ key: `**${sectionMatch[1].trim()}**`, value: '' })
+      continue
+    }
+    const colonIndex = line.indexOf(':')
+    if (colonIndex > 0) {
+      const key = line.slice(0, colonIndex).trim()
+      const value = line.slice(colonIndex + 1).trim()
+      if (key && value) {
+        rows.push({ key, value })
+        continue
+      }
+    }
+    const spaced = /^(.+?)\s{2,}(.+)$/.exec(line)
+    if (spaced) {
+      rows.push({ key: spaced[1].trim(), value: spaced[2].trim() })
+    }
   }
 
-  // 其它 MCP 保留简短输出，避免刷屏
-  return resultText.length > 200 ? `${tool} 已执行完成。` : resultText
+  const usableRows = rows.filter(row => row.key && row.value)
+  if (usableRows.length < 2) return null
+
+  const tableRows = rows.map(row => `| ${row.key} | ${row.value} |`).join('\n')
+  return `| 项目 | 值 |\n| --- | --- |\n${tableRows}`
+}
+
+function formatReplyForUser(message: string, replyText: string): string {
+  const text = String(replyText || '').trim()
+  if (!text) return text
+  if (!userWantsTable(message)) return text
+  if (isMarkdownTable(text) || containsMarkdownTable(text)) return text
+  const table = tryConvertKeyValueToTable(text)
+  return table || text
+}
+
+function getPlatformInfo(platform: string): string {
+  const platformMap: Record<string, string> = {
+    'darwin': 'macOS (Apple)',
+    'linux': 'Linux',
+    'win32': 'Windows'
+  }
+  return platformMap[platform] || platform
+}
+
+function getPlatformCommands(platform: string): { shell: string; systemInfo: string } {
+  const commands: Record<string, { shell: string; systemInfo: string }> = {
+    'darwin': {
+      shell: 'zsh/bash',
+      systemInfo: 'vm_stat (内存), uptime (运行时长), df -h (磁盘)'
+    },
+    'linux': {
+      shell: 'bash/sh',
+      systemInfo: 'free -h (内存), uptime -p (运行时长), df -h (磁盘)'
+    },
+    'win32': {
+      shell: 'powershell/cmd',
+      systemInfo: 'systeminfo (系统信息), wmic (硬件信息)'
+    }
+  }
+  return commands[platform] || { shell: 'bash', systemInfo: 'df -h' }
 }
 
 function buildAgentSystemPrompt(
-  skills: any[],
+  skills: SkillConfig[],
   mcpToolsDesc: string,
   selectedSkillHint = '',
   promptInstruction = ''
@@ -455,7 +967,54 @@ function buildAgentSystemPrompt(
     ? `\n\n【用户专属提示词（最高优先级，必须严格遵循）】\n${String(promptInstruction || '').trim()}`
     : ''
 
+  const platform = os.platform()
+  const platformInfo = getPlatformInfo(platform)
+  const platformCommands = getPlatformCommands(platform)
+
   return `你是一个 AI Agent，但只有在任务需要时才进入 Agent 模式。
+
+==============================
+🖥️ 当前运行环境
+==============================
+- 操作系统：${platformInfo}
+- 执行 Shell 命令时必须使用 ${platformCommands.shell} 命令
+${platformCommands.systemInfo ? `- 系统监控命令：${platformCommands.systemInfo}` : ''}
+
+==============================
+⚠️ 【跨平台 Shell 命令规范（必须严格遵守）】
+==============================
+调用 shell/shell_execute 时必须遵守以下规则：
+
+1. 【内存信息获取】
+   - macOS: 使用 "vm_stat" 或 "top -l 1 | grep Phys"
+   - Linux: 使用 "free -m" (注意: 不是 free -h，Linux 支持 -m)
+   - Windows: 不需要单独获取，系统信息通过 systeminfo
+
+2. 【CPU 负载】
+   - macOS: "uptime" 显示负载均值
+   - Linux: "uptime" 或 "cat /proc/loadavg"
+   - Windows: "wmic cpu get loadpercentage"
+
+3. 【磁盘使用】
+   - macOS/Linux: "df -h" (跨平台兼容)
+   - Windows: "wmic logicaldisk get size,freespace,caption"
+
+4. 【进程列表】
+   - macOS: "ps aux"
+   - Linux: "ps aux" 或 "ps -ef"
+   - Windows: "tasklist"
+
+5. 【网络连接】
+   - macOS: "netstat -an"
+   - Linux: "ss -tuln" (比 netstat 更现代)
+   - Windows: "netstat -an"
+
+【禁止】
+- 禁止: free -h (macOS 不支持 -h 参数)
+- 禁止: /proc/loadavg (仅 Linux)
+- 禁止: pgrep (macOS 使用 ps + grep 替代)
+- 禁止调用 shell/read_execution_output（该工具不需要，shell_execute 已直接返回结果）
+- 禁止调用任何不存在的工具
 
 ==============================
 🎯 核心目标
@@ -496,6 +1055,12 @@ function buildAgentSystemPrompt(
 - 不要调用无关工具
 - 不要"假装很智能"而执行多余操作
 
+【系统查询命令规则】
+- 执行 ps aux、free、df 等全量系统命令前，必须先明确用户需求
+- 例如：用户问"内存占用" → 应该用 system_info 或 free -m，不是 ps aux
+- 如果用户意图不明确，先询问再执行，不要直接返回海量原始数据
+- 返回结果应该是用户需要的信息，而不是命令的原始输出格式
+
 【失败处理规则】
 - 工具调用失败后，如果错误信息已明确说明原因，禁止重复调用相同工具
 - 如果遇到 "Access denied" 或 "path outside allowed directories"：
@@ -503,6 +1068,30 @@ function buildAgentSystemPrompt(
   2. macOS 桌面路径获取：osascript -e 'tell app "Finder" to get POSIX path of (path to desktop folder)'
   3. 可用 HOME 环境变量：$HOME/Desktop 就是桌面路径
   4. 如果 shell 也不可用，再告知用户
+
+==============================
+🔄 【任务执行实时反馈（必须遵守）】
+==============================
+当用户要求执行任务（如创建网站、编写代码、操作文件等）时，必须分步骤实时反馈进度：
+
+✔ 每执行一个操作前，先输出简要说明：
+   - "正在读取 index.html..."
+   - "正在创建 styles.css..."
+   - "正在写入 package.json..."
+   - "正在安装依赖 npm install..."
+
+✔ 反馈内容要具体：
+   - 包含文件名、操作类型
+   - 让用户知道当前进度
+
+✔ 示例场景（创建 Vue 项目）：
+   1. "正在读取项目结构..."
+   2. "正在创建 src/App.vue..."
+   3. "正在创建 src/components/Header.vue..."
+   4. "正在安装依赖 npm install..."
+   5. "项目创建完成！"
+
+✘ 禁止：只输出"任务完成"，不说明中间步骤
 
 ==============================
 🌐 【浏览器使用规则（强约束）】
@@ -519,6 +1108,12 @@ function buildAgentSystemPrompt(
   - 普通问答
   - 未提及网页操作
 
+【跨对话浏览器状态维护（重要）】
+- chrome-devtools 维护的是真实浏览器状态，页面不会在对话间关闭
+- 当用户要求在"已打开的页面"中操作时，必须先调用 list_pages 获取当前页面列表
+- 如果 list_pages 显示页面已存在，应使用 select_page 切换到该页面，而不是新建页面
+- 只有当 list_pages 返回空列表或找不到目标页面时，才使用 new_page
+
 ==============================
 🛠 【工具调用前检查（必须全部满足）】
 ==============================
@@ -530,6 +1125,18 @@ function buildAgentSystemPrompt(
 
 否则：
 → 禁止调用工具
+
+==============================
+⚠️ 【真实性约束（必须遵守）】
+==============================
+- 未通过工具获取的本机信息，禁止编造为“当前运行环境/本机/实时”
+- 如果无法获取真实数据，必须明确说明“无法访问本机数据”，并给出用户自查方法
+
+==============================
+⚠️ 【Truthfulness Rules (Must Follow)】
+==============================
+- Do NOT claim “local/real-time/current environment” data unless obtained via tools.
+- If real data cannot be accessed, explicitly say you cannot access it and provide user self-check steps.
 
 ==============================
 📦 输出格式（严格 JSON）
@@ -547,6 +1154,7 @@ function buildAgentSystemPrompt(
 3. 能 message 解决 → 不要 plan
 4. 能一步完成 → 不要拆步骤
 5. 【重要】执行完工具后必须把结果告诉用户，禁止只输出"运行结束"
+6. 默认只输出“可读的结果摘要/结构化信息”，不要展示命令行、日志或原始终端输出；除非用户明确要求查看原始输出
 
 ==============================
 📌 类型说明
@@ -613,9 +1221,18 @@ content 内容示例：
 ${skills.map(s => `- ${s.id}`).join('\n')}
 
 ==============================
-🔧 可用 MCP 工具
+🔧 可用 MCP 工具（按平台分组）
 ==============================
 ${mcpToolsDesc}
+
+【重要】调用任何工具前必须先判断当前平台：
+- process.platform 返回值：'darwin'(macOS), 'linux', 'win32'
+- 根据平台选择对应的工具和命令
+
+【平台判断与工具选择流程】
+1. 系统信息查询（内存、CPU、磁盘、进程概览）：优先使用 builtin/system_info
+2. 网络连接查询：使用 netstat -an 或 ss -tuln
+3. 详细进程查询：使用 ps aux（仅在用户明确要求时才用）
 
 工具命名规范（必须严格遵守）：
 - 格式：server/tool（斜杠分隔）
@@ -631,82 +1248,16 @@ ${selectedSkillHint || '无'}
 ${customPromptBlock}
 `
 }
-function formatMcpToolHint(tool: any): string {
+
+function formatMcpToolHint(tool: { name?: string; inputSchema?: { required?: unknown[] } }): string {
   const name = String(tool?.name || '').trim()
   if (!name) return ''
-  const schema = tool?.inputSchema && typeof tool.inputSchema === 'object' ? tool.inputSchema : {}
-  const required = Array.isArray(schema.required) ? schema.required.map((v: any) => String(v)).filter(Boolean) : []
+  const schema = tool?.inputSchema && typeof tool.inputSchema === 'object' ? tool.inputSchema as { required?: unknown[] } : {}
+  const required = Array.isArray(schema.required) ? schema.required.map((v: unknown) => String(v)).filter(Boolean) : []
   if (!required.length) {
     return name
   }
   return `${name}(required: ${required.join(', ')})`
-}
-
-/**
- * 【意图判断工具函数】
- * 判断用户输入是否为简单消息（不需要 Agent 执行）
- */
-function isSimpleUserInput(message: string): boolean {
-  const text = String(message || '').trim().toLowerCase()
-  if (!text) return true
-  
-  // 问候语模式
-  const greetingPatterns = [
-    /^你好$/i, /^您好$/i, /^嗨$/i, /^hi$/i, /^hello$/i, /^嘿$/i,
-    /^早上好$/i, /^下午好$/i, /^晚上好$/i, /^晚安$/i,
-    /^在吗$/i, /^在嘛$/i, /^在么$/i,
-    /^吗$/, /^么$/, /^？$/, /^\?$/
-  ]
-  
-  // 如果匹配问候语模式
-  if (greetingPatterns.some(pattern => pattern.test(text))) {
-    return true
-  }
-  
-  // 如果只是简单询问（很短且无明确任务词）
-  const taskKeywords = [
-    '打开', '访问', '搜索', '点击', '输入', '执行', '运行', '创建', '删除',
-    '修改', '更新', '下载', '上传', '打开网页', '浏览', '操作',
-    '写', '读', '发送', '获取', '查询', '帮', '请', '能不能', '可以帮我'
-  ]
-  const hasTaskKeyword = taskKeywords.some(keyword => text.includes(keyword))
-  if (!hasTaskKeyword && text.length < 20) {
-    return true
-  }
-  
-  return false
-}
-
-/**
- * 【意图判断工具函数】
- * 获取简单问候的回复
- */
-function getSimpleGreetingResponse(message: string): string {
-  const text = String(message || '').trim().toLowerCase()
-  
-  if (text.includes('你好') || text.includes('您好')) {
-    return '你好！有什么我可以帮助你的吗？'
-  }
-  if (text.includes('嗨') || text.includes('hi') || text.includes('hello') || text.includes('嘿')) {
-    return '嗨！很高兴见到你！有什么需要帮忙的吗？'
-  }
-  if (text.includes('在吗') || text.includes('在嘛')) {
-    return '我在的！有什么需要帮忙的吗？'
-  }
-  if (text.includes('早上好')) {
-    return '早上好！今天有什么计划吗？'
-  }
-  if (text.includes('下午好')) {
-    return '下午好！需要我帮你做什么吗？'
-  }
-  if (text.includes('晚上好')) {
-    return '晚上好！有什么我可以帮忙的吗？'
-  }
-  if (text.includes('晚安')) {
-    return '晚安！好梦！'
-  }
-  
-  return '你好！有什么我可以帮助你的吗？'
 }
 
 function parseAgentEnvelope(reply: string): AgentEnvelope | null {
@@ -753,9 +1304,26 @@ function resolveActionTarget(
   const raw = String(actionName || '').trim()
   if (!raw) return null
 
+  const normalizeToolAlias = (server: string, tool: string): string => {
+    const safeServer = String(server || '').trim()
+    const safeTool = String(tool || '').trim()
+    const availableTools = mcpToolsMap[safeServer] || []
+
+    // 兼容旧提示词中的 shell/shell_execute，实际 MCP 工具名是 run_process
+    if (
+      safeServer === 'shell' &&
+      ['shell_execute', 'execute', 'run_shell', 'shell_execute_command'].includes(safeTool) &&
+      availableTools.some((t) => t.name === 'run_process')
+    ) {
+      return 'run_process'
+    }
+
+    return safeTool
+  }
+
   if (raw.includes('/')) {
     const [server, tool] = raw.split('/', 2).map((v) => v.trim())
-    if (server && tool) return { server, tool }
+    if (server && tool) return { server, tool: normalizeToolAlias(server, tool) }
   }
 
   const found: Array<{ server: string; tool: string }> = []
@@ -799,12 +1367,6 @@ function resolveActionTarget(
   return null
 }
 
-function extractFirstUrl(text: string): string | null {
-  const value = String(text || '')
-  const match = value.match(/https?:\/\/[^\s"'`<>]+/i)
-  return match ? match[0] : null
-}
-
 function getAgentMessageText(data: Record<string, any> | string): string {
   let parsedData: Record<string, any> = {}
   if (typeof data === 'string') {
@@ -824,7 +1386,7 @@ function getAgentMessageText(data: Record<string, any> | string): string {
   )
 }
 
-function truncateForPrompt(value: any, limit = 800): string {
+function truncateForPrompt(value: unknown, limit = 800): string {
   const text = typeof value === 'string' ? value : JSON.stringify(value)
   const clean = String(text || '').replace(/\s+/g, ' ').trim()
   if (!clean) return ''
@@ -854,11 +1416,13 @@ function summarizeEnvelopeForPrompt(envelope: AgentEnvelope): string {
 function buildAgentFollowupPrompt(
   originalTask: string,
   previousEnvelope: AgentEnvelope,
-  options: { toolResult?: string; extra?: string } = {}
+  options: { toolResult?: string; extra?: string; server?: string } = {}
 ): string {
   const previousEnvelopeSummary = summarizeEnvelopeForPrompt(previousEnvelope)
-  const toolResultSummary = options.toolResult ? truncateForPrompt(options.toolResult, 400) : ''
-  const extraSummary = options.extra ? truncateForPrompt(options.extra, 1400) : ''
+  const isShellCommand = options.server === 'shell'
+  const toolResultLimit = isShellCommand ? Number.MAX_SAFE_INTEGER : 400
+  const toolResultSummary = options.toolResult ? truncateForPrompt(options.toolResult, toolResultLimit) : ''
+  const extraSummary = options.extra ? truncateForPrompt(options.extra, HTTP.MAX_EXTRA_SUMMARY_CHARS) : ''
   const lines = [
     `原始任务：${truncateForPrompt(originalTask, 260)}`,
     `你上一轮输出（摘要）：${previousEnvelopeSummary}`,
@@ -894,10 +1458,8 @@ function extractCurrentUrlFromMcpText(text: string): string {
   return plain?.[0] || ''
 }
 
-function createInitialRuntimeState(userMessage: string): AgentRuntimeState {
-  const guessedTarget = extractFirstUrl(userMessage) || 'https://www.baidu.com'
+function createInitialRuntimeState(_userMessage: string): AgentRuntimeState {
   return {
-    targetUrl: guessedTarget,
     currentUrl: '',
     openedTargetUrl: false,
     hasSnapshot: false,
@@ -1064,7 +1626,7 @@ function buildSelectPagePayloads(
 }
 
 async function recoverClosedChromePage(
-  mcpToolsMap: Record<string, Array<{ name: string; inputSchema?: any }>>
+  mcpToolsMap: Record<string, Array<{ name: string; inputSchema?: Record<string, unknown> }>>
 ): Promise<{ ok: boolean; detail: string }> {
   const listResult = await callMcpTool('chrome-devtools', 'list_pages', {})
   if (!listResult?.ok) {
@@ -1081,10 +1643,10 @@ async function recoverClosedChromePage(
   const selectPageTool = chromeTools.find((t) => t.name === 'select_page')
   const selectSchema =
     selectPageTool?.inputSchema && typeof selectPageTool.inputSchema === 'object'
-      ? selectPageTool.inputSchema
-      : {}
-  const requiredFields = Array.isArray((selectSchema as any).required)
-    ? (selectSchema as any).required.map((v: any) => String(v)).filter(Boolean)
+      ? selectPageTool.inputSchema as { required?: unknown[] }
+      : { required: [] as unknown[] }
+  const requiredFields = Array.isArray(selectSchema.required)
+    ? selectSchema.required.map((v: unknown) => String(v)).filter(Boolean)
     : []
 
   const candidateIndexes = [...pageIndexes].reverse()
@@ -1182,39 +1744,42 @@ function parsePlannerOutput(reply: string): PlannerOutput | null {
   return null
 }
 
-function sanitizePlannerStep(step: any): PlannerStep {
+function sanitizePlannerStep(step: unknown): PlannerStep {
+  const s = step as Record<string, unknown> | null
   return {
-    id: String(step?.id || `step_${Date.now()}`),
-    title: String(step?.title || '未命名步骤'),
-    description: String(step?.description || ''),
-    input: String(step?.input || ''),
-    output: String(step?.output || ''),
-    depends_on: Array.isArray(step?.depends_on) ? step.depends_on.map((v: any) => String(v)) : [],
-    tool: String(step?.tool || ''),
-    status: step?.status,
-    priority: step?.priority,
-    retry: step?.retry && typeof step.retry === 'object'
+    id: String(s?.id || `step_${Date.now()}`),
+    title: String(s?.title || '未命名步骤'),
+    description: String(s?.description || ''),
+    input: String(s?.input || ''),
+    output: String(s?.output || ''),
+    depends_on: Array.isArray(s?.depends_on) ? (s.depends_on as unknown[]).map((v: unknown) => String(v)) : [],
+    tool: String(s?.tool || ''),
+    status: s?.status as PlannerStep['status'],
+    priority: s?.priority as PlannerStep['priority'],
+    retry: s?.retry && typeof s.retry === 'object'
       ? {
-          max: Number(step.retry.max || 0),
-          backoff_ms: Number(step.retry.backoff_ms || 0)
+          max: Number((s.retry as Record<string, unknown>)?.max || 0),
+          backoff_ms: Number((s.retry as Record<string, unknown>)?.backoff_ms || 0)
         }
       : undefined,
-    timeout_ms: step?.timeout_ms != null ? Number(step.timeout_ms) : undefined,
-    success_criteria: step?.success_criteria ? String(step.success_criteria) : undefined,
-    artifacts: Array.isArray(step?.artifacts) ? step.artifacts.map((v: any) => String(v)) : undefined,
-    logs: Array.isArray(step?.logs) ? step.logs.map((v: any) => String(v)) : undefined,
-    tool_call: step?.tool_call && typeof step.tool_call === 'object'
+    timeout_ms: s?.timeout_ms != null ? Number(s.timeout_ms) : undefined,
+    success_criteria: s?.success_criteria ? String(s.success_criteria) : undefined,
+    artifacts: Array.isArray(s?.artifacts) ? (s.artifacts as unknown[]).map((v: unknown) => String(v)) : undefined,
+    logs: Array.isArray(s?.logs) ? (s.logs as unknown[]).map((v: unknown) => String(v)) : undefined,
+    tool_call: s?.tool_call && typeof s.tool_call === 'object'
       ? {
-          server: String(step.tool_call.server || ''),
-          tool: String(step.tool_call.tool || ''),
-          args: step.tool_call.args && typeof step.tool_call.args === 'object' ? step.tool_call.args : {}
+          server: String((s.tool_call as Record<string, unknown>)?.server || ''),
+          tool: String((s.tool_call as Record<string, unknown>)?.tool || ''),
+          args: (s.tool_call as Record<string, unknown>)?.args && typeof (s.tool_call as Record<string, unknown>).args === 'object' 
+            ? (s.tool_call as Record<string, unknown>).args as Record<string, unknown> 
+            : {}
         }
       : undefined,
-    expected_result: step?.expected_result ? String(step.expected_result) : undefined,
-    fallback: step?.fallback ? String(step.fallback) : undefined,
-    requires_confirmation: step?.requires_confirmation === true,
-    side_effects: Array.isArray(step?.side_effects) ? step.side_effects.map((v: any) => String(v)) : undefined,
-    rollback: step?.rollback ? String(step.rollback) : undefined
+    expected_result: s?.expected_result ? String(s.expected_result) : undefined,
+    fallback: s?.fallback ? String(s.fallback) : undefined,
+    requires_confirmation: s?.requires_confirmation === true,
+    side_effects: Array.isArray(s?.side_effects) ? (s.side_effects as unknown[]).map((v: unknown) => String(v)) : undefined,
+    rollback: s?.rollback ? String(s.rollback) : undefined
   }
 }
 
@@ -1274,6 +1839,7 @@ export async function* handleChatStream(
   const taskId = randomUUID()
   let stepSeq = 0
   let accumulatedUsage: { promptTokens: number; completionTokens: number; totalTokens: number } | undefined
+  const abortSignal = options.signal
 
   const openStep = (title: string) => {
     stepSeq += 1
@@ -1285,6 +1851,7 @@ export async function* handleChatStream(
   yield buildTaskEvent(taskId, 'running')
 
   try {
+    throwIfAborted(abortSignal)
     const configService = getConfigService()
     const config = await configService.getConfig()
     const skills = config.skills || []
@@ -1327,7 +1894,7 @@ export async function* handleChatStream(
     const apiKey = apiKeyResult.apiKey
     const { apiBaseUrl, modelName } = resolveModelRuntime(activeModel, config)
 
-    const rawMcpToolsMap = (await getMcpTools()) as Record<string, Array<{ name: string; inputSchema?: any }>>
+    const rawMcpToolsMap = (await getMcpTools()) as Record<string, Array<{ name: string; inputSchema?: Record<string, unknown> }>>
     const allowedMcpServers = Array.isArray(options.allowedMcpServers)
       ? options.allowedMcpServers.map(v => String(v || '').trim()).filter(Boolean)
       : null
@@ -1344,6 +1911,9 @@ export async function* handleChatStream(
       return toolHints.length ? `- ${serverId}: ${toolHints.join(', ')}` : ''
     }).filter(Boolean).join('\n')
 
+    const builtinToolsDesc = builtinTools.getToolDescriptions()
+    const allToolsDesc = mcpToolsDesc + (builtinToolsDesc ? '\n' + builtinToolsDesc : '')
+
     const selectedSkill = options.selectedSkillId
       ? skills.find(s => s.id === options.selectedSkillId)
       : null
@@ -1353,19 +1923,20 @@ export async function* handleChatStream(
       : ''
 
     const promptInstruction = String(options.promptInstruction || '').trim()
-    const systemPrompt = buildAgentSystemPrompt(skills, mcpToolsDesc, selectedSkillHint, promptInstruction)
-    const executionMode = options.executionMode === 'manual' ? 'manual' : 'auto'
+    const systemPrompt = buildAgentSystemPrompt(skills, allToolsDesc, selectedSkillHint, promptInstruction)
+    const userContext = await buildUserContextPrompt()
+    const finalSystemPrompt = userContext ? `${systemPrompt}\n\n${userContext}` : systemPrompt
+
     void logger.info('[AI] Chat stream started', {
-      executionMode,
       model: modelName,
       selectedSkillId: options.selectedSkillId || '',
       allowedMcpServers: allowedMcpServers || [],
       hasPromptInstruction: Boolean(promptInstruction),
-      message: summarizeForLog(message, 400)
+      messageLength: String(message || '').length
     })
 
     // 步骤1: 解析用户请求
-    const plan = [
+    const plan: SimpleStep[] = [
       { title: '解析用户请求', description: '理解用户意图并确定执行方案', completed: false, active: true },
       { title: '等待 AI 响应', description: '获取 AI 的执行计划', completed: false, active: false },
       { title: '执行操作', description: '调用相应的工具或技能', completed: false, active: false },
@@ -1374,17 +1945,17 @@ export async function* handleChatStream(
     
     yield { type: 'plan', plan: [...plan] }
     yield buildDetail('plan', '正在解析用户请求并生成执行方案')
-    
+
     const inferStep = openStep('模型推理')
     yield buildTaskEvent(taskId, 'running', { stepId: inferStep.stepId, stepStatus: 'running', title: inferStep.title })
-    const llmResult = await requestModelReply(apiBaseUrl, apiKey, modelName, systemPrompt, message, conversationHistory)
+    const llmResult = await requestModelReply(apiBaseUrl, apiKey, modelName, finalSystemPrompt, message, conversationHistory, abortSignal)
     const reply = llmResult.reply
     if (llmResult.usage) {
       accumulatedUsage = llmResult.usage
     }
     yield buildTaskEvent(taskId, 'running', { stepId: inferStep.stepId, stepStatus: 'done', title: inferStep.title })
     void logger.info('[AI] Initial reply received', {
-      reply: summarizeForLog(reply, 700)
+      replyLength: String(reply || '').length
     })
 
     // 更新步骤1完成
@@ -1402,63 +1973,43 @@ export async function* handleChatStream(
     // 优先处理 Agent JSON 结果
     let agentEnvelope = parseAgentEnvelope(reply)
     
-    // 【快速路径】简单对话直接返回，不走 Agent 流程
-    // 但如果 AI 基于历史已经返回了有意义的回复（包含"你"或上下文），则保留该回复
-    const isSimpleMessage = isSimpleUserInput(message)
-    
     // 尝试从 AI 回复中提取文本内容
     let aiReplyText = ''
     if (agentEnvelope?.type === 'message' && agentEnvelope?.data?.content) {
       aiReplyText = String(agentEnvelope.data.content || '')
     } else if (!agentEnvelope && reply && reply.trim()) {
-      // AI 返回的不是 JSON 格式，当作纯文本回复处理
       aiReplyText = reply.trim()
     }
-    
-    const hasContextInReply = aiReplyText.includes('你') && aiReplyText.length > 10
-    
-    if (isSimpleMessage && !agentEnvelope && !hasContextInReply) {
-      void logger.info('[Intent Guard] Simple message detected, returning directly')
-      const quickReply = getSimpleGreetingResponse(message)
-      yield { type: 'reply', reply: quickReply }
-      yield { type: 'done', usage: accumulatedUsage }
-      return
-    }
-    
-    // 如果 AI 已经基于历史返回了有意义的回复，统一使用 message 格式返回
-    if (aiReplyText && hasContextInReply) {
-      void logger.info('[Intent Guard] AI returned contextual reply, using it directly', { reply: aiReplyText.slice(0, 50) })
-      yield { type: 'reply', reply: aiReplyText }
+
+    if (!agentEnvelope) {
+      yield* streamReplyChunks(formatReplyForUser(message, aiReplyText))
       yield { type: 'done', usage: accumulatedUsage }
       return
     }
 
-    // 【意图判断拦截器】- 防止误触发 Agent
-    if (agentEnvelope?.type === 'action') {
-      const actionName = String(agentEnvelope.data?.name || '').trim()
-      const isBrowserAction = actionName.includes('chrome-devtools') || 
-                               actionName.includes('new_page') || 
-                               actionName.includes('navigate_page')
-      
-      if (isBrowserAction && isSimpleMessage) {
-        void logger.info('[Intent Guard] Blocking accidental browser open for simple message', {
-          actionName,
-          message: summarizeForLog(message, 100)
-        })
-        // 强制降级为 message
-        agentEnvelope = {
-          type: 'message',
-          data: { content: getSimpleGreetingResponse(message) }
-        }
-      }
+    if (agentEnvelope.type === 'message') {
+      yield* streamReplyChunks(formatReplyForUser(message, aiReplyText))
+      yield { type: 'done', usage: accumulatedUsage }
+      return
     }
-    
-    if (agentEnvelope) {
+
+    if (agentEnvelope.type === 'done') {
+      yield* streamReplyChunks(formatReplyForUser(message, String(agentEnvelope.data?.result || '')))
+      yield { type: 'done', usage: accumulatedUsage }
+      return
+    }
+
+    if (agentEnvelope.type === 'error') {
+      yield* streamReplyChunks(formatReplyForUser(message, String(agentEnvelope.data?.message || '发生错误')))
+      yield { type: 'done', usage: accumulatedUsage }
+      return
+    }
+
+    if (agentEnvelope.type === 'action') {
       const availableServers = Object.keys(mcpToolsMap)
       let turn = 0
       const maxTurns = 16
       let lastToolResultText = ''
-      let planHintText = ''
       let finalReplyText = ''
       const runtimeState = createInitialRuntimeState(message)
 
@@ -1474,7 +2025,7 @@ export async function* handleChatStream(
             steps: summarizeForLog(steps, 900)
           })
           if (steps.length > 0) {
-            const execPlan = steps.map((step: any, index: number) => ({
+            const execPlan: SimpleStep[] = steps.map((step: PlannerStep, index: number) => ({
               title: String(step?.id || `step_${index + 1}`),
               description: String(step?.description || '待执行'),
               completed: false,
@@ -1482,7 +2033,6 @@ export async function* handleChatStream(
             }))
             yield { type: 'plan', plan: execPlan }
             yield buildDetail('plan', `已生成执行计划，共 ${steps.length} 步`)
-            planHintText = steps.map((step: any) => String(step?.description || '')).filter(Boolean).join('\n')
           } else {
             yield buildDetail('plan', '已生成执行计划')
           }
@@ -1491,12 +2041,13 @@ export async function* handleChatStream(
             apiBaseUrl,
             apiKey,
             modelName,
-            systemPrompt,
+            finalSystemPrompt,
             buildAgentFollowupPrompt(message, agentEnvelope, {
               toolResult: lastToolResultText,
               extra: `${buildRuntimeStateHint(runtimeState)}\n你已输出 plan，现在请执行第一步，输出 type="action"。`
             }),
-            conversationHistory
+            conversationHistory,
+            abortSignal
           )
           const nextReply = nextReplyResult.reply
           const nextEnvelope = parseAgentEnvelope(nextReply)
@@ -1511,8 +2062,26 @@ export async function* handleChatStream(
         }
 
         if (agentEnvelope.type === 'action') {
-          const toolType = String(agentEnvelope.data?.tool || '').trim()
-          const actionName = String(agentEnvelope.data?.name || '').trim()
+          let toolType = String(agentEnvelope.data?.tool || '').trim()
+          let actionName = String(agentEnvelope.data?.name || '').trim()
+          if (toolType.startsWith('builtin/')) {
+            actionName = toolType.replace('builtin/', '')
+            toolType = 'builtin'
+          }
+          if (actionName.startsWith('builtin/')) {
+            actionName = actionName.replace('builtin/', '')
+            toolType = 'builtin'
+          }
+          if (!actionName && toolType.includes('/') && toolType !== 'mcp' && toolType !== 'builtin') {
+            actionName = toolType
+            toolType = 'mcp'
+          }
+          if (toolType === 'builtin' && actionName.includes('/')) {
+            toolType = 'mcp'
+          }
+          if ((toolType === 'shell' || toolType === 'filesystem' || toolType === 'fetch' || toolType === 'memory' || toolType === 'chrome-devtools') && actionName) {
+            toolType = 'mcp'
+          }
           const actionInput = agentEnvelope.data?.input && typeof agentEnvelope.data.input === 'object'
             ? { ...agentEnvelope.data.input }
             : {}
@@ -1523,40 +2092,77 @@ export async function* handleChatStream(
             input: summarizeForLog(actionInput, 800)
           })
 
-          if (toolType !== 'mcp') {
+          yield {
+            type: 'reasoning',
+            reasoning: {
+              type: 'tool_selection',
+              text: `基于任务需求，选择 ${toolType}/${actionName} 工具执行 ${actionInput.url || actionInput.command || actionInput.path || '操作'}`,
+              confidence: 0.85
+            }
+          }
+
+          if (toolType !== 'mcp' && toolType !== 'builtin') {
             yield* streamReplyChunks(`不支持的 action.tool：${toolType || 'unknown'}`)
             yield { type: 'done', usage: accumulatedUsage }
             return
           }
 
-          const target = resolveActionTarget(actionName, mcpToolsMap)
-          if (!target) {
-            yield* streamReplyChunks(`无法解析工具名：${actionName || 'unknown'}`)
-            yield { type: 'done', usage: accumulatedUsage }
-            return
-          }
-
-          const { server, tool } = target
-          let effectiveTool = tool
-          let effectiveInput = { ...actionInput }
-          if ((server === 'chrome-devtools' && (tool === 'new_page' || tool === 'navigate_page')) && !effectiveInput.url) {
-            const guessedUrl = extractFirstUrl(message) || extractFirstUrl(planHintText)
-            if (guessedUrl) {
-              effectiveInput.url = guessedUrl
+          if (toolType === 'builtin') {
+            const builtinResult = await builtinTools.callTool(actionName, actionInput as Record<string, unknown>)
+            if (builtinResult.success) {
+              yield buildDetail('tool', `builtin/${actionName} 执行成功`)
+              lastToolResultText = builtinResult.result || ''
+              yield buildDetail('result', lastToolResultText)
+            } else {
+              yield buildDetail('tool', `builtin/${actionName} 执行失败`)
+              lastToolResultText = builtinResult.error || '执行失败'
+              yield buildDetail('error', lastToolResultText)
             }
-          }
+
+            const nextBuiltinReply = await requestModelReply(
+              apiBaseUrl,
+              apiKey,
+              modelName,
+              finalSystemPrompt,
+              buildAgentFollowupPrompt(message, agentEnvelope, {
+                toolResult: lastToolResultText,
+                extra: `${buildRuntimeStateHint(runtimeState)}\n如果任务未完成，请继续输出下一步 type="action"；若已完成，输出 type="done"。`
+              }),
+              conversationHistory,
+              abortSignal
+            )
+            const nextBuiltinEnvelope = parseAgentEnvelope(nextBuiltinReply.reply)
+            if (!nextBuiltinEnvelope) {
+              yield* streamReplyChunks(lastToolResultText || '运行结束，已完成。')
+              yield { type: 'done', usage: accumulatedUsage }
+              return
+            }
+            agentEnvelope = nextBuiltinEnvelope
+            continue
+          } else {
+            const target = resolveActionTarget(actionName, mcpToolsMap)
+            if (!target) {
+              yield* streamReplyChunks(`无法解析工具名：${actionName || 'unknown'}`)
+              yield { type: 'done', usage: accumulatedUsage }
+              return
+            }
+
+            const { server, tool } = target
+            let effectiveTool = tool
+            let effectiveInput = { ...actionInput }
 
           if (server === 'chrome-devtools' && (tool === 'new_page' || tool === 'navigate_page') && !effectiveInput.url) {
             const nextReplyResult = await requestModelReply(
               apiBaseUrl,
               apiKey,
               modelName,
-              systemPrompt,
+              finalSystemPrompt,
               buildAgentFollowupPrompt(message, agentEnvelope, {
                 toolResult: lastToolResultText,
                 extra: '上一步 action 缺少必需参数 url，请输出新的 type="action" 并补齐 data.input.url。'
               }),
-              conversationHistory
+              conversationHistory,
+              abortSignal
             )
             const nextReply = nextReplyResult.reply
             const nextEnvelope = parseAgentEnvelope(nextReply)
@@ -1594,18 +2200,20 @@ export async function* handleChatStream(
             server === 'chrome-devtools' &&
             ['new_page', 'navigate_page'].includes(effectiveTool) &&
             runtimeState.openedTargetUrl &&
+            runtimeState.targetUrl &&
             normalizeCompactText(String(effectiveInput.url || '')).includes(normalizeCompactText(runtimeState.targetUrl))
           ) {
             const nextReplyResult2 = await requestModelReply(
               apiBaseUrl,
               apiKey,
               modelName,
-              systemPrompt,
+              finalSystemPrompt,
               buildAgentFollowupPrompt(message, agentEnvelope, {
                 toolResult: lastToolResultText,
                 extra: `${buildRuntimeStateHint(runtimeState)}\n你在重复打开同一页面。禁止再次 new_page/navigate_page 到相同 URL，请直接执行后续步骤。`
               }),
-              conversationHistory
+              conversationHistory,
+              abortSignal
             )
             const nextReply2 = nextReplyResult2.reply
             const nextEnvelope = parseAgentEnvelope(nextReply2)
@@ -1629,12 +2237,13 @@ export async function* handleChatStream(
               apiBaseUrl,
               apiKey,
               modelName,
-              systemPrompt,
+              finalSystemPrompt,
               buildAgentFollowupPrompt(message, agentEnvelope, {
                 toolResult: lastToolResultText,
                 extra: `${buildRuntimeStateHint(runtimeState)}\n你在重复 take_snapshot。禁止继续快照，请改为输入关键词并提交搜索。`
               }),
-              conversationHistory
+              conversationHistory,
+              abortSignal
             )
             const nextReply3 = nextReplyResult3.reply
             const nextEnvelope = parseAgentEnvelope(nextReply3)
@@ -1652,12 +2261,13 @@ export async function* handleChatStream(
               apiBaseUrl,
               apiKey,
               modelName,
-              systemPrompt,
+              finalSystemPrompt,
               buildAgentFollowupPrompt(message, agentEnvelope, {
                 toolResult: lastToolResultText,
                 extra: `${buildRuntimeStateHint(runtimeState)}\n你在重复同一 action。禁止再次输出相同 action，请输出下一步不同且可推进任务的 action。`
               }),
-              conversationHistory
+              conversationHistory,
+              abortSignal
             )
             const nextReply4 = nextReplyResult4.reply
             const nextEnvelope = parseAgentEnvelope(nextReply4)
@@ -1670,21 +2280,25 @@ export async function* handleChatStream(
             continue
           }
 
+          void logger.info('[AI] Resolved action target', { actionName, server, effectiveTool })
+
           updateRuntimeStateAfterAction(runtimeState, server, effectiveTool, effectiveInput)
 
           if (!availableServers.includes(server)) {
+            void logger.warn('[AI] Server not in available list', { server, availableServers })
             yield* streamReplyChunks(`未知 MCP server: ${server}`)
             yield { type: 'done', usage: accumulatedUsage }
             return
           }
           const tools = mcpToolsMap[server] || []
           if (!tools.find(t => t.name === effectiveTool)) {
+            void logger.warn('[AI] Tool not found in server', { server, effectiveTool, availableTools: tools.map(t => t.name) })
             yield* streamReplyChunks(`未知工具: ${effectiveTool}`)
             yield { type: 'done', usage: accumulatedUsage }
             return
           }
 
-          if (executionMode === 'manual') {
+          if (options.executionMode === 'manual') {
             void logger.info('[AI] Action requires manual confirmation', {
               turn,
               server,
@@ -1711,6 +2325,7 @@ export async function* handleChatStream(
             tool: effectiveTool,
             args: summarizeForLog(effectiveInput, 800)
           })
+          yield buildDetail('tool', `正在调用 ${server}/${effectiveTool}...`)
           yield {
             type: 'mcp',
             mcp: {
@@ -1726,6 +2341,9 @@ export async function* handleChatStream(
             stepStatus: 'running',
             title: mcpStep.title
           })
+
+          yield buildDetail('tool', buildToolProgressMessage(server, effectiveTool, effectiveInput))
+
           const result = await executeMcpToolWithPolicy(server, effectiveTool, effectiveInput)
           const rawResultText = String(result?.result || '').trim()
           const inferredScriptError = /Unexpected token|SyntaxError|ReferenceError|TypeError/i.test(rawResultText)
@@ -1740,7 +2358,7 @@ export async function* handleChatStream(
             tool: effectiveTool,
             ok: mcpOk,
             error: mcpOk ? undefined : inferredMcpError,
-            retries: Math.max(0, Number((result as any)?.attempts || 1) - 1),
+            retries: Math.max(0, Number((result as McpCallResult)?.attempts || 1) - 1),
             result: summarizeForLog(result?.result, 900)
           })
           yield buildTaskEvent(taskId, mcpOk ? 'running' : 'error', {
@@ -1748,8 +2366,10 @@ export async function* handleChatStream(
             stepStatus: mcpOk ? 'done' : 'error',
             title: mcpStep.title,
             error: mcpOk ? undefined : inferredMcpError,
-            retries: Math.max(0, Number((result as any)?.attempts || 1) - 1)
+            retries: Math.max(0, Number((result as McpCallResult)?.attempts || 1) - 1)
           })
+
+          const mcpStartTime = Date.now()
           yield {
             type: 'mcp',
             mcp: {
@@ -1757,7 +2377,12 @@ export async function* handleChatStream(
               tool: effectiveTool,
               status: mcpOk ? 'success' : 'error',
               error: mcpOk ? undefined : inferredMcpError,
-              time: new Date().toISOString()
+              time: new Date().toISOString(),
+              duration: Date.now() - mcpStartTime,
+              input: effectiveInput,
+              result: mcpOk ? summarizeForLog(result?.result, 200) : undefined,
+              confidence: mcpOk ? 0.95 : 0,
+              causalChain: buildCausalChain(server, effectiveTool, effectiveInput, result)
             }
           }
 
@@ -1784,12 +2409,13 @@ export async function* handleChatStream(
                 apiBaseUrl,
                 apiKey,
                 modelName,
-                systemPrompt,
+                finalSystemPrompt,
                 buildAgentFollowupPrompt(message, agentEnvelope, {
                   toolResult: lastToolResultText,
                   extra: `${buildRuntimeStateHint(runtimeState)}\n页面已恢复，禁止重复开新页，请直接继续下一步。`
                 }),
-                conversationHistory
+                conversationHistory,
+                abortSignal
               )
               const nextReply5 = nextReplyResult5.reply
               const nextEnvelope = parseAgentEnvelope(nextReply5)
@@ -1809,17 +2435,19 @@ export async function* handleChatStream(
               apiBaseUrl,
               apiKey,
               modelName,
-              systemPrompt,
+              finalSystemPrompt,
               buildAgentFollowupPrompt(message, agentEnvelope, {
                 toolResult: lastToolResultText,
+                server,
                 extra: `${buildRuntimeStateHint(runtimeState)}\n上一步工具调用失败。请根据错误修正参数并继续输出 type="action"；若无法继续，请输出 type="error"。`
               }),
-              conversationHistory
+              conversationHistory,
+              abortSignal
             )
             const nextReply6 = nextReplyResult6.reply
             const nextEnvelope = parseAgentEnvelope(nextReply6)
             if (!nextEnvelope) {
-              yield* streamReplyChunks(lastToolResultText || `调用失败：${server}/${tool}`)
+              yield* streamReplyChunks(formatReplyForUser(message, lastToolResultText || `调用失败：${server}/${tool}`))
               yield { type: 'done', usage: accumulatedUsage }
               return
             }
@@ -1828,26 +2456,29 @@ export async function* handleChatStream(
           }
 
           const nextReplyResult7 = await requestModelReply(
-            apiBaseUrl,
-            apiKey,
-            modelName,
-            systemPrompt,
-            buildAgentFollowupPrompt(message, agentEnvelope, {
-              toolResult: lastToolResultText,
-              extra: `${buildRuntimeStateHint(runtimeState)}\n如果任务未完成，请继续输出下一步 type="action"；若已完成，输出 type="done"。`
-            }),
-            conversationHistory
+              apiBaseUrl,
+              apiKey,
+              modelName,
+              finalSystemPrompt,
+              buildAgentFollowupPrompt(message, agentEnvelope, {
+                toolResult: lastToolResultText,
+                server,
+                extra: `${buildRuntimeStateHint(runtimeState)}\n如果任务未完成，请继续输出下一步 type="action"；若已完成，输出 type="done"。`
+              }),
+            conversationHistory,
+            abortSignal
           )
           const nextReply7 = nextReplyResult7.reply
           const nextEnvelope = parseAgentEnvelope(nextReply7)
           if (!nextEnvelope) {
-            yield* streamReplyChunks(lastToolResultText || '运行结束，已完成。')
+            yield* streamReplyChunks(formatReplyForUser(message, lastToolResultText || '运行结束，已完成。'))
             yield { type: 'done', usage: accumulatedUsage }
             return
           }
           agentEnvelope = nextEnvelope
           continue
-        }
+            }
+          }
 
         if (agentEnvelope.type === 'message') {
           const text = getAgentMessageText(agentEnvelope.data)
@@ -1856,7 +2487,7 @@ export async function* handleChatStream(
             text: summarizeForLog(text, 700)
           })
           if (text) {
-            yield* streamReplyChunks(text)
+            yield* streamReplyChunks(formatReplyForUser(message, text))
           }
           yield { type: 'done', usage: accumulatedUsage }
           return
@@ -1869,8 +2500,10 @@ export async function* handleChatStream(
             text: summarizeForLog(text, 700)
           })
           if (text) {
-            yield* streamReplyChunks(text)
+            yield* streamReplyChunks(formatReplyForUser(message, text))
           }
+          await storeConversationTurn(message, text, conversationHistory || [])
+          await extractAndStoreUserInfo(message, text, conversationHistory || [])
           yield { type: 'done', usage: accumulatedUsage }
           return
         }
@@ -1890,8 +2523,10 @@ export async function* handleChatStream(
       void logger.warn('[AI] Agent reached max turns', { maxTurns })
       yield buildDetail('agent', '达到最大自动执行轮次，已停止继续调用')
       if (lastToolResultText) {
-        yield* streamReplyChunks(lastToolResultText)
+        yield* streamReplyChunks(formatReplyForUser(message, lastToolResultText))
       }
+      await storeConversationTurn(message, lastToolResultText || '', conversationHistory || [])
+      await extractAndStoreUserInfo(message, lastToolResultText || '', conversationHistory || [])
       yield { type: 'done', usage: accumulatedUsage }
       return
     }
@@ -1921,7 +2556,7 @@ export async function* handleChatStream(
 
         const availableServers = Object.keys(mcpToolsMap)
         const collectedReplies: string[] = []
-        const execPlan = orderedSteps.map((step) => ({
+        const execPlan: SimpleStep[] = orderedSteps.map((step) => ({
           title: step.title || step.id,
           description: step.description || '待执行',
           completed: false,
@@ -1934,6 +2569,7 @@ export async function* handleChatStream(
           execPlan[i].active = true
           execPlan[i].description = `正在执行：${step.title || step.id}`
           yield { type: 'plan', plan: [...execPlan] }
+          yield { type: 'step', step: { status: 'start', text: sanitizeStepTitle(step.description || step.title || step.id) } }
 
           // MCP 步骤
           if (step.tool === 'mcp' && step.tool_call?.server && step.tool_call?.tool) {
@@ -1943,6 +2579,7 @@ export async function* handleChatStream(
               execPlan[i].active = false
               execPlan[i].description = `执行失败：未知 MCP 服务器 ${server}`
               yield { type: 'plan', plan: [...execPlan] }
+              yield { type: 'step', step: { status: 'error', text: sanitizeStepTitle(step.description || step.title || step.id) } }
               yield* streamReplyChunks(`未知 MCP server: ${server}`)
               yield { type: 'done', usage: accumulatedUsage }
               return
@@ -1953,6 +2590,7 @@ export async function* handleChatStream(
               execPlan[i].active = false
               execPlan[i].description = `执行失败：未知工具 ${server}/${tool}`
               yield { type: 'plan', plan: [...execPlan] }
+              yield { type: 'step', step: { status: 'error', text: sanitizeStepTitle(step.description || step.title || step.id) } }
               yield* streamReplyChunks(`未知工具: ${tool}`)
               yield { type: 'done', usage: accumulatedUsage }
               return
@@ -1999,13 +2637,14 @@ export async function* handleChatStream(
               stepStatus: result.ok ? 'done' : 'error',
               title: mcpStep.title,
               error: result.ok ? undefined : String(result.error || '调用失败'),
-              retries: Math.max(0, Number((result as any)?.attempts || 1) - 1)
+              retries: Math.max(0, Number((result as McpCallResult)?.attempts || 1) - 1)
             })
 
             if (!result.ok) {
               execPlan[i].active = false
               execPlan[i].description = `执行失败：${String(result.error || `${server}/${tool}`)}`
               yield { type: 'plan', plan: [...execPlan] }
+              yield { type: 'step', step: { status: 'error', text: sanitizeStepTitle(step.description || step.title || step.id) } }
               yield* streamReplyChunks(`调用失败：${result.error || `${server}/${tool}`}`)
               yield { type: 'done', usage: accumulatedUsage }
               return
@@ -2032,6 +2671,7 @@ export async function* handleChatStream(
           execPlan[i].completed = true
           execPlan[i].description = `执行完成：${step.title || step.id}`
           yield { type: 'plan', plan: [...execPlan] }
+          yield { type: 'step', step: { status: 'done', text: sanitizeStepTitle(step.description || step.title || step.id) } }
         }
 
         if (collectedReplies.length > 0) {
@@ -2098,6 +2738,7 @@ export async function* handleChatStream(
             execPlan[i].active = false
             execPlan[i].description = `执行失败：未知 MCP 服务器 ${server}`
             yield { type: 'plan', plan: [...execPlan] }
+            yield { type: 'step', step: { status: 'error', text: `${server}/${tool}` } }
             yield* streamReplyChunks(`未知 MCP server: ${server}`)
             yield { type: 'done', usage: accumulatedUsage }
             return
@@ -2108,6 +2749,7 @@ export async function* handleChatStream(
             execPlan[i].active = false
             execPlan[i].description = `执行失败：未知工具 ${server}/${tool}`
             yield { type: 'plan', plan: [...execPlan] }
+            yield { type: 'step', step: { status: 'error', text: `${server}/${tool}` } }
             yield* streamReplyChunks(`未知工具: ${tool}`)
             yield { type: 'done', usage: accumulatedUsage }
             return
@@ -2116,6 +2758,7 @@ export async function* handleChatStream(
           execPlan[i].active = true
           execPlan[i].description = `正在执行：${stepTitle}`
           yield { type: 'plan', plan: [...execPlan] }
+          yield { type: 'step', step: { status: 'start', text: `${server}/${tool}` } }
           yield {
             type: 'mcp',
             mcp: {
@@ -2156,13 +2799,14 @@ export async function* handleChatStream(
             stepStatus: result.ok ? 'done' : 'error',
             title: mcpStep.title,
             error: result.ok ? undefined : String(result.error || '调用失败'),
-            retries: Math.max(0, Number((result as any)?.attempts || 1) - 1)
+            retries: Math.max(0, Number((result as McpCallResult)?.attempts || 1) - 1)
           })
 
           if (!result.ok) {
             execPlan[i].active = false
             execPlan[i].description = `执行失败：${String(result.error || `${server}/${tool}`)}`
             yield { type: 'plan', plan: [...execPlan] }
+            yield { type: 'step', step: { status: 'error', text: `${server}/${tool}` } }
             yield* streamReplyChunks(`调用失败：${result.error || `${server}/${tool}`}`)
             yield { type: 'done', usage: accumulatedUsage }
             return
@@ -2172,6 +2816,7 @@ export async function* handleChatStream(
           execPlan[i].completed = true
           execPlan[i].description = `执行完成：${stepTitle}`
           yield { type: 'plan', plan: [...execPlan] }
+          yield { type: 'step', step: { status: 'done', text: `${server}/${tool}` } }
 
           const displayReply = buildMcpDisplayReply(server, tool, result)
           if (displayReply && displayReply !== '运行结束，已完成。') {
@@ -2201,15 +2846,114 @@ export async function* handleChatStream(
     plan[3].completed = true
     yield { type: 'plan', plan: [...plan] }
     yield buildDetail('reply', '直接返回模型回复')
-    yield* streamReplyChunks(reply)
+    yield* streamReplyChunks(formatReplyForUser(message, reply))
+    await storeConversationTurn(message, reply, conversationHistory || [])
+    await extractAndStoreUserInfo(message, reply, conversationHistory || [])
     yield buildTaskEvent(taskId, 'done')
     yield { type: 'done', usage: accumulatedUsage }
 
   } catch (error) {
+    if (isAbortError(error)) {
+      logger.info('[Chat] Request aborted')
+      yield buildTaskEvent(taskId, 'error', { error: 'The user aborted a request' })
+      yield {
+        type: 'error',
+        error: {
+          code: 'REQUEST_ABORTED',
+          message: '用户取消了请求',
+          severity: 'recoverable',
+          suggestion: '任务已被用户终止，可以重新发起请求',
+          retryable: true
+        } as ErrorDetail
+      }
+      return
+    }
+    const errorMessage = error instanceof Error ? error.message : String(error)
     logger.error('Chat request failed', error)
-    yield buildTaskEvent(taskId, 'error', {
-      error: error instanceof Error ? error.message : String(error)
-    })
-    yield { type: 'error', error: error instanceof Error ? error.message : String(error) }
+    yield buildTaskEvent(taskId, 'error', { error: errorMessage })
+    yield {
+      type: 'error',
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: errorMessage,
+        severity: 'fatal',
+        suggestion: '请检查系统日志获取详细信息',
+        retryable: false,
+        rootCause: error instanceof Error ? error.stack?.split('\n')[1]?.trim() : undefined
+      } as ErrorDetail
+    }
   }
+}
+
+export function registerWSChatHandler(wsService: any): void {
+  const activeControllers = new Map<string, AbortController>()
+
+  const abortClientStream = (clientId: string) => {
+    const controller = activeControllers.get(clientId)
+    if (controller && !controller.signal.aborted) {
+      controller.abort()
+    }
+  }
+
+  wsService.on('chat_cancel', (client: any) => {
+    abortClientStream(client.id)
+  })
+
+  wsService.on('chat_message', async (client: any, message: any) => {
+    const { payload } = message
+    if (!payload?.message) {
+      wsService.send(client.id, { type: 'error', payload: { message: 'Missing message' } })
+      return
+    }
+
+    abortClientStream(client.id)
+    const controller = new AbortController()
+    activeControllers.set(client.id, controller)
+
+    wsService.send(client.id, { type: 'stream_start', payload: { taskId: payload.taskId || 'ws-task' } })
+
+    try {
+      const options: ChatStreamOptions = {
+        model: payload.model,
+        selectedSkillId: payload.selectedSkillId,
+        executionMode: payload.executionMode || 'auto',
+        promptInstruction: payload.promptInstruction,
+        allowedMcpServers: payload.allowedMcpServers,
+        signal: controller.signal
+      }
+
+      const conversationHistory = Array.isArray(payload.conversationHistory)
+        ? payload.conversationHistory
+        : undefined
+
+      for await (const chunk of handleChatStream(payload.message, options, conversationHistory)) {
+        wsService.send(client.id, { type: 'chat_chunk', payload: chunk })
+      }
+
+      wsService.send(client.id, { type: 'stream_end', payload: { taskId: payload.taskId || 'ws-task' } })
+    } catch (error) {
+      if (isAbortError(error)) {
+        logger.info('[Chat] WebSocket request aborted')
+        wsService.send(client.id, { type: 'stream_end', payload: { taskId: payload.taskId || 'ws-task' } })
+      } else {
+        logger.error('WebSocket chat error', error)
+        wsService.send(client.id, {
+          type: 'error',
+          payload: { message: error instanceof Error ? error.message : String(error) }
+        })
+      }
+    } finally {
+      activeControllers.delete(client.id)
+    }
+  })
+
+  wsService.onConnection((client: any) => {
+    logger.info('WebSocket client connected for chat', { clientId: client.id })
+  })
+
+  wsService.onDisconnection((client: any) => {
+    logger.info('WebSocket client disconnected from chat', { clientId: client.id })
+    abortClientStream(client.id)
+    activeControllers.delete(client.id)
+  })
 }

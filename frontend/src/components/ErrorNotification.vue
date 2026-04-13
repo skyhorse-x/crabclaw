@@ -19,7 +19,7 @@
           
           <div class="notification-actions">
             <el-button
-              type="text"
+              link
               size="small"
               @click="handleClose(err)"
             >
@@ -42,7 +42,7 @@
 
 <script>
 import { ref, onMounted, onUnmounted } from 'vue'
-import { Close, Warning, InfoCircle, SuccessFilled } from '@element-plus/icons-vue'
+import { Close, Warning, InfoFilled, CircleCheckFilled } from '@element-plus/icons-vue'
 import { errorHandler, ErrorLevel } from '../utils/error-handler'
 
 export default {
@@ -51,8 +51,8 @@ export default {
   components: {
     Close,
     Warning,
-    InfoCircle,
-    SuccessFilled
+    InfoFilled,
+    CircleCheckFilled
   },
   
   props: {
@@ -75,8 +75,8 @@ export default {
     // 获取图标
     const getErrorIcon = (level) => {
       const icons = {
-        [ErrorLevel.DEBUG]: 'InfoCircle',
-        [ErrorLevel.INFO]: 'InfoCircle',
+        [ErrorLevel.DEBUG]: 'InfoFilled',
+        [ErrorLevel.INFO]: 'InfoFilled',
         [ErrorLevel.WARN]: 'Warning',
         [ErrorLevel.ERROR]: 'Warning',
         [ErrorLevel.FATAL]: 'Warning'

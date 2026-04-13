@@ -1,14 +1,15 @@
-import { mkdirSync, existsSync, copyFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import path from 'node:path'
-import { homedir } from 'node:os'
 import { Database } from 'bun:sqlite'
 import { logger } from './logger.service'
+import { getUnifiedDbPath } from './unified-db-path'
 
 type StoredMessage = {
   role: string
   text: string
   meta?: any
   error?: boolean
+  typing?: boolean
 }
 
 type StoredConversation = {
@@ -26,121 +27,17 @@ type ChatHistoryRuntimeConfig = {
 }
 
 export function getDefaultUserDataDir(): string {
-  let home = homedir()
-  
-  // 安全检查：如果 homedir() 返回无效路径，使用当前工作目录
-  if (!home || home.includes('@') || !existsSync(home) || home.includes('472733389qq.com')) {
-    home = process.cwd()
-  }
-
-  if (process.platform === 'darwin') {
-    return path.join(home, 'Library', 'Application Support', 'DesktopAgentStudio')
-  }
-
-  if (process.platform === 'win32') {
-    // 优先使用 APPDATA 环境变量，如果不存在则使用默认路径
-    const roaming = process.env.APPDATA || path.join(home, 'AppData', 'Roaming')
-    return path.join(roaming, 'DesktopAgentStudio')
-  }
-
-  return path.join(home, '.local', 'share', 'desktop-agent-studio')
+  return path.dirname(getUnifiedDbPath())
 }
 
 export class ChatHistoryService {
   private db: Database
-  private userDataDir: string
   private dbPath: string
 
-  constructor(userDataDir?: string) {
-    this.userDataDir = path.resolve(userDataDir || getDefaultUserDataDir())
-    this.dbPath = path.join(this.userDataDir, 'chat-history.db')
-    this.ensureDatabaseFile()
+  constructor(_userDataDir?: string) {
+    this.dbPath = getUnifiedDbPath()
     this.db = new Database(this.dbPath)
     this.initSchema()
-  }
-
-  private ensureDatabaseFile() {
-    try {
-      // 额外的安全检查：确保 userDataDir 是有效的目录路径
-      if (!this.userDataDir || this.userDataDir.includes('@') || this.userDataDir.includes('472733389qq.com')) {
-        this.userDataDir = path.join(process.cwd(), 'DesktopAgentStudio')
-        this.dbPath = path.join(this.userDataDir, 'chat-history.db')
-      }
-
-      if (!existsSync(this.userDataDir)) {
-        mkdirSync(this.userDataDir, { recursive: true })
-      }
-
-      if (existsSync(this.dbPath)) {
-        return
-      }
-
-      const templatePath = path.join(process.cwd(), 'data', 'chat-history.template.db')
-      if (!existsSync(path.dirname(templatePath))) {
-        mkdirSync(path.dirname(templatePath), { recursive: true })
-      }
-
-      if (!existsSync(templatePath)) {
-        const templateDb = new Database(templatePath)
-        templateDb.exec(`
-          CREATE TABLE IF NOT EXISTS conversations (
-            id TEXT PRIMARY KEY,
-            title TEXT NOT NULL,
-            created_at INTEGER NOT NULL,
-            updated_at INTEGER NOT NULL
-          );
-          CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            conversation_id TEXT NOT NULL,
-            idx INTEGER NOT NULL,
-            role TEXT NOT NULL,
-            text TEXT NOT NULL,
-            meta TEXT,
-            error INTEGER DEFAULT 0,
-            FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
-          );
-          CREATE INDEX IF NOT EXISTS idx_messages_conversation_id
-          ON messages(conversation_id, idx);
-        `)
-        templateDb.close()
-      }
-
-      copyFileSync(templatePath, this.dbPath)
-    } catch (error) {
-      logger.error('[ChatHistory] Ensure database file failed', error)
-      // 回退到当前工作目录
-      this.userDataDir = path.join(process.cwd(), 'DesktopAgentStudio')
-      this.dbPath = path.join(this.userDataDir, 'chat-history.db')
-      
-      if (!existsSync(this.userDataDir)) {
-        mkdirSync(this.userDataDir, { recursive: true })
-      }
-      
-      if (!existsSync(this.dbPath)) {
-        const templateDb = new Database(this.dbPath)
-        templateDb.exec(`
-          CREATE TABLE IF NOT EXISTS conversations (
-            id TEXT PRIMARY KEY,
-            title TEXT NOT NULL,
-            created_at INTEGER NOT NULL,
-            updated_at INTEGER NOT NULL
-          );
-          CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            conversation_id TEXT NOT NULL,
-            idx INTEGER NOT NULL,
-            role TEXT NOT NULL,
-            text TEXT NOT NULL,
-            meta TEXT,
-            error INTEGER DEFAULT 0,
-            FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
-          );
-          CREATE INDEX IF NOT EXISTS idx_messages_conversation_id
-          ON messages(conversation_id, idx);
-        `)
-        templateDb.close()
-      }
-    }
   }
 
   private initSchema() {
@@ -160,6 +57,7 @@ export class ChatHistoryService {
         text TEXT NOT NULL,
         meta TEXT,
         error INTEGER DEFAULT 0,
+        typing INTEGER DEFAULT 0,
         FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
       );
 
@@ -175,6 +73,19 @@ export class ChatHistoryService {
         created_at INTEGER NOT NULL
       );
     `)
+    this.ensureTypingColumn()
+  }
+
+  private ensureTypingColumn() {
+    try {
+      const columns = this.db.query('PRAGMA table_info(messages)').all() as Array<{ name?: string }>
+      const hasTyping = columns.some((column) => String(column?.name || '') === 'typing')
+      if (!hasTyping) {
+        this.db.exec(`ALTER TABLE messages ADD COLUMN typing INTEGER DEFAULT 0`)
+      }
+    } catch (error) {
+      logger.warn('[ChatHistory] Ensure typing column failed', { error })
+    }
   }
 
   getDbPath(): string {
@@ -185,7 +96,7 @@ export class ChatHistoryService {
     return {
       platform: process.platform,
       defaultUserDataDir: getDefaultUserDataDir(),
-      currentUserDataDir: this.userDataDir,
+      currentUserDataDir: path.dirname(this.dbPath),
       dbPath: this.dbPath,
       dbExists: existsSync(this.dbPath)
     }
@@ -197,7 +108,7 @@ export class ChatHistoryService {
       .all() as Array<{ id: string; title: string }>
 
     const msgStmt = this.db.query(
-      'SELECT role, text, meta, error FROM messages WHERE conversation_id = ? ORDER BY idx ASC'
+      'SELECT role, text, meta, error, typing FROM messages WHERE conversation_id = ? ORDER BY idx ASC'
     )
 
     return convRows.map((row) => {
@@ -206,6 +117,7 @@ export class ChatHistoryService {
         text: string
         meta: string | null
         error: number
+        typing: number
       }>
 
       return {
@@ -215,7 +127,8 @@ export class ChatHistoryService {
           role: m.role,
           text: m.text,
           meta: m.meta ? JSON.parse(m.meta) : undefined,
-          error: Boolean(m.error)
+          error: Boolean(m.error),
+          typing: Boolean(m.typing)
         }))
       }
     })
@@ -231,7 +144,7 @@ export class ChatHistoryService {
       'INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)'
     )
     const insertMessage = this.db.query(
-      'INSERT INTO messages (conversation_id, idx, role, text, meta, error) VALUES (?, ?, ?, ?, ?, ?)'
+      'INSERT INTO messages (conversation_id, idx, role, text, meta, error, typing) VALUES (?, ?, ?, ?, ?, ?, ?)'
     )
 
     const transaction = this.db.transaction(() => {
@@ -253,7 +166,8 @@ export class ChatHistoryService {
             String(msg.role || 'assistant'),
             String(msg.text || ''),
             msg.meta !== undefined ? JSON.stringify(msg.meta) : null,
-            msg.error ? 1 : 0
+            msg.error ? 1 : 0,
+            msg.typing ? 1 : 0
           )
         })
       }

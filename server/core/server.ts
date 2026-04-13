@@ -8,10 +8,17 @@ import { createHttpServer } from './http'
 import { bootstrap, gracefulShutdown } from './bootstrap'
 import { handleApiRequest } from '../api/routes'
 
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
+const isDev = process.env.NODE_ENV !== 'production'
+
+const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+}
+
+if (isDev) {
+  CORS_HEADERS['Access-Control-Allow-Origin'] = '*'
+} else {
+  CORS_HEADERS['Access-Control-Allow-Origin'] = process.env.ALLOWED_ORIGIN || 'http://localhost:5173'
 }
 
 function withCors(response: Response): Response {
@@ -29,7 +36,7 @@ function withCors(response: Response): Response {
 /**
  * 创建 JSON 响应
  */
-function json(data: any, status: number = 200): Response {
+export function json(data: unknown, status: number = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
@@ -40,13 +47,17 @@ function json(data: any, status: number = 200): Response {
 }
 
 /**
+ * 创建成功响应
+ */
+export function successResponse<T>(data: T, message = 'success'): Response {
+  return json({ ok: true, message, data }, 200)
+}
+
+/**
  * 创建错误响应
  */
-function errorResponse(error: string, status: number = 400): Response {
-  return json({
-    ok: false,
-    error
-  }, status)
+export function apiErrorResponse(error: string, status = 400): Response {
+  return json({ ok: false, error }, status)
 }
 
 /**
@@ -75,10 +86,10 @@ async function handleRequest(request: Request): Promise<Response> {
 
     // 404
     logger.debug('Route not found', { method, pathname })
-    return withCors(errorResponse('Not found', 404))
+    return withCors(apiErrorResponse('Not found', 404))
   } catch (error) {
     logger.error('Request handler error', error, { method, pathname })
-    return withCors(errorResponse(error instanceof Error ? error.message : 'Internal error', 500))
+    return withCors(apiErrorResponse(error instanceof Error ? error.message : 'Internal error', 500))
   }
 }
 

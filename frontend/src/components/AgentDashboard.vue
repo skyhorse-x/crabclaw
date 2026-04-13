@@ -20,6 +20,7 @@
         :agent="convertAgent(agent)"
         :selected="selectedAgentId === agent.id"
         @select="selectAgent"
+        @run="openTaskDialog"
         @toggle="toggleAgent"
         @stop="stopAgent"
         @view-log="viewAgentLog"
@@ -72,6 +73,32 @@
                 />
               </el-select>
             </el-form-item>
+            <el-form-item :label="t('agentSkill')">
+              <el-select v-model="newAgent.skillId" clearable style="width: 100%">
+                <el-option
+                  v-for="skill in availableSkills"
+                  :key="skill.value"
+                  :label="skill.label"
+                  :value="skill.value"
+                />
+              </el-select>
+            </el-form-item>
+            <el-form-item :label="t('agentMcp')">
+              <el-select v-model="newAgent.mcpServers" multiple collapse-tags style="width: 100%">
+                <el-option
+                  v-for="server in availableMcpServers"
+                  :key="server"
+                  :label="server"
+                  :value="server"
+                />
+              </el-select>
+            </el-form-item>
+            <el-form-item :label="t('executionMode')">
+              <el-select v-model="newAgent.executionMode" style="width: 100%">
+                <el-option :label="t('executionModeAuto')" value="auto" />
+                <el-option :label="t('executionModeManual')" value="manual" />
+              </el-select>
+            </el-form-item>
             <el-form-item :label="t('agentColor')">
               <div class="color-picker">
                 <div
@@ -90,6 +117,30 @@
       <template #footer>
         <el-button @click="showCreateDialog = false">{{ t('cancel') }}</el-button>
         <el-button type="primary" @click="createAgent" :loading="creating">{{ t('confirm') }}</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="showTaskDialog"
+      :title="t('runTaskTitle')"
+      width="560px"
+    >
+      <el-form label-width="90px">
+        <el-form-item :label="t('agentName')">
+          <el-input :model-value="taskDialogAgent?.name || ''" disabled />
+        </el-form-item>
+        <el-form-item :label="t('taskInput')">
+          <el-input
+            v-model="taskInput"
+            type="textarea"
+            :rows="5"
+            :placeholder="t('taskInputPlaceholder')"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showTaskDialog = false">{{ t('cancel') }}</el-button>
+        <el-button type="primary" :loading="taskSubmitting" @click="submitAgentTask">{{ t('confirm') }}</el-button>
       </template>
     </el-dialog>
 
@@ -124,8 +175,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
-import AgentCard from './AgentCard.vue'
+import { computed, ref, onMounted, onUnmounted, watch } from 'vue'
+import AgentCard from './agents/AgentCard.vue'
 import { Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -134,7 +185,11 @@ interface Agent {
   name: string
   role: string
   prompt?: string
+  defaultTask?: string
   modelId?: string
+  skillId?: string
+  mcpServers?: string[]
+  executionMode?: 'auto' | 'manual'
   color: string
   status: 'idle' | 'running' | 'paused' | 'error'
   currentTask?: string
@@ -173,7 +228,15 @@ const t = (key: string): string => {
     agentPrompt: '代理描述',
     enterPrompt: '输入代理描述...',
     agentModel: '使用模型',
+    agentSkill: '绑定技能',
+    agentMcp: '允许 MCP',
+    executionMode: '执行模式',
+    executionModeAuto: '自动',
+    executionModeManual: '手动确认',
     agentColor: '卡片颜色',
+    runTaskTitle: '给代理下发任务',
+    taskInput: '任务内容',
+    taskInputPlaceholder: '可直接编辑；留空则使用该代理已保存的默认任务内容。',
     cancel: '取消',
     confirm: '确认',
     delete: '删除',
@@ -188,9 +251,8 @@ const t = (key: string): string => {
 }
 
 const colorOptions = [
-  '#4f46e5', '#7c3aed', '#ec4899', '#ef4444',
-  '#f97316', '#eab308', '#22c55e', '#14b8a6',
-  '#06b6d4', '#3b82f6'
+  '#e5e7eb', '#d1d5db', '#cbd5e1', '#bfdbfe',
+  '#dbeafe', '#f1f5f9'
 ]
 
 const API_BASE = ''
@@ -198,23 +260,34 @@ const API_BASE = ''
 const agents = ref<Agent[]>([])
 const selectedAgentId = ref<string | null>(null)
 const showCreateDialog = ref(false)
+const showTaskDialog = ref(false)
 const showLogDialog = ref(false)
 const currentLogAgent = ref<Agent | null>(null)
 const logContentRef = ref<HTMLElement | null>(null)
 const creating = ref(false)
+const taskSubmitting = ref(false)
 let refreshInterval: ReturnType<typeof setInterval> | null = null
+let logRefreshInterval: ReturnType<typeof setInterval> | null = null
 
 const currentLogs = ref<LogEntry[]>([])
+const taskDialogAgentId = ref<string | null>(null)
+const taskInput = ref('')
 
 const newAgent = ref<Partial<Agent>>({
   name: '',
   role: 'coder',
   prompt: '',
+  defaultTask: '',
   modelId: '',
+  skillId: '',
+  mcpServers: [],
+  executionMode: 'auto',
   color: colorOptions[0]
 })
 
 const availableModels = ref<{ value: string; label: string }[]>([])
+const availableSkills = ref<{ value: string; label: string }[]>([])
+const availableMcpServers = ref<string[]>([])
 
 const availableRoles = ref<RoleOption[]>([
   { value: 'coder', label: '程序员' },
@@ -273,6 +346,33 @@ async function fetchRoles() {
   }
 }
 
+async function fetchSkills() {
+  try {
+    const res = await fetch(`${API_BASE}/api/config`)
+    if (!res.ok) return
+    const data = await res.json()
+    const skills = Array.isArray(data?.data?.skills) ? data.data.skills : []
+    availableSkills.value = skills.map((s: any) => ({
+      value: String(s.id || ''),
+      label: String(s.name || s.id || '')
+    })).filter((s: { value: string; label: string }) => Boolean(s.value))
+  } catch (error) {
+    console.error('Failed to fetch skills:', error)
+  }
+}
+
+async function fetchMcpServers() {
+  try {
+    const res = await fetch(`${API_BASE}/api/mcp`)
+    if (!res.ok) return
+    const data = await res.json()
+    const servers = Array.isArray(data?.servers) ? data.servers : []
+    availableMcpServers.value = servers.map((s: any) => String(s?.id || '')).filter(Boolean)
+  } catch (error) {
+    console.error('Failed to fetch MCP servers:', error)
+  }
+}
+
 async function fetchLogs(agentId: string) {
   try {
     const res = await fetch(`${API_BASE}/api/agents/${agentId}/logs`)
@@ -289,6 +389,7 @@ function convertAgent(agent: Agent) {
     id: agent.id,
     name: agent.name,
     role: agent.role,
+    modelId: agent.modelId || 'default',
     status: agent.status,
     currentTask: agent.currentTask,
     progress: agent.progress,
@@ -300,6 +401,49 @@ function convertAgent(agent: Agent) {
 
 function selectAgent(id: string) {
   selectedAgentId.value = id
+}
+
+const taskDialogAgent = computed(() =>
+  agents.value.find(agent => agent.id === taskDialogAgentId.value) || null
+)
+
+function openTaskDialog(id: string) {
+  const agent = agents.value.find(item => item.id === id)
+  taskDialogAgentId.value = id
+  taskInput.value = String(agent?.defaultTask || '')
+  showTaskDialog.value = true
+}
+
+async function submitAgentTask() {
+  const agentId = taskDialogAgentId.value
+  const task = String(taskInput.value || '').trim()
+  const agent = agents.value.find(item => item.id === agentId)
+  if (!agentId) return
+  if (!task && !String(agent?.defaultTask || '').trim()) {
+    ElMessage.warning(t('taskInputPlaceholder'))
+    return
+  }
+
+  taskSubmitting.value = true
+  try {
+    const res = await fetch(`${API_BASE}/api/agents/${agentId}/task`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task })
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      ElMessage.error(String(data?.error || '任务下发失败'))
+      return
+    }
+    ElMessage.success('任务已下发')
+    showTaskDialog.value = false
+    await fetchAgents()
+  } catch (error) {
+    ElMessage.error('任务下发失败')
+  } finally {
+    taskSubmitting.value = false
+  }
 }
 
 async function toggleAgent(id: string) {
@@ -370,6 +514,23 @@ async function viewAgentLog(id: string) {
   }
 }
 
+watch(showLogDialog, (visible) => {
+  if (!visible) {
+    if (logRefreshInterval) {
+      clearInterval(logRefreshInterval)
+      logRefreshInterval = null
+    }
+    return
+  }
+  if (!currentLogAgent.value) return
+  if (logRefreshInterval) clearInterval(logRefreshInterval)
+  logRefreshInterval = setInterval(() => {
+    if (currentLogAgent.value) {
+      fetchLogs(currentLogAgent.value.id)
+    }
+  }, 2000)
+})
+
 async function createAgent() {
   if (!newAgent.value.name) {
     ElMessage.warning('请输入代理名称')
@@ -390,7 +551,11 @@ async function createAgent() {
         name: '',
         role: 'coder',
         prompt: '',
+        defaultTask: '',
         modelId: '',
+        skillId: '',
+        mcpServers: [],
+        executionMode: 'auto',
         color: colorOptions[0]
       }
       await fetchAgents()
@@ -431,6 +596,8 @@ onMounted(() => {
   fetchAgents()
   fetchModels()
   fetchRoles()
+  fetchSkills()
+  fetchMcpServers()
   refreshInterval = setInterval(() => {
     fetchAgents()
   }, 3000)
@@ -440,6 +607,10 @@ onUnmounted(() => {
   if (refreshInterval) {
     clearInterval(refreshInterval)
     refreshInterval = null
+  }
+  if (logRefreshInterval) {
+    clearInterval(logRefreshInterval)
+    logRefreshInterval = null
   }
 })
 </script>
@@ -482,6 +653,20 @@ onUnmounted(() => {
   gap: 16px;
 }
 
+.agent-dashboard :deep(.el-dialog) {
+  max-height: 86vh;
+}
+
+.agent-dashboard :deep(.el-dialog__body) {
+  max-height: calc(86vh - 120px);
+  overflow-y: auto;
+  padding-right: 10px;
+}
+
+.agent-dashboard :deep(.el-form-item__content) {
+  min-width: 0;
+}
+
 .color-picker {
   display: flex;
   gap: 8px;
@@ -503,7 +688,7 @@ onUnmounted(() => {
 
 .color-option.active {
   border-color: var(--text-primary);
-  box-shadow: 0 0 0 2px var(--bg-secondary);
+  box-shadow: none;
 }
 
 .log-container {
@@ -520,7 +705,8 @@ onUnmounted(() => {
 
 .log-content {
   flex: 1;
-  background: var(--bg-tertiary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-light);
   border-radius: var(--radius-sm);
   padding: 12px;
   overflow-y: auto;
@@ -552,15 +738,16 @@ onUnmounted(() => {
 }
 
 .log-line.info .log-level {
-  color: var(--accent-primary);
+  color: var(--text-secondary);
 }
 
 .log-line.warn .log-level {
-  color: var(--warning);
+  color: var(--text-secondary);
 }
 
 .log-line.error .log-level {
-  color: var(--danger);
+  color: var(--text-secondary);
+  opacity: 0.9;
 }
 
 .log-message {

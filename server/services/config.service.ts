@@ -4,7 +4,7 @@
  */
 
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { 
   AppConfig, 
@@ -212,7 +212,8 @@ export class ConfigValidator {
         theme: config.settings.theme ? String(config.settings.theme) : DEFAULTS.THEME,
         language: config.settings.language ? String(config.settings.language) : DEFAULTS.LANGUAGE,
         activeModelId: config.settings.activeModelId ? String(config.settings.activeModelId) : undefined,
-        userDataDir: config.settings.userDataDir ? String(config.settings.userDataDir) : undefined
+        userDataDir: config.settings.userDataDir ? String(config.settings.userDataDir) : undefined,
+        skillsDir: config.settings.skillsDir ? String(config.settings.skillsDir) : PATHS.SKILLS_DIR
       },
       models: Array.isArray(config.models) 
         ? config.models.map((model: any, i: number) => this.validateModel(model, i))
@@ -314,6 +315,7 @@ export class ConfigService {
       // 更新缓存
       this.cache = validatedConfig
       this.cacheTimestamp = now
+      this.skillsDir = validatedConfig.settings.skillsDir || PATHS.SKILLS_DIR
       
       return validatedConfig
     } catch (error) {
@@ -331,6 +333,7 @@ export class ConfigService {
     
     try {
       const validatedConfig = ConfigValidator.validateConfig(config)
+      this.skillsDir = validatedConfig.settings.skillsDir || PATHS.SKILLS_DIR
       
       // 加密所有模型中的 API Key
       const encryptionService = getEncryptionService()
@@ -355,6 +358,7 @@ export class ConfigService {
       // 更新缓存
       this.cache = validatedConfig
       this.cacheTimestamp = Date.now()
+      this.skillsDir = validatedConfig.settings.skillsDir || PATHS.SKILLS_DIR
       
       return validatedConfig
     } catch (error) {
@@ -376,7 +380,11 @@ export class ConfigService {
    * 获取技能配置文件路径
    */
   getSkillFilePath(skillId: string): string {
-    return path.join(this.skillsDir, `${skillId}.skill.json`)
+    return path.join(this.skillsDir, skillId, 'SKILL.md')
+  }
+
+  getSkillDirPath(skillId: string): string {
+    return path.join(this.skillsDir, skillId)
   }
 
   /**
@@ -387,7 +395,12 @@ export class ConfigService {
     
     try {
       const content = await readFile(skillPath, 'utf8')
-      const skill = JSON.parse(content)
+      const jsonBlock = this.extractJsonBlock(content)
+      if (!jsonBlock) {
+        logger.error(`Skill file missing JSON block: ${skillId}`)
+        return null
+      }
+      const skill = JSON.parse(jsonBlock)
       return ConfigValidator.validateSkill(skill)
     } catch (error: any) {
       if (error.code === 'ENOENT') {
@@ -402,12 +415,21 @@ export class ConfigService {
    * 保存技能文件
    */
   async saveSkillFile(skill: SkillConfig): Promise<void> {
+    const skillDir = this.getSkillDirPath(skill.id)
     const skillPath = this.getSkillFilePath(skill.id)
+    const agentsDir = path.join(skillDir, 'agents')
+    const agentYamlPath = path.join(agentsDir, 'openai.yaml')
     
     try {
       await this.ensureConfigDir()
-      const content = JSON.stringify(skill, null, 2)
+      await mkdir(skillDir, { recursive: true })
+      await mkdir(agentsDir, { recursive: true })
+      const content = this.buildSkillMarkdown(skill)
       await writeFile(skillPath, content, 'utf8')
+      if (!await this.exists(agentYamlPath)) {
+        const yaml = this.buildAgentYaml(skill)
+        await writeFile(agentYamlPath, yaml, 'utf8')
+      }
       logger.info('Skill file saved', { skillId: skill.id, path: skillPath })
     } catch (error: any) {
       logger.error('Failed to save skill file', error)
@@ -419,17 +441,48 @@ export class ConfigService {
    * 删除技能文件
    */
   async deleteSkillFile(skillId: string): Promise<void> {
-    const skillPath = this.getSkillFilePath(skillId)
+    const skillDir = this.getSkillDirPath(skillId)
     
     try {
-      const { unlink } = await import('node:fs/promises')
-      await unlink(skillPath)
-      logger.info('Skill file deleted', { skillId, path: skillPath })
+      await rm(skillDir, { recursive: true, force: true })
+      logger.info('Skill file deleted', { skillId, path: skillDir })
     } catch (error: any) {
       if (error.code !== 'ENOENT') {
         logger.error('Failed to delete skill file', error)
         throw error
       }
+    }
+  }
+
+  private extractJsonBlock(content: string): string | null {
+    const match = content.match(/```json\s*([\s\S]*?)\s*```/i)
+    if (!match) return null
+    return match[1]
+  }
+
+  private buildSkillMarkdown(skill: SkillConfig): string {
+    const header = `# ${skill.name}\n\n${skill.description || ''}\n`
+    const metaLines = [
+      `- id: ${skill.id}`,
+      `- category: ${skill.category}`,
+      `- tags: ${(skill.tags || []).join(', ') || '-'}`,
+      `- triggerPhrases: ${(skill.triggerPhrases || []).join(', ') || '-'}`,
+      `- delayMs: ${skill.delayMs ?? 500}`
+    ].join('\n')
+    const jsonBlock = JSON.stringify(skill, null, 2)
+    return `${header}\n## Metadata\n${metaLines}\n\n## Skill JSON\n\n\`\`\`json\n${jsonBlock}\n\`\`\`\n`
+  }
+
+  private buildAgentYaml(skill: SkillConfig): string {
+    return `name: ${skill.name}\ncategory: ${skill.category}\nentry: SKILL.md\n`
+  }
+
+  private async exists(filePath: string): Promise<boolean> {
+    try {
+      await readFile(filePath)
+      return true
+    } catch {
+      return false
     }
   }
 }
@@ -444,7 +497,8 @@ export function createDefaultConfig(): AppConfig {
       theme: DEFAULTS.THEME,
       language: DEFAULTS.LANGUAGE,
       activeModelId: 'default-openai',
-      userDataDir: undefined
+      userDataDir: undefined,
+      skillsDir: PATHS.SKILLS_DIR
     },
     models: [
       {

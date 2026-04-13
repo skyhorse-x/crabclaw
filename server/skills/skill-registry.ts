@@ -3,7 +3,7 @@
  * 管理所有技能的注册和执行
  */
 
-import { readFile } from 'node:fs/promises'
+import { readFile, readdir, mkdir, writeFile, rm } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { logger } from '../services/logger.service'
@@ -124,7 +124,11 @@ export class SkillRegistry implements ISkillRegistry {
       }
 
       const json = await readFile(filePath, 'utf8')
-      const skill: Skill = JSON.parse(json)
+      const skill = this.parseSkillContent(filePath, json)
+      if (!skill) {
+        logger.error('[SkillRegistry] Failed to parse skill content', { filePath })
+        return
+      }
 
       this.register(skill)
       logger.info('[SkillRegistry] Skill loaded from file', { 
@@ -149,13 +153,21 @@ export class SkillRegistry implements ISkillRegistry {
         return 0
       }
 
-      const { readdir } = await import('fs/promises')
-      const files = await readdir(dirPath)
+      const entries = await readdir(dirPath, { withFileTypes: true })
       let loadedCount = 0
 
-      for (const file of files) {
-        if (file.endsWith('.skill.json') || file.endsWith('.json')) {
-          const filePath = join(dirPath, file)
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          const skillPath = join(dirPath, entry.name, 'SKILL.md')
+          if (existsSync(skillPath)) {
+            await this.loadFromFile(skillPath)
+            loadedCount++
+          }
+          continue
+        }
+
+        if (entry.isFile() && (entry.name.endsWith('.skill.json') || entry.name.endsWith('.json'))) {
+          const filePath = join(dirPath, entry.name)
           await this.loadFromFile(filePath)
           loadedCount++
         }
@@ -171,6 +183,92 @@ export class SkillRegistry implements ISkillRegistry {
       logger.error('[SkillRegistry] Failed to load skills from directory', error)
       return 0
     }
+  }
+
+  async migrateJsonSkillsToFolders(dirPath: string): Promise<number> {
+    try {
+      if (!existsSync(dirPath)) {
+        return 0
+      }
+
+      const entries = await readdir(dirPath, { withFileTypes: true })
+      let migrated = 0
+
+      for (const entry of entries) {
+        if (!entry.isFile()) continue
+        if (!entry.name.endsWith('.skill.json')) continue
+
+        const filePath = join(dirPath, entry.name)
+        const raw = await readFile(filePath, 'utf8')
+        let skill: Skill | null = null
+        try {
+          skill = JSON.parse(raw)
+        } catch (error) {
+          logger.error('[SkillRegistry] Invalid skill json, skip migration', { filePath })
+          continue
+        }
+
+        const skillId = String(skill?.id || entry.name.replace(/\.skill\.json$/i, ''))
+        const skillDir = join(dirPath, skillId)
+        const skillMd = join(skillDir, 'SKILL.md')
+        const agentsDir = join(skillDir, 'agents')
+        const agentYaml = join(agentsDir, 'openai.yaml')
+
+        await mkdir(skillDir, { recursive: true })
+        await mkdir(agentsDir, { recursive: true })
+        if (!existsSync(skillMd)) {
+          const md = this.buildSkillMarkdown(skill)
+          await writeFile(skillMd, md, 'utf8')
+        }
+        if (!existsSync(agentYaml)) {
+          const yaml = this.buildAgentYaml(skill)
+          await writeFile(agentYaml, yaml, 'utf8')
+        }
+
+        await rm(filePath, { force: true })
+        migrated++
+      }
+
+      if (migrated > 0) {
+        logger.info('[SkillRegistry] Skills migrated to folder structure', { dirPath, migrated })
+      }
+      return migrated
+    } catch (error: any) {
+      logger.error('[SkillRegistry] Failed to migrate skills', { dirPath, error: error.message })
+      return 0
+    }
+  }
+
+  private parseSkillContent(filePath: string, content: string): Skill | null {
+    if (filePath.endsWith('SKILL.md')) {
+      const jsonBlock = this.extractJsonBlock(content)
+      if (!jsonBlock) return null
+      return JSON.parse(jsonBlock) as Skill
+    }
+    return JSON.parse(content) as Skill
+  }
+
+  private extractJsonBlock(content: string): string | null {
+    const match = content.match(/```json\s*([\s\S]*?)\s*```/i)
+    if (!match) return null
+    return match[1]
+  }
+
+  private buildSkillMarkdown(skill: Skill): string {
+    const header = `# ${skill.name}\n\n${skill.description || ''}\n`
+    const metaLines = [
+      `- id: ${skill.id}`,
+      `- category: ${skill.category}`,
+      `- tags: ${(skill.tags || []).join(', ') || '-'}`,
+      `- triggerPhrases: ${(skill.triggerPhrases || []).join(', ') || '-'}`,
+      `- delayMs: ${skill.delayMs ?? 500}`
+    ].join('\n')
+    const jsonBlock = JSON.stringify(skill, null, 2)
+    return `${header}\n## Metadata\n${metaLines}\n\n## Skill JSON\n\n\`\`\`json\n${jsonBlock}\n\`\`\`\n`
+  }
+
+  private buildAgentYaml(skill: Skill): string {
+    return `name: ${skill.name}\ncategory: ${skill.category}\nentry: SKILL.md\n`
   }
 
   /**

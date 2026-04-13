@@ -1,5 +1,18 @@
 <template>
   <div class="app-container">
+    <!-- 启动加载画面 -->
+    <div v-if="isInitializing" class="loading-overlay">
+      <div class="loading-content">
+        <div class="loading-icon">
+          <div class="loading-icon-inner">AI</div>
+        </div>
+        <div class="loading-text">{{ t('initializing') || '启动中...' }}</div>
+        <div class="loading-progress">
+          <div class="loading-progress-bar" :style="{ width: initProgress + '%' }"></div>
+        </div>
+      </div>
+    </div>
+
     <!-- 左右布局 -->
     <div class="split-layout">
       <!-- 左侧边栏 -->
@@ -69,6 +82,7 @@
               {{ backendOnline ? t('statusOnline') : t('statusOffline') }}
             </el-tag>
           </div>
+          <div class="version-info">v1.0.0</div>
         </div>
       </aside>
 
@@ -81,6 +95,9 @@
           </div>
           <div class="toolbar-right">
             <div class="toolbar-actions">
+              <el-button class="office-entry-btn" plain @click="openOffice3d">
+                3D代理办公室
+              </el-button>
               <!-- 菜单图标 -->
               <el-dropdown>
                 <el-button :icon="Menu" circle plain :title="t('systemMenu')"></el-button>
@@ -122,7 +139,48 @@
                 </div>
               </div>
               <div class="message-content">
-                <div class="message-bubble" :class="message.role">
+                <div
+                  v-if="message?.meta?.traceExpanded || message.typing || traceRunningCalls(message).length > 0"
+                  class="trace-panel trace-panel-inline trace-panel-primary"
+                >
+                  <div class="trace-status-bar">
+                    <div class="trace-status-main">
+                      <span v-if="!message?.typing" class="trace-status-name">{{ message.agentName || 'assistant' }}</span>
+                      <span class="trace-status-sub">{{ tracePanelSubtitle(message) }}</span>
+                      <span v-if="traceRunningCalls(message).length > 0" class="mcp-running">
+                        {{ t('mcpRunning') }}: {{ traceRunningCalls(message).join(', ') }}
+                      </span>
+                    </div>
+                  </div>
+                  <div class="trace-inline-details">
+                    <div v-if="traceDetails(message).length > 0" class="trace-group-list">
+                      <div
+                        v-for="group in groupedTraceDetails(message)"
+                        :key="group.key"
+                        class="trace-group"
+                      >
+                        <div class="trace-group-header">
+                          <span class="trace-group-title">{{ group.key }}</span>
+                        </div>
+                        <div class="trace-group-body">
+                          <div
+                            v-for="(item, idx) in group.items"
+                            :key="`${item.time}-${idx}`"
+                            class="trace-drawer-item"
+                          >
+                            <div class="trace-drawer-title">
+                              <span class="trace-branch">{{ idx === group.items.length - 1 ? '└─' : '├─' }}</span>
+                              <span class="trace-text">{{ item.text }}</span>
+                              <span v-if="formatTraceTime(item.time)" class="trace-detail-time">{{ formatTraceTime(item.time) }}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <el-empty v-else :description="t('noData')" />
+                  </div>
+                </div>
+                <div class="message-bubble" :class="message.role" @contextmenu.prevent="showMessageContextMenu($event, message.text)">
                   <div class="message-text" v-html="renderMessageText(message.text)"></div>
                   <span v-if="message.typing && message.text && message.text.trim()" class="print-cursor">|</span>
                   <span v-else-if="message.typing" class="typing-indicator" aria-label="AI 正在输入">
@@ -130,7 +188,6 @@
                     <span class="typing-dot"></span>
                     <span class="typing-dot"></span>
                   </span>
-                  <div v-if="message.agentName" class="message-meta">{{ message.agentName }}</div>
                 </div>
                 <div v-if="message.pendingConfirm" class="confirm-card">
                   <div class="confirm-title">{{ t('confirmActionTitle') }}</div>
@@ -154,32 +211,7 @@
                     </el-button>
                   </div>
                 </div>
-                <div
-                  v-if="shouldShowInlineTrace(message, index)"
-                  class="trace-panel trace-panel-inline"
-                >
-                  <div class="trace-panel-header">
-                    <div class="trace-panel-title">
-                      <span class="trace-panel-name">{{ message.agentName || 'assistant' }}</span>
-                      <span class="trace-panel-subtitle">{{ t('runResultTitle') }}</span>
-                    </div>
-                    <span v-if="traceRunningCalls(message).length > 0" class="mcp-running">
-                      {{ t('mcpRunning') }}: {{ traceRunningCalls(message).join(', ') }}
-                    </span>
-                  </div>
-                  <div class="trace-list" v-if="traceDetails(message).length > 0">
-                    <div v-for="(item, idx) in traceDetails(message)" :key="`${item.time}-${idx}`" class="trace-item">
-                      <span class="trace-step">{{ traceStepLabel(idx) }}</span>
-                      <span class="trace-text">{{ item.text }}</span>
-                    </div>
-                  </div>
-                </div>
                 <div v-if="!message.typing" class="message-actions" :class="message.role">
-                  <el-tooltip :content="t('copyMessage')" placement="bottom">
-                    <el-button text size="small" class="message-action-btn" @click="copyMessageText(message.text)">
-                      <el-icon><CopyDocument /></el-icon>
-                    </el-button>
-                  </el-tooltip>
                   <el-tooltip v-if="message.role === 'user'" :content="t('resendMessage')" placement="bottom">
                     <el-button
                       text
@@ -191,6 +223,20 @@
                       <el-icon><RefreshRight /></el-icon>
                     </el-button>
                   </el-tooltip>
+                  <el-tooltip :content="t('copyMessage')" placement="bottom">
+                    <el-button text size="small" class="message-action-btn" @click="copyMessageText(message.text)">
+                      <el-icon><CopyDocument /></el-icon>
+                    </el-button>
+                  </el-tooltip>
+                  <button
+                    v-if="message.role === 'assistant' && message.text && !message.typing"
+                    class="read-aloud-btn"
+                    :class="{ 'is-reading': message.isReading }"
+                    @click="toggleReadAloud(message)"
+                    :title="message.isReading ? '停止朗读' : '朗读'"
+                  >
+                    <el-icon><VideoPause v-if="message.isReading" /><Bell v-else /></el-icon>
+                  </button>
                   <el-tooltip :content="t('rollbackMessage')" placement="bottom">
                     <el-button
                       text
@@ -200,6 +246,16 @@
                       @click="rollbackToMessage(index)"
                     >
                       <el-icon><ArrowLeftBold /></el-icon>
+                    </el-button>
+                  </el-tooltip>
+                  <el-tooltip :content="t('showPlan')" placement="bottom">
+                    <el-button
+                      text
+                      size="small"
+                      class="message-action-btn"
+                      @click="toggleTraceInline(message)"
+                    >
+                      <el-icon><Document /></el-icon>
                     </el-button>
                   </el-tooltip>
                 </div>
@@ -227,103 +283,88 @@
               </el-tooltip>
             </div>
 
-            <div class="input-container" @contextmenu.prevent="showContextMenu">
-              <el-input
-                ref="chatInputRef"
-                v-model="chatInput"
-                type="textarea"
-                :rows="2"
-                resize="none"
-                :placeholder="t('inputPlaceholder')"
-                @keydown="handleChatKeydown"
-                class="message-input"
-              >
-                <template #prepend>
-                  <el-button
-                    type="text"
-                    :icon="Paperclip"
-                    @click="handleAttach"
-                    class="attach-button"
-                    :title="t('attach')"
-                  />
-                </template>
-              </el-input>
-            </div>
-
-            <div class="input-footer">
-              <div class="input-status-row">
-                <el-tag v-if="selectedChatModelLabel" size="small" effect="plain" class="ai-name-tag">
-                  {{ t('currentAiName') }}: {{ selectedAskAiDisplayName }}
-                </el-tag>
-                <el-tag v-if="customAiAutoAskRunning" size="small" type="warning" effect="dark" class="ai-auto-tag">
-                  {{ t('customAiAutoAsking') }} · {{ customAiAutoAskModelLabel || selectedAskAiDisplayName }}
-                </el-tag>
-                <el-tag v-if="customAiAutoAskRunning && customAiAskForm.multiAiLoop" size="small" type="info" effect="plain" class="ai-auto-tag">
-                  {{ t('customAiMultiLoop') }}
-                </el-tag>
-              </div>
-
-              <div class="input-controls-row">
-                <div class="left-controls">
-                  <el-button
-                    size="small"
-                    plain
-                    @click="openCustomAiAskDialog"
-                  >
-                    {{ t('customAiAsk') }}
-                  </el-button>
-                  <div class="model-selector">
-                    <el-select 
-                      v-model="selectedChatModel" 
-                      :placeholder="t('selectModelPlaceholder')"
-                      size="small" 
-                      style="width: 220px"
-                    >
-                      <el-option
-                        v-for="model in availableModels"
-                        :key="model.value"
-                        :label="model.label"
-                        :value="model.value"
-                      />
-                    </el-select>
+            <!-- 新设计的输入表单 -->
+            <div class="task-input-container">
+              <div class="input-form" :class="{ 'is-focused': isInputFocused }">
+                <textarea
+                  ref="chatInputRef"
+                  v-model="chatInput"
+                  class="main-input"
+                  :placeholder="t('inputPlaceholder')"
+                  @keydown="handleChatKeydown"
+                  @focus="isInputFocused = true"
+                  @blur="isInputFocused = false"
+                  @contextmenu.prevent="showContextMenu"
+                ></textarea>
+                
+                <div class="input-options">
+                  <div class="option-group">
+                    <button class="option-btn" @click="openModelSelector">
+                      <span class="option-icon">🧠</span>
+                      <span class="option-text">{{ selectedChatModelLabel || '默认大模型' }}</span>
+                      <el-icon class="option-arrow"><ArrowDown /></el-icon>
+                    </button>
+                    <button class="option-btn" @click="openSkillsDialog">
+                      <span class="option-icon">⚡</span>
+                      <span class="option-text">{{ selectedSkillName }}</span>
+                      <el-icon class="option-arrow"><ArrowDown /></el-icon>
+                    </button>
+                    <button class="option-btn" @click="openInspirationDialog">
+                      <span class="option-icon">✨</span>
+                      <span class="option-text">虾灵感</span>
+                      <el-icon class="option-arrow"><ArrowDown /></el-icon>
+                    </button>
                   </div>
-                  <div class="execution-mode-selector">
-                    <el-select v-model="chatExecutionMode" size="small" style="width: 132px">
-                      <el-option :label="t('executionModeAuto')" value="auto" />
-                      <el-option :label="t('executionModeManual')" value="manual" />
-                    </el-select>
+                  <div class="input-actions">
+                    <el-button
+                      link
+                      :icon="Microphone"
+                      @click="handleVoiceInput"
+                      class="action-btn"
+                      :class="{ 'voice-active': voiceInput.isRecording.value }"
+                      :title="voiceInput.isRecording.value ? '停止录音' : '语音输入'"
+                    />
+                    <el-button
+                      link
+                      :icon="Paperclip"
+                      @click="handleAttach"
+                      class="action-btn"
+                      :title="t('attach')"
+                    />
+                    <!-- 发送按钮移到用户头像位置 -->
+                    <button 
+                      v-if="loading.chat"
+                      class="user-avatar-btn send-btn"
+                      @click="pauseChat"
+                      title="停止"
+                    >
+                      <el-icon><CloseBold /></el-icon>
+                    </button>
+                    <button 
+                      v-else
+                      class="user-avatar-btn send-btn"
+                      :class="{ 'send-disabled': !chatInput.trim() }"
+                      @click="() => sendChat()"
+                      :title="t('sendMessage')"
+                    >
+                      <el-icon><Promotion /></el-icon>
+                    </button>
                   </div>
                 </div>
-
-                <div class="right-controls">
-                  <el-button
-                    v-if="customAiAutoAskRunning"
-                    size="small"
-                    type="danger"
-                    plain
-                    @click="stopCustomAiAutoAsk"
-                  >
-                    {{ t('stopAutoAsk') }}
-                  </el-button>
-
-                  <el-button
-                    v-if="loading.chat"
-                    type="danger"
-                    :icon="CloseBold"
-                    @click="pauseChat"
-                    class="pause-button"
-                  >
-                    {{ t('pause') }}
-                  </el-button>
-                  <el-button
-                    v-else
-                    type="primary"
-                    :icon="Promotion"
-                    @click="() => sendChat()"
-                    :disabled="!chatInput.trim()"
-                    class="send-button"
-                    circle
-                  />
+              </div>
+              
+              <!-- 状态栏 -->
+              <div class="send-controls">
+                <div class="input-status-row">
+                  <el-tag v-if="selectedChatModelLabel" size="small" effect="plain" class="ai-name-tag">
+                    {{ t('currentAiName') }}: {{ selectedAskAiDisplayName }}
+                  </el-tag>
+                  <el-tag v-if="customAiAutoAskRunning" size="small" type="warning" effect="dark" class="ai-auto-tag">
+                    {{ t('customAiAutoAsking') }} · {{ customAiAutoAskModelLabel || selectedAskAiDisplayName }}
+                  </el-tag>
+                  <el-tag v-if="customAiAutoAskRunning && customAiAskForm.multiAiLoop" size="small" type="info" effect="plain" class="ai-auto-tag">
+                    {{ t('customAiMultiLoop') }}
+                  </el-tag>
                 </div>
               </div>
             </div>
@@ -457,13 +498,134 @@
         </div>
 
         <!-- 任务面板 -->
-        <div class="settings-panel" v-if="selectedNav === 'tasks'">
+        <div class="settings-panel tasks-settings-panel" v-if="selectedNav === 'tasks'">
           <div class="panel-header">
             <div class="panel-header-left">
               <h3>{{ t('taskPanelTitle') }}</h3>
               <p class="panel-desc">{{ t('taskPanelDesc') }}</p>
             </div>
+            <el-button size="small" @click="loadScheduledTasks">{{ t('refresh') }}</el-button>
           </div>
+
+          <!-- 定时任务列表 -->
+          <div class="scheduled-tasks-section">
+            <h4>{{ t('scheduledTasksTitle') }}</h4>
+            <div v-if="scheduledTasksLoading" class="tasks-loading">
+              <el-icon class="is-loading"><LoadingIcon /></el-icon> {{ t('loading') }}
+            </div>
+            <div v-else-if="scheduledTasks.length === 0" class="tasks-empty">
+              {{ t('scheduledTasksEmpty') }}
+            </div>
+            <div v-else class="scheduled-task-list">
+              <div v-for="task in scheduledTasks" :key="task.id" class="scheduled-task-card">
+                <div class="scheduled-task-header">
+                  <span class="scheduled-task-name">{{ task.name }}</span>
+                  <el-tag :type="task.enabled ? 'success' : 'info'" size="small">
+                    {{ task.enabled ? t('enabled') : t('disabled') }}
+                  </el-tag>
+                </div>
+                <div class="scheduled-task-info">
+                  <div class="scheduled-task-row">
+                    <span class="scheduled-task-label">{{ t('taskInterval') }}:</span>
+                    <span>{{ formatInterval(task.intervalMs) }}</span>
+                  </div>
+                  <div class="scheduled-task-row">
+                    <span class="scheduled-task-label">{{ t('taskLastRun') }}:</span>
+                    <span>{{ formatTime(task.lastRun) }}</span>
+                  </div>
+                  <div class="scheduled-task-row">
+                    <span class="scheduled-task-label">{{ t('taskNextRun') }}:</span>
+                    <span>{{ formatTime(task.nextRun) }}</span>
+                  </div>
+                  <div class="scheduled-task-row">
+                    <span class="scheduled-task-label">{{ t('taskTool') }}:</span>
+                    <span class="scheduled-task-tool">{{ task.toolName }}</span>
+                  </div>
+                </div>
+                <div class="scheduled-task-actions">
+                  <el-button size="small" @click="viewTaskLogs(task.id)">
+                    {{ selectedTaskId === task.id ? t('close') : t('viewLogs') }}
+                  </el-button>
+                  <el-button size="small" @click="editScheduledTask(task)">
+                    {{ t('edit') }}
+                  </el-button>
+                  <el-switch
+                    :model-value="task.enabled"
+                    @change="(val: boolean) => toggleScheduledTask(task.id, val)"
+                    :disabled="false"
+                  />
+                  <el-button size="small" type="danger" @click="deleteScheduledTask(task.id)">
+                    {{ t('delete') }}
+                  </el-button>
+                </div>
+
+                <div v-if="selectedTaskId === task.id" class="task-logs-section task-logs-inline">
+                  <div class="logs-header">
+                    <h4>{{ t('taskLogsTitle') }}</h4>
+                    <div class="logs-header-actions">
+                      <el-button
+                        size="small"
+                        :disabled="taskLogsLoading || taskLogs.length === 0"
+                        @click="copyAllTaskLogs"
+                      >
+                        {{ t('taskLogsCopyAll') }}
+                      </el-button>
+                      <el-button
+                        size="small"
+                        type="danger"
+                        plain
+                        :disabled="taskLogsLoading || taskLogs.length === 0"
+                        @click="clearTaskLogs"
+                      >
+                        {{ t('taskLogsClear') }}
+                      </el-button>
+                    </div>
+                  </div>
+                  <div v-if="taskLogsLoading" class="tasks-loading">
+                    <el-icon class="is-loading"><LoadingIcon /></el-icon> {{ t('loading') }}
+                  </div>
+                  <div v-else-if="taskLogs.length === 0" class="tasks-empty">
+                    {{ t('taskLogsEmpty') }}
+                  </div>
+                  <div v-else class="task-log-list">
+                    <div v-for="log in taskLogs" :key="log.id" class="task-log-item" :class="'log-' + log.status">
+                      <div class="task-log-header">
+                        <el-tag :type="log.status === 'success' ? 'success' : 'danger'" size="small">
+                          {{ log.status === 'success' ? t('success') : t('failed') }}
+                        </el-tag>
+                        <span class="task-log-time">{{ formatTime(log.executedAt) }}</span>
+                        <el-button text size="small" @click="copyTaskLog(log)">{{ t('copyMessage') }}</el-button>
+                      </div>
+                      <div v-if="log.result" class="task-log-result">{{ log.result }}</div>
+                      <div v-if="log.error" class="task-log-error">{{ log.error }}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 编辑任务对话框 -->
+          <el-dialog v-model="editingTask" :title="t('editTask')" width="500px" v-if="editingTask">
+            <el-form label-width="100px">
+              <el-form-item :label="t('taskName')">
+                <el-input v-model="editingTask.name" />
+              </el-form-item>
+              <el-form-item :label="t('taskInterval')">
+                <el-input-number v-model="editingTask.intervalMs" :min="1000" :step="1000" />
+                <span style="margin-left: 8px">ms</span>
+              </el-form-item>
+              <el-form-item :label="t('taskTool')">
+                <el-input v-model="editingTask.toolName" />
+              </el-form-item>
+            </el-form>
+            <template #footer>
+              <el-button @click="cancelEditTask">{{ t('cancel') }}</el-button>
+              <el-button type="primary" @click="saveScheduledTask">{{ t('save') }}</el-button>
+            </template>
+          </el-dialog>
+
+          <!-- 执行计划概览 -->
           <div class="tasks-overview">
             <div class="task-stat-card">
               <div class="task-stat-label">{{ t('taskTotal') }}</div>
@@ -514,8 +676,6 @@
               <el-input v-model="remoteControlConfig.verifyCode" :placeholder="t('controlVerifyCode')">
                 <template #prepend>{{ t('controlVerifyCode') }}</template>
               </el-input>
-            </div>
-            <div class="control-global-row control-webhook-row">
               <el-input :model-value="remoteControlWebhookUrl" readonly>
                 <template #prepend>{{ t('controlWebhookUrl') }}</template>
               </el-input>
@@ -523,38 +683,208 @@
             </div>
           </div>
 
-          <div class="control-grid">
-            <div class="control-card">
-              <div class="control-card-header">
-                <span>{{ t('controlChannelTelegram') }}</span>
-                <el-switch v-model="remoteControlConfig.telegram.enabled" />
+          <el-tabs type="border-card" class="platform-tabs">
+            <el-tab-pane name="telegram">
+              <template #label>
+                <span class="platform-tab-label">
+                  <span class="platform-icon telegram-icon">✈</span>
+                  <span>{{ t('controlChannelTelegram') }}</span>
+                </span>
+              </template>
+              <div class="platform-config">
+                <div class="platform-enable-row">
+                  <span>{{ t('controlEnable') }}</span>
+                  <el-switch v-model="remoteControlConfig.telegram.enabled" />
+                </div>
+                <el-form label-width="100px" label-position="left">
+                  <el-form-item :label="t('controlBotToken')">
+                    <el-input v-model="remoteControlConfig.telegram.botToken" type="password" show-password />
+                  </el-form-item>
+                  <el-form-item :label="t('controlChatId')">
+                    <el-input v-model="remoteControlConfig.telegram.chatId" />
+                  </el-form-item>
+                  <el-form-item :label="t('controlTestMessage')">
+                    <el-input v-model="telegramTestMessage" :placeholder="t('controlTestMessagePlaceholder') || '输入测试消息内容'" />
+                  </el-form-item>
+                  <el-form-item>
+                    <el-button type="primary" @click="sendTestToTelegram" :loading="sendingToTelegram">
+                      {{ t('controlSendTest') || '发送测试' }}
+                    </el-button>
+                  </el-form-item>
+                </el-form>
               </div>
-              <el-input v-model="remoteControlConfig.telegram.botToken" :placeholder="t('controlBotToken')" />
-              <el-input v-model="remoteControlConfig.telegram.chatId" :placeholder="t('controlChatId')" />
-            </div>
+            </el-tab-pane>
 
-            <div class="control-card">
-              <div class="control-card-header">
-                <span>{{ t('controlChannelQq') }}</span>
-                <el-switch v-model="remoteControlConfig.qq.enabled" />
+            <el-tab-pane name="qq">
+              <template #label>
+                <span class="platform-tab-label">
+                  <span class="platform-icon qq-icon">Q</span>
+                  <span>{{ t('controlChannelQq') }}</span>
+                </span>
+              </template>
+              <div class="platform-config">
+                <div class="platform-enable-row">
+                  <span>{{ t('controlEnable') }}</span>
+                  <el-switch v-model="remoteControlConfig.qq.enabled" />
+                </div>
+                <el-form label-width="100px" label-position="left">
+                  <el-form-item :label="t('controlBotId')">
+                    <el-input v-model="remoteControlConfig.qq.botId" />
+                  </el-form-item>
+                  <el-form-item :label="t('controlWebhook')">
+                    <el-input v-model="remoteControlConfig.qq.webhook" />
+                  </el-form-item>
+                </el-form>
               </div>
-              <el-input v-model="remoteControlConfig.qq.botId" :placeholder="t('controlBotId')" />
-              <el-input v-model="remoteControlConfig.qq.webhook" :placeholder="t('controlWebhook')" />
-            </div>
+            </el-tab-pane>
 
-            <div class="control-card">
-              <div class="control-card-header">
-                <span>{{ t('controlChannelFeishu') }}</span>
-                <el-switch v-model="remoteControlConfig.feishu.enabled" />
+            <el-tab-pane name="wechat">
+              <template #label>
+                <span class="platform-tab-label">
+                  <span class="platform-icon wechat-icon">微</span>
+                  <span>{{ t('controlChannelWechat') || '企业微信' }}</span>
+                </span>
+              </template>
+              <div class="platform-config">
+                <div class="platform-enable-row">
+                  <span>{{ t('controlEnable') }}</span>
+                  <el-switch v-model="remoteControlConfig.wechat.enabled" />
+                </div>
+                <el-form label-width="100px" label-position="left">
+                  <el-form-item :label="t('controlWebhook')">
+                    <el-input v-model="remoteControlConfig.wechat.webhook" />
+                  </el-form-item>
+                </el-form>
               </div>
-              <el-input v-model="remoteControlConfig.feishu.appId" :placeholder="t('controlAppId')" />
-              <el-input v-model="remoteControlConfig.feishu.appSecret" :placeholder="t('controlAppSecret')" />
-              <el-input v-model="remoteControlConfig.feishu.webhook" :placeholder="t('controlWebhook')" />
-            </div>
-          </div>
+            </el-tab-pane>
+
+            <el-tab-pane name="feishu">
+              <template #label>
+                <span class="platform-tab-label">
+                  <span class="platform-icon feishu-icon">飞</span>
+                  <span>{{ t('controlChannelFeishu') }}</span>
+                </span>
+              </template>
+              <div class="platform-config">
+                <div class="platform-enable-row">
+                  <span>{{ t('controlEnable') }}</span>
+                  <el-switch v-model="remoteControlConfig.feishu.enabled" />
+                </div>
+                <el-form label-width="100px" label-position="left">
+                  <el-form-item :label="t('controlAppId')">
+                    <el-input v-model="remoteControlConfig.feishu.appId" />
+                  </el-form-item>
+                  <el-form-item :label="t('controlAppSecret')">
+                    <el-input v-model="remoteControlConfig.feishu.appSecret" type="password" show-password />
+                  </el-form-item>
+                  <el-form-item :label="t('controlWebhook')">
+                    <el-input v-model="remoteControlConfig.feishu.webhook" />
+                  </el-form-item>
+                </el-form>
+              </div>
+            </el-tab-pane>
+
+            <el-tab-pane name="discord">
+              <template #label>
+                <span class="platform-tab-label">
+                  <span class="platform-icon discord-icon">D</span>
+                  <span>{{ t('controlChannelDiscord') }}</span>
+                </span>
+              </template>
+              <div class="platform-config">
+                <div class="platform-enable-row">
+                  <span>{{ t('controlEnable') }}</span>
+                  <el-switch v-model="remoteControlConfig.discord.enabled" />
+                </div>
+                <el-form label-width="100px" label-position="left">
+                  <el-form-item :label="t('controlBotToken')">
+                    <el-input v-model="remoteControlConfig.discord.botToken" type="password" show-password />
+                  </el-form-item>
+                  <el-form-item :label="t('controlChannelId')">
+                    <el-input v-model="remoteControlConfig.discord.channelId" />
+                  </el-form-item>
+                </el-form>
+              </div>
+            </el-tab-pane>
+
+            <el-tab-pane name="slack">
+              <template #label>
+                <span class="platform-tab-label">
+                  <span class="platform-icon slack-icon">S</span>
+                  <span>{{ t('controlChannelSlack') }}</span>
+                </span>
+              </template>
+              <div class="platform-config">
+                <div class="platform-enable-row">
+                  <span>{{ t('controlEnable') }}</span>
+                  <el-switch v-model="remoteControlConfig.slack.enabled" />
+                </div>
+                <el-form label-width="100px" label-position="left">
+                  <el-form-item :label="t('controlBotToken')">
+                    <el-input v-model="remoteControlConfig.slack.botToken" type="password" show-password />
+                  </el-form-item>
+                  <el-form-item :label="t('controlChannelId')">
+                    <el-input v-model="remoteControlConfig.slack.channelId" />
+                  </el-form-item>
+                </el-form>
+              </div>
+            </el-tab-pane>
+
+            <el-tab-pane name="teams">
+              <template #label>
+                <span class="platform-tab-label">
+                  <span class="platform-icon teams-icon">T</span>
+                  <span>{{ t('controlChannelTeams') }}</span>
+                </span>
+              </template>
+              <div class="platform-config">
+                <div class="platform-enable-row">
+                  <span>{{ t('controlEnable') }}</span>
+                  <el-switch v-model="remoteControlConfig.teams.enabled" />
+                </div>
+                <el-form label-width="100px" label-position="left">
+                  <el-form-item :label="t('controlAppId')">
+                    <el-input v-model="remoteControlConfig.teams.appId" />
+                  </el-form-item>
+                  <el-form-item :label="t('controlAppSecret')">
+                    <el-input v-model="remoteControlConfig.teams.appSecret" type="password" show-password />
+                  </el-form-item>
+                  <el-form-item :label="t('controlWebhook')">
+                    <el-input v-model="remoteControlConfig.teams.webhook" />
+                  </el-form-item>
+                </el-form>
+              </div>
+            </el-tab-pane>
+
+            <el-tab-pane name="whatsapp">
+              <template #label>
+                <span class="platform-tab-label">
+                  <span class="platform-icon whatsapp-icon">W</span>
+                  <span>{{ t('controlChannelWhatsApp') }}</span>
+                </span>
+              </template>
+              <div class="platform-config">
+                <div class="platform-enable-row">
+                  <span>{{ t('controlEnable') }}</span>
+                  <el-switch v-model="remoteControlConfig.whatsapp.enabled" />
+                </div>
+                <el-form label-width="120px" label-position="left">
+                  <el-form-item :label="t('controlTwilioSid')">
+                    <el-input v-model="remoteControlConfig.whatsapp.accountSid" />
+                  </el-form-item>
+                  <el-form-item :label="t('controlTwilioToken')">
+                    <el-input v-model="remoteControlConfig.whatsapp.authToken" type="password" show-password />
+                  </el-form-item>
+                  <el-form-item :label="t('controlFromNumber')">
+                    <el-input v-model="remoteControlConfig.whatsapp.fromNumber" placeholder="+1234567890" />
+                  </el-form-item>
+                </el-form>
+              </div>
+            </el-tab-pane>
+          </el-tabs>
 
           <div class="control-footer">
-            <el-button type="primary" @click="saveRemoteControlConfig">{{ t('controlSave') }}</el-button>
+            <el-button type="primary" size="large" @click="saveRemoteControlConfig">{{ t('controlSave') }}</el-button>
           </div>
         </div>
 
@@ -567,9 +897,12 @@
           <el-tabs v-model="activeSettingTab">
             <el-tab-pane :label="t('basicSettings')" name="basic">
               <el-form label-position="top">
-                <el-form-item :label="t('backendAddress')">
-                  <el-input v-model="config.settings.backendPort" placeholder="17871" />
-                </el-form-item>
+              <el-form-item :label="t('backendAddress')">
+                <el-input v-model="config.settings.backendPort" placeholder="17871" />
+              </el-form-item>
+              <el-form-item :label="t('skillsDir')">
+                <el-input v-model="config.settings.skillsDir" :placeholder="t('skillsDirPlaceholder')" />
+              </el-form-item>
                 <el-form-item :label="t('themeSetting')">
                   <el-select v-model="config.settings.theme">
                     <el-option :label="t('light')" value="light" />
@@ -613,7 +946,7 @@
                           <el-tag v-if="model.isBuiltIn" type="info" size="small" effect="plain" class="type-tag">
                             {{ t('builtIn') }}
                           </el-tag>
-                          <el-tag v-if="model.id === config.settings.activeModelId" type="primary" size="small" effect="dark" class="status-tag-inline">
+                          <el-tag v-if="model.id === config.settings.activeModelId" size="small" effect="plain" class="status-tag-inline">
                             ●
                           </el-tag>
                         </div>
@@ -677,6 +1010,21 @@
                 </el-table>
               </div>
             </el-tab-pane>
+
+            <el-tab-pane label="关于" name="about">
+              <div class="about-container">
+                <div class="about-logo">
+                  <div class="logo-icon" style="width: 60px; height: 60px; font-size: 24px;">AI</div>
+                  <h2>Desktop Agent</h2>
+                </div>
+                <div class="about-version">版本 v1.0.0</div>
+                <div class="about-desc">一个智能桌面助手，帮助你完成各种任务</div>
+                <el-divider />
+                <div class="about-actions">
+                  <el-button type="primary" @click="checkForUpdate">检查更新</el-button>
+                </div>
+              </div>
+            </el-tab-pane>
           </el-tabs>
 
           <el-divider />
@@ -698,6 +1046,30 @@
         <el-button @click="skillDialogVisible = false">取消</el-button>
         <el-button type="primary" @click="createSkill">创建</el-button>
       </template>
+    </el-dialog>
+
+    <!-- 技能选择对话框 -->
+    <el-dialog v-model="skillSelectorVisible" title="选择技能" width="500px">
+      <div class="skill-selector-list">
+        <div 
+          class="skill-selector-item"
+          :class="{ active: selectedChatSkillId === '' }"
+          @click="selectSkill('')"
+        >
+          <span class="skill-selector-icon">🌐</span>
+          <span class="skill-selector-name">默认（无技能）</span>
+        </div>
+        <div 
+          v-for="skill in config.skills"
+          :key="skill.id"
+          class="skill-selector-item"
+          :class="{ active: selectedChatSkillId === skill.id }"
+          @click="selectSkill(skill.id)"
+        >
+          <span class="skill-selector-icon">⚡</span>
+          <span class="skill-selector-name">{{ skill.name }}</span>
+        </div>
+      </div>
     </el-dialog>
 
     <!-- MCP 安装配置对话框 -->
@@ -744,6 +1116,7 @@
         <el-button type="primary" @click="confirmInstallMcpServer" :loading="mcpInstalling">确认安装</el-button>
       </template>
     </el-dialog>
+
 
     <!-- 模型管理对话框 -->
     <el-dialog 
@@ -934,23 +1307,52 @@
       </button>
     </div>
 
-    <!-- 输入框右键菜单 -->
+    <el-dialog
+      v-model="office3dVisible"
+      width="92%"
+      top="4vh"
+      destroy-on-close
+    >
+      <template #header>
+        <div class="office-dialog-header">
+          <span>3D代理办公室</span>
+          <el-button size="small" @click="loadOfficeAgents">刷新</el-button>
+        </div>
+      </template>
+      <AgentOffice3D :agents="officeAgents" />
+    </el-dialog>
+
+    <!-- 输入框/消息右键菜单 -->
     <Teleport to="body">
       <div
         v-if="contextMenuVisible"
         class="context-menu"
+        :class="{ 'context-menu-active': contextMenuTargetText }"
         :style="{ left: contextMenuX + 'px', top: contextMenuY + 'px' }"
         @click.stop
       >
-        <button type="button" class="context-menu-item" @click="copySelection()">
-          复制
-        </button>
-        <button type="button" class="context-menu-item" @click="pasteFromClipboard()">
-          粘贴
-        </button>
-        <button type="button" class="context-menu-item" @click="selectAll()">
-          全选
-        </button>
+        <template v-if="contextMenuTargetText">
+          <button type="button" class="context-menu-item" @click="copyMessageContent()">
+            复制
+          </button>
+          <button type="button" class="context-menu-item" @click="pasteToInput()">
+            粘贴
+          </button>
+          <button type="button" class="context-menu-item" @click="selectMessageAll()">
+            全选
+          </button>
+        </template>
+        <template v-else>
+          <button type="button" class="context-menu-item" @click="copySelection()">
+            复制
+          </button>
+          <button type="button" class="context-menu-item" @click="pasteFromClipboard()">
+            粘贴
+          </button>
+          <button type="button" class="context-menu-item" @click="selectAll()">
+            全选
+          </button>
+        </template>
       </div>
     </Teleport>
   </div>
@@ -961,7 +1363,12 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import { ElMessage, ElMessageBox } from "element-plus"
 import MonitorPanel from "./components/MonitorPanel.vue"
 import AgentDashboard from "./components/AgentDashboard.vue"
+import AgentOffice3D from "./components/AgentOffice3D.vue"
+import hljs from "highlight.js"
+import { useVoiceInput } from "./composables/useVoiceInput"
+import { useWebSocket } from "./composables/useWebSocket"
 import {
+  ArrowDown,
   ArrowLeftBold,
   ChatLineRound,
   CloseBold,
@@ -971,14 +1378,19 @@ import {
   EditPen,
   Fold,
   Grid,
+  Loading as LoadingIcon,
   Menu,
+  Microphone,
   Paperclip,
   Plus,
   Promotion,
   RefreshRight,
   Setting,
+  Bell,
+  VideoPause,
   Star,
   Timer,
+  Document,
 } from "@element-plus/icons-vue"
 
 const apiBase = ref("")
@@ -994,11 +1406,15 @@ let chatAbortController: AbortController | null = null
 let typewriterTimer: ReturnType<typeof setInterval> | null = null
 let chatHistorySaveTimer: ReturnType<typeof setTimeout> | null = null
 let backendPollTimer: ReturnType<typeof setInterval> | null = null
+let officePollTimer: ReturnType<typeof setInterval> | null = null
 const typewriterState = {
   messageIndex: -1,
   queue: [] as string[],
   resolver: null as null | (() => void)
 }
+const fastStreamDisplay = ref(false)
+const TYPEWRITER_CHUNK_SIZE = 6
+const TYPEWRITER_INTERVAL_MS = 10
 const chatHistoryHydrating = ref(false)
 const chatHistoryReady = ref(false)
 
@@ -1032,6 +1448,240 @@ interface CustomAskAiItem {
 const customAskAiList = ref<CustomAskAiItem[]>([])
 const mcpToolServers = ref<string[]>([])
 const backendOnline = ref(false)
+
+const voiceInput = useVoiceInput({ lang: 'zh-CN', continuous: false, interimResults: true })
+const showVoiceIndicator = ref(false)
+
+const chatWs = useWebSocket()
+
+// 定时任务列表
+interface ScheduledTask {
+  id: string
+  name: string
+  type: 'interval' | 'cron'
+  intervalMs?: number
+  toolName: string
+  toolInput: Record<string, unknown>
+  enabled: boolean
+  lastRun?: number
+  nextRun?: number
+  createdAt: number
+}
+
+interface TaskLog {
+  id: string
+  taskId: string
+  taskName: string
+  status: 'success' | 'error'
+  result?: string
+  error?: string
+  executedAt: number
+}
+
+const scheduledTasks = ref<ScheduledTask[]>([])
+const scheduledTasksLoading = ref(false)
+const taskLogs = ref<TaskLog[]>([])
+const taskLogsLoading = ref(false)
+const selectedTaskId = ref<string | null>(null)
+let taskLogsInterval: ReturnType<typeof setInterval> | null = null
+
+async function loadScheduledTasks() {
+  scheduledTasksLoading.value = true
+  try {
+    const res = await fetch(buildApiUrl('/api/scheduled-tasks'))
+    const data = await res.json()
+    if (data.ok) {
+      scheduledTasks.value = data.tasks
+    }
+  } catch (err) {
+    console.error('加载定时任务失败:', err)
+  } finally {
+    scheduledTasksLoading.value = false
+  }
+}
+
+async function loadTaskLogs(taskId?: string) {
+  taskLogsLoading.value = true
+  try {
+    let url = '/api/scheduled-tasks/logs'
+    if (taskId) {
+      url += `?taskId=${taskId}`
+    }
+    const res = await fetch(buildApiUrl(url))
+    const data = await res.json()
+    if (data.ok) {
+      taskLogs.value = data.logs
+    }
+  } catch (err) {
+    console.error('加载任务日志失败:', err)
+  } finally {
+    taskLogsLoading.value = false
+  }
+}
+
+function viewTaskLogs(taskId: string) {
+  if (selectedTaskId.value === taskId) {
+    selectedTaskId.value = null
+    taskLogs.value = []
+    return
+  }
+  selectedTaskId.value = taskId
+  loadTaskLogs(taskId)
+}
+
+watch(selectedTaskId, (taskId) => {
+  if (taskLogsInterval) {
+    clearInterval(taskLogsInterval)
+    taskLogsInterval = null
+  }
+  if (!taskId) return
+  taskLogsInterval = setInterval(() => {
+    loadTaskLogs(taskId)
+  }, 2000) as unknown as ReturnType<typeof setInterval>
+})
+
+async function clearTaskLogs() {
+  if (!selectedTaskId.value) return
+
+  try {
+    await ElMessageBox.confirm(
+      t('taskLogsClearConfirm'),
+      t('taskLogsClearTitle'),
+      { type: 'warning' }
+    )
+  } catch {
+    return
+  }
+
+  try {
+    const res = await fetch(buildApiUrl('/api/scheduled-tasks'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        action: 'clear_logs',
+        taskId: selectedTaskId.value
+      })
+    })
+    const data = await res.json()
+    if (data.ok) {
+      taskLogs.value = []
+      ElMessage.success(t('taskLogsCleared'))
+    }
+  } catch (err) {
+    console.error('清空任务日志失败:', err)
+    ElMessage.error(t('taskLogsClearFailed'))
+  }
+}
+
+function formatTaskLogText(log: TaskLog): string {
+  const lines = [
+    `${t('taskName')}: ${log.taskName || ''}`,
+    `${t('taskLogsTitle')}: ${log.status === 'success' ? t('success') : t('failed')}`,
+    `${t('taskLastRun')}: ${formatTime(log.executedAt)}`
+  ]
+  if (log.result) {
+    lines.push(`result: ${log.result}`)
+  }
+  if (log.error) {
+    lines.push(`error: ${log.error}`)
+  }
+  return lines.join('\n')
+}
+
+async function copyTaskLog(log: TaskLog) {
+  await copyMessageText(formatTaskLogText(log), true)
+}
+
+async function copyAllTaskLogs() {
+  if (taskLogs.value.length === 0) return
+  const content = taskLogs.value.map((log) => formatTaskLogText(log)).join('\n\n----------------\n\n')
+  await copyMessageText(content, true)
+}
+
+const editingTask = ref<ScheduledTask | null>(null)
+
+function editScheduledTask(task: ScheduledTask) {
+  editingTask.value = { ...task }
+}
+
+function cancelEditTask() {
+  editingTask.value = null
+}
+
+async function saveScheduledTask() {
+  if (!editingTask.value) return
+  try {
+    const res = await fetch(buildApiUrl('/api/scheduled-tasks'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        action: 'update',
+        id: editingTask.value.id,
+        updates: {
+          name: editingTask.value.name,
+          intervalMs: editingTask.value.intervalMs,
+          enabled: editingTask.value.enabled,
+          toolName: editingTask.value.toolName,
+          toolInput: editingTask.value.toolInput
+        }
+      })
+    })
+    const data = await res.json()
+    if (data.ok) {
+      editingTask.value = null
+      await loadScheduledTasks()
+    }
+  } catch (err) {
+    console.error('保存任务失败:', err)
+  }
+}
+
+async function toggleScheduledTask(id: string, enabled: boolean) {
+  const action = enabled ? 'enable' : 'disable'
+  try {
+    const res = await fetch(buildApiUrl('/api/scheduled-tasks'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action, id })
+    })
+    const data = await res.json()
+    if (data.ok) {
+      await loadScheduledTasks()
+    }
+  } catch (err) {
+    console.error('切换定时任务状态失败:', err)
+  }
+}
+
+async function deleteScheduledTask(id: string) {
+  try {
+    const res = await fetch(buildApiUrl('/api/scheduled-tasks'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'delete', id })
+    })
+    const data = await res.json()
+    if (data.ok) {
+      await loadScheduledTasks()
+    }
+  } catch (err) {
+    console.error('删除定时任务失败:', err)
+  }
+}
+
+function formatInterval(ms?: number): string {
+  if (!ms) return '-'
+  const minutes = Math.round(ms / 60000)
+  if (minutes < 60) return `${minutes} 分钟`
+  const hours = Math.round(minutes / 60)
+  if (hours < 24) return `${hours} 小时`
+  return `${Math.round(hours / 24)} 天`
+}
+
+function formatTime(ts?: number): string {
+  if (!ts) return '-'
+  return new Date(ts).toLocaleString('zh-CN')
+}
 
 // 计划列表
 const currentPlan = ref<any[]>([])
@@ -1074,6 +1724,7 @@ const liveState = ref<LiveState>({
   screen: { width: 0, height: 0 }
 })
 
+
 interface AppConfig {
   settings: {
     backendPort: number
@@ -1081,6 +1732,8 @@ interface AppConfig {
     language: string
     activeModelId: string
     userDataDir?: string
+    skillsDir?: string
+    username?: string
   }
   models: Array<{
     id: string
@@ -1114,6 +1767,7 @@ interface Conversation {
     meta?: any
     typing?: boolean
     error?: boolean
+    isReading?: boolean
     pendingConfirm?: {
       server: string
       tool: string
@@ -1130,7 +1784,8 @@ const config = ref<AppConfig>({
     theme: "light",
     language: "zh-CN",
     activeModelId: "",
-    userDataDir: ""
+    userDataDir: "",
+    skillsDir: ""
   },
   models: [],
   skills: []
@@ -1169,11 +1824,37 @@ interface RemoteControlConfig {
     botId: string
     webhook: string
   }
+  wechat: {
+    enabled: boolean
+    webhook: string
+  }
   feishu: {
     enabled: boolean
     appId: string
     appSecret: string
     webhook: string
+  }
+  discord: {
+    enabled: boolean
+    botToken: string
+    channelId: string
+  }
+  slack: {
+    enabled: boolean
+    botToken: string
+    channelId: string
+  }
+  teams: {
+    enabled: boolean
+    appId: string
+    appSecret: string
+    webhook: string
+  }
+  whatsapp: {
+    enabled: boolean
+    accountSid: string
+    authToken: string
+    fromNumber: string
   }
 }
 
@@ -1193,15 +1874,40 @@ function createDefaultRemoteControlConfig(): RemoteControlConfig {
       botId: '',
       webhook: ''
     },
+    wechat: {
+      enabled: false,
+      webhook: ''
+    },
     feishu: {
       enabled: false,
       appId: '',
       appSecret: '',
       webhook: ''
+    },
+    discord: {
+      enabled: false,
+      botToken: '',
+      channelId: ''
+    },
+    slack: {
+      enabled: false,
+      botToken: '',
+      channelId: ''
+    },
+    teams: {
+      enabled: false,
+      appId: '',
+      appSecret: '',
+      webhook: ''
+    },
+    whatsapp: {
+      enabled: false,
+      accountSid: '',
+      authToken: '',
+      fromNumber: ''
     }
   }
 }
-
 const remoteControlConfig = reactive<RemoteControlConfig>(createDefaultRemoteControlConfig())
 const remoteControlWebhookUrl = computed(() => buildApiUrl('/api/remote-control/hook'))
 
@@ -1210,6 +1916,7 @@ const locales = {
     // 通用
     appTitle: "AI Agent",
     appSubtitle: "Desktop Studio",
+    initializing: "启动中...",
     sidebarFold: "折叠侧边栏",
     newChat: "新建对话",
     navChat: "对话",
@@ -1224,9 +1931,31 @@ const locales = {
     taskTotal: "总任务数",
     taskRunning: "进行中",
     taskCompleted: "已完成",
-    taskAutomationTitle: "自动运行策略",
+    taskAutomationTitle: "自动化策略",
     taskAutomationDesc: "自动执行会直接运行工具调用，手动确认模式会在关键步骤等待你确认。",
     taskGoChat: "去对话页",
+    scheduledTasksTitle: "定时任务",
+    scheduledTasksEmpty: "暂无定时任务，请通过 AI 对话创建",
+    taskInterval: "执行间隔",
+    taskLastRun: "上次执行",
+    taskNextRun: "下次执行",
+    taskTool: "执行工具",
+    refresh: "刷新",
+    enabled: "已启用",
+    disabled: "已停用",
+    delete: "删除",
+    viewLogs: "查看日志",
+    taskLogsTitle: "执行日志",
+    taskLogsEmpty: "暂无执行日志",
+    taskLogsCopyAll: "复制全部",
+    taskLogsClear: "清空日志",
+    taskLogsClearTitle: "清空执行日志",
+    taskLogsClearConfirm: "确定清空当前任务的执行日志吗？",
+    taskLogsCleared: "日志已清空",
+    taskLogsClearFailed: "清空日志失败",
+    close: "关闭",
+    success: "成功",
+    failed: "失败",
     controlPanelTitle: "远程控制端",
     controlPanelDesc: "通过 Telegram / QQ / 飞书远程下发指令，控制桌面代理执行。",
     controlGlobalEnable: "启用远程控制",
@@ -1238,7 +1967,18 @@ const locales = {
     controlEnable: "启用",
     controlChannelTelegram: "Telegram",
     controlChannelQq: "QQ",
+    controlChannelWechat: "企业微信",
     controlChannelFeishu: "飞书",
+    controlChannelDiscord: "Discord",
+    controlChannelSlack: "Slack",
+    controlChannelTeams: "Teams",
+    controlChannelWhatsApp: "WhatsApp",
+    controlChannelId: "Channel ID",
+    controlTwilioSid: "Twilio Account SID",
+    controlTwilioToken: "Twilio Auth Token",
+    controlFromNumber: "From Number",
+    controlTestMessage: "测试消息",
+    controlTestMessagePlaceholder: "输入测试消息内容",
     controlBotToken: "Bot Token",
     controlChatId: "Chat ID",
     controlWebhook: "Webhook",
@@ -1254,7 +1994,7 @@ const locales = {
     chatSubtitle: "与AI助手进行对话",
     selectSkillPlaceholder: "选择技能",
     selectModelPlaceholder: "选择模型",
-    inputPlaceholder: "按 Enter 发送，Shift+Enter 换行",
+    inputPlaceholder: "Enter 换行，Ctrl/Cmd+Enter 发送",
     customAiAsk: "添加提问机器人",
     customAiAskTitle: "添加提问机器人（支持多个）",
     customAiSelectModel: "选择提问机器人模型",
@@ -1299,6 +2039,8 @@ const locales = {
     hidePlan: "收起执行详情",
     viewHistoryChats: "查看聊天历史对话",
     aiDetailTitle: "AI 处理细节",
+    noData: "暂无数据",
+    runProcessingTitle: "正在执行",
     runResultTitle: "运行结果",
     mcpRunning: "当前调用 MCP",
     mcpRecent: "最近调用",
@@ -1356,6 +2098,8 @@ const locales = {
     systemMenu: "系统菜单",
     basicSettings: "基本设置",
     backendAddress: "后端地址",
+    skillsDir: "技能目录",
+    skillsDirPlaceholder: "例如：/Users/xxx/server/data/skills",
     dataDirectory: "用户数据目录",
     saveDataDirectory: "保存目录",
     saveSettings: "保存设置",
@@ -1377,9 +2121,10 @@ const locales = {
     builtIn: "内置",
     custom: "自定义",
     edit: "编辑",
-    delete: "删除",
     noModels: "暂无模型",
     addFirstModel: "添加第一个模型",
+    taskName: "任务名称",
+    editTask: "编辑任务",
     totalTokens: "总 Tokens",
     promptTokens: "提示 Tokens",
     completionTokens: "完成 Tokens",
@@ -1437,6 +2182,7 @@ const locales = {
     // Common
     appTitle: "AI Agent",
     appSubtitle: "Desktop Studio",
+    initializing: "Initializing...",
     sidebarFold: "Collapse sidebar",
     newChat: "New Chat",
     navChat: "Chat",
@@ -1454,6 +2200,30 @@ const locales = {
     taskAutomationTitle: "Automation Policy",
     taskAutomationDesc: "Auto mode runs tool calls directly, while Manual mode waits for your confirmation.",
     taskGoChat: "Go to Chat",
+    scheduledTasksTitle: "Scheduled Tasks",
+    scheduledTasksEmpty: "No scheduled tasks, create via AI chat",
+    taskInterval: "Interval",
+    taskLastRun: "Last Run",
+    taskNextRun: "Next Run",
+    taskTool: "Tool",
+    refresh: "Refresh",
+    enabled: "Enabled",
+    disabled: "Disabled",
+    viewLogs: "View Logs",
+    taskLogsTitle: "Execution Logs",
+    taskLogsEmpty: "No execution logs",
+    taskLogsCopyAll: "Copy All",
+    taskLogsClear: "Clear Logs",
+    taskLogsClearTitle: "Clear Execution Logs",
+    taskLogsClearConfirm: "Clear execution logs for this task?",
+    taskLogsCleared: "Logs cleared",
+    taskLogsClearFailed: "Failed to clear logs",
+    close: "Close",
+    success: "Success",
+    failed: "Failed",
+    edit: "Edit",
+    taskName: "Task Name",
+    editTask: "Edit Task",
     controlPanelTitle: "Remote Control",
     controlPanelDesc: "Send remote commands through Telegram / QQ / Feishu to control desktop execution.",
     controlGlobalEnable: "Enable remote control",
@@ -1465,7 +2235,18 @@ const locales = {
     controlEnable: "Enable",
     controlChannelTelegram: "Telegram",
     controlChannelQq: "QQ",
+    controlChannelWechat: "Enterprise WeChat",
     controlChannelFeishu: "Feishu",
+    controlChannelDiscord: "Discord",
+    controlChannelSlack: "Slack",
+    controlChannelTeams: "Teams",
+    controlChannelWhatsApp: "WhatsApp",
+    controlChannelId: "Channel ID",
+    controlTwilioSid: "Twilio Account SID",
+    controlTwilioToken: "Twilio Auth Token",
+    controlFromNumber: "From Number",
+    controlTestMessage: "Test Message",
+    controlTestMessagePlaceholder: "Enter test message content",
     controlBotToken: "Bot Token",
     controlChatId: "Chat ID",
     controlWebhook: "Webhook",
@@ -1481,7 +2262,7 @@ const locales = {
     chatSubtitle: "Chat with AI assistant",
     selectSkillPlaceholder: "Select skill",
     selectModelPlaceholder: "Select model",
-    inputPlaceholder: "Press Enter to send, Shift+Enter for newline",
+    inputPlaceholder: "Enter for newline, Ctrl/Cmd+Enter to send",
     customAiAsk: "Add Question Bot",
     customAiAskTitle: "Add Question Bots (Multiple Supported)",
     customAiSelectModel: "Select Question Bot model",
@@ -1526,6 +2307,8 @@ const locales = {
     hidePlan: "Hide execution details",
     viewHistoryChats: "View chat history",
     aiDetailTitle: "AI details",
+    noData: "No data",
+    runProcessingTitle: "Running",
     runResultTitle: "Run Results",
     mcpRunning: "Running MCP",
     mcpRecent: "Recent MCP calls",
@@ -1583,6 +2366,8 @@ const locales = {
     systemMenu: "System Menu",
     basicSettings: "Basic",
     backendAddress: "Backend Port",
+    skillsDir: "Skills directory",
+    skillsDirPlaceholder: "e.g. /Users/xxx/server/data/skills",
     dataDirectory: "User data directory",
     saveDataDirectory: "Save directory",
     saveSettings: "Save",
@@ -1603,8 +2388,6 @@ const locales = {
     activated: "Activated",
     builtIn: "Built-in",
     custom: "Custom",
-    edit: "Edit",
-    delete: "Delete",
     noModels: "No models available",
     addFirstModel: "Add First Model",
     totalTokens: "Total Tokens",
@@ -1720,12 +2503,55 @@ const chatInputRef = ref<HTMLTextAreaElement | null>(null)
 const contextMenuVisible = ref(false)
 const contextMenuX = ref(0)
 const contextMenuY = ref(0)
+const contextMenuTargetText = ref('')
 const selectedChatSkillId = ref("")
 const skillDialogVisible = ref(false)
+const skillSelectorVisible = ref(false)
 const selectedNav = ref<NavKey>("chat")
 const sidebarCollapsed = ref(false)
+const isInitializing = ref(true)
+const initProgress = ref(0)
 const activeSettingTab = ref("basic")
 const monitorPanelVisible = ref(true)
+const office3dVisible = ref(false)
+const officeAgents = ref<any[]>([])
+
+// 新输入表单相关
+const isInputFocused = ref(false)
+const userAvatarText = computed(() => {
+  const username = config.value.settings.username || 'User'
+  return username.charAt(0).toUpperCase()
+})
+
+const selectedSkillName = computed(() => {
+  if (!selectedChatSkillId.value) return '技能'
+  const skill = config.value.skills.find(s => s.id === selectedChatSkillId.value)
+  return skill?.name || '技能'
+})
+
+// 选项按钮点击处理
+function openModelSelector() {
+  ElMessage.info('模型选择功能开发中')
+}
+
+function openSkillsDialog() {
+  skillSelectorVisible.value = true
+}
+
+function selectSkill(skillId: string) {
+  selectedChatSkillId.value = skillId
+  skillSelectorVisible.value = false
+  ElMessage.success(skillId ? `已选择技能` : '已清除技能')
+}
+
+function openInspirationDialog() {
+  ElMessage.info('灵感功能开发中')
+}
+
+function openUserMenu() {
+  selectedNav.value = 'settings'
+  activeSettingTab.value = 'basic'
+}
 
 watch(activeSettingTab, (newTab) => {
   if (newTab === 'token') {
@@ -1767,8 +2593,8 @@ function scrollChatToBottom() {
   })
 }
 
-function traceStepLabel(index: number) {
-  return `${index + 1}`
+function traceStepLabel(index: number): string {
+  return ''
 }
 
 function createEmptyTrace(): MessageTraceState {
@@ -1873,9 +2699,35 @@ function shouldShowInlineTrace(message: any, index: number) {
   if (!message || message.role !== 'assistant') return false
   const trace = getMessageTrace(message)
   if (!trace) return false
-  const hasTrace = trace.planLines.length > 0 || trace.details.length > 0 || Object.keys(trace.mcpRuntime).length > 0
-  if (!hasTrace) return false
+  const hasRealExecution = trace.details.some(item => {
+    const stage = String(item?.stage || '').toLowerCase()
+    return ['tool', 'mcp', 'confirm', 'task', 'error'].includes(stage)
+  })
+  if (!hasRealExecution) return false
   return index >= 0
+}
+
+function hasExecutionTrace(message: any): boolean {
+  if (!message || message.role !== 'assistant') return false
+  if (message.pendingConfirm) return true
+  const trace = getMessageTrace(message)
+  if (!trace) return false
+  if (Object.keys(trace.mcpRuntime).length > 0) return true
+  return trace.details.some(item => {
+    const stage = String(item?.stage || '').toLowerCase()
+    return ['tool', 'mcp', 'confirm', 'task', 'error'].includes(stage)
+  })
+}
+
+function tracePanelSubtitle(message: any): string {
+  const details = traceDetails(message)
+  const planItems = details.filter(d => d.stage === 'plan')
+  const executionItems = details.filter(d => d.stage !== 'plan')
+  
+  if (message?.typing) {
+    return '思考中...'
+  }
+  return t('runResultTitle')
 }
 
 function traceDetails(message: any): TraceDetailItem[] {
@@ -1896,6 +2748,106 @@ function traceRunningCalls(message: any): string[] {
     .map(item => item.label)
 }
 
+let currentSpeechUtterance: SpeechSynthesisUtterance | null = null
+
+function toggleReadAloud(message: any) {
+  if (message.isReading) {
+    speechSynthesis.cancel()
+    message.isReading = false
+    currentSpeechUtterance = null
+    return
+  }
+  
+  const text = message.text?.replace(/<[^>]*>/g, '') || ''
+  if (!text) return
+  
+  const utterance = new SpeechSynthesisUtterance(text)
+  utterance.lang = 'zh-CN'
+  utterance.rate = 1.0
+  utterance.pitch = 1.0
+  
+  utterance.onend = () => {
+    message.isReading = false
+    currentSpeechUtterance = null
+  }
+  
+  utterance.onerror = () => {
+    message.isReading = false
+    currentSpeechUtterance = null
+  }
+  
+  currentSpeechUtterance = utterance
+  message.isReading = true
+  speechSynthesis.speak(utterance)
+}
+
+function toggleTraceInline(message: any) {
+  const trace = ensureMessageTrace(message)
+  if (!message.meta) {
+    message.meta = { trace, traceExpanded: false }
+  }
+  message.meta.traceExpanded = !message.meta.traceExpanded
+}
+
+function groupedTraceDetails(message: any) {
+  const details = traceDetails(message)
+  if (details.length === 0) return []
+  
+  const groups: Array<{ key: string; items: Array<{ index: number; stage: string; text: string; time: string }> }> = []
+  let currentGroup: { key: string; items: Array<{ index: number; stage: string; text: string; time: string }> } | null = null
+  
+  const isRedundant = (text: string): boolean => {
+    const t = String(text || '').trim()
+    if (!t) return true
+    if (/^step_\d+$/i.test(t)) return true
+    if (/^(MCP\s+)?\S+\s*·\s*(running|done)$/i.test(t)) return true
+    if (/正在调用\s+\S+\s*\.\.\./.test(t)) return true
+    if (/\S+\s*调用中$/.test(t)) return true
+    if (/\S+\s*·\s*running$/.test(t)) return true
+    const skipPatterns = [
+      '解析用户请求', '等待 AI 响应', '执行操作', '返回结果',
+      '已加载模型与 MCP 工具清单', '正在解析用户请求并生成执行方案',
+      '模型已返回响应，正在解析内容'
+    ]
+    const textWithoutEmoji = t.replace(/^[🔄✅❌]\s*/, '')
+    if (skipPatterns.some(p => textWithoutEmoji === p || textWithoutEmoji.startsWith(p + ' ·'))) return true
+    return false
+  }
+  
+  details.forEach((item, index) => {
+    if (item.stage === 'plan') {
+      const text = String(item.text || '').trim()
+      if (!text || /^step_\d+$/i.test(text)) return
+      if (isRedundant(text)) return
+      currentGroup = { key: text, items: [] }
+      groups.push(currentGroup)
+    } else if (currentGroup) {
+      if (!isRedundant(item.text)) {
+        currentGroup.items.push({ ...item, index })
+      }
+    } else {
+      if (!isRedundant(item.text)) {
+        currentGroup = { key: '详情', items: [{ ...item, index }] }
+        groups.push(currentGroup)
+      }
+    }
+  })
+  
+  return groups
+}
+
+function formatTraceTime(time: string): string {
+  if (!time) return ''
+  if (time.startsWith('plan-')) return ''
+  const timestamp = Date.parse(time)
+  if (Number.isNaN(timestamp)) return ''
+  return new Date(timestamp).toLocaleTimeString('zh-CN', { hour12: false })
+}
+
+function formatTraceStage(stage: string): string {
+  return String(stage || '步骤')
+}
+
 function escapeHtml(input: string): string {
   return String(input)
     .replace(/&/g, "&amp;")
@@ -1912,11 +2864,33 @@ function formatNumber(num: number): string {
 function renderMessageText(text: string): string {
   if (!text) return ""
 
+  try {
+    const trimmed = text.trim()
+    const jsonMatch = trimmed.match(/^\{[\s\S]*\}$/)
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0])
+      if (parsed && parsed.type === 'message' && parsed.data && typeof parsed.data === 'object' && parsed.data.content) {
+        text = String(parsed.data.content)
+      } else if (parsed && parsed.content && typeof parsed.content === 'string') {
+        text = String(parsed.content)
+      } else if (parsed && parsed.text && typeof parsed.text === 'string') {
+        text = String(parsed.text)
+      }
+    }
+  } catch {}
+
   const codeBlocks: string[] = []
   let html = escapeHtml(text)
 
   html = html.replace(/```([a-zA-Z0-9_-]+)?\n?([\s\S]*?)```/g, (_all, lang, code) => {
-    const codeHtml = `<pre class="md-code"><div class="md-code-lang">${lang || "text"}</div><code>${String(code).trimEnd()}</code></pre>`
+    const langClass = lang && hljs.getLanguage(lang) ? lang : "plaintext"
+    let highlightedCode: string
+    try {
+      highlightedCode = hljs.highlight(String(code).trimEnd(), { language: langClass }).value
+    } catch {
+      highlightedCode = escapeHtml(String(code).trimEnd())
+    }
+    const codeHtml = `<pre class="md-code"><div class="md-code-lang">${lang || "text"}</div><code class="hljs language-${langClass}">${highlightedCode}</code></pre>`
     const token = `@@CODE_BLOCK_${codeBlocks.length}@@`
     codeBlocks.push(codeHtml)
     return token
@@ -1926,6 +2900,22 @@ function renderMessageText(text: string): string {
   html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
   html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
   html = html.replace(/\*([^*\n]+)\*/g, "<em>$1</em>")
+
+  html = html.replace(/\|(.+)\|\n\|[-| :]+\|\n((?:\|.+\|\n?)*)/g, (_all, header, body) => {
+    const headers = header.split('|').map((h: string) => h.trim()).filter(Boolean)
+    const rows = body.trim().split('\n').map((row: string) =>
+      row.split('|').map((cell: string) => cell.trim()).filter(Boolean)
+    )
+    let tableHtml = '<div class="md-table-wrapper"><table class="md-table"><thead><tr>'
+    tableHtml += headers.map((h: string) => `<th>${h}</th>`).join('')
+    tableHtml += '</tr></thead><tbody>'
+    rows.forEach((row: string[]) => {
+      tableHtml += '<tr>' + row.map((cell: string) => `<td>${cell}</td>`).join('') + '</tr>'
+    })
+    tableHtml += '</tbody></table></div>'
+    return tableHtml
+  })
+
   html = html.replace(/\n/g, "<br/>")
 
   html = html.replace(/@@CODE_BLOCK_(\d+)@@/g, (_m, i) => codeBlocks[Number(i)] || "")
@@ -2127,34 +3117,136 @@ function openMcpUrl(url: string) {
 
 function loadRemoteControlConfig() {
   try {
-    const raw = localStorage.getItem(remoteControlStorageKey)
-    if (!raw) return
-    const parsed = JSON.parse(raw || '{}') as Partial<RemoteControlConfig>
+    fetch(buildApiUrl('/api/remote-control/config'))
+      .then(res => res.json())
+      .then(data => {
+        if (data.enabled !== undefined) {
+          remoteControlConfig.enabled = Boolean(data.enabled)
+        }
+        if (data.commandPrefix) {
+          remoteControlConfig.commandPrefix = String(data.commandPrefix)
+        }
+        if (data.verifyCode) {
+          remoteControlConfig.verifyCode = String(data.verifyCode)
+        }
 
-    remoteControlConfig.enabled = Boolean(parsed.enabled)
-    remoteControlConfig.commandPrefix = String(parsed.commandPrefix || '/agent')
-    remoteControlConfig.verifyCode = String(parsed.verifyCode || '')
+        if (data.telegram) {
+          remoteControlConfig.telegram.enabled = Boolean(data.telegram.enabled)
+          remoteControlConfig.telegram.botToken = String(data.telegram.botToken || '')
+          remoteControlConfig.telegram.chatId = String(data.telegram.chatId || '')
+        }
 
-    remoteControlConfig.telegram.enabled = Boolean(parsed.telegram?.enabled)
-    remoteControlConfig.telegram.botToken = String(parsed.telegram?.botToken || '')
-    remoteControlConfig.telegram.chatId = String(parsed.telegram?.chatId || '')
+        if (data.qq) {
+          remoteControlConfig.qq.enabled = Boolean(data.qq.enabled)
+          remoteControlConfig.qq.botId = String(data.qq.botId || '')
+          remoteControlConfig.qq.webhook = String(data.qq.webhook || '')
+        }
 
-    remoteControlConfig.qq.enabled = Boolean(parsed.qq?.enabled)
-    remoteControlConfig.qq.botId = String(parsed.qq?.botId || '')
-    remoteControlConfig.qq.webhook = String(parsed.qq?.webhook || '')
+        if (data.wechat) {
+          remoteControlConfig.wechat.enabled = Boolean(data.wechat.enabled)
+          remoteControlConfig.wechat.webhook = String(data.wechat.webhook || '')
+        }
 
-    remoteControlConfig.feishu.enabled = Boolean(parsed.feishu?.enabled)
-    remoteControlConfig.feishu.appId = String(parsed.feishu?.appId || '')
-    remoteControlConfig.feishu.appSecret = String(parsed.feishu?.appSecret || '')
-    remoteControlConfig.feishu.webhook = String(parsed.feishu?.webhook || '')
+        if (data.feishu) {
+          remoteControlConfig.feishu.enabled = Boolean(data.feishu.enabled)
+          remoteControlConfig.feishu.appId = String(data.feishu.appId || '')
+          remoteControlConfig.feishu.appSecret = String(data.feishu.appSecret || '')
+          remoteControlConfig.feishu.webhook = String(data.feishu.webhook || '')
+        }
+      })
+      .catch(err => {
+        console.error('从后端加载远控配置失败:', err)
+      })
   } catch (error) {
     console.error('加载远程控制配置失败:', error)
   }
 }
 
+const telegramTestMessage = ref('')
+const sendingToTelegram = ref(false)
+
+async function sendTestToTelegram() {
+  if (!telegramTestMessage.value.trim()) return
+  sendingToTelegram.value = true
+  try {
+    const res = await fetch(buildApiUrl('/api/remote-control/send'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        platform: 'telegram',
+        content: telegramTestMessage.value
+      })
+    })
+    const data = await res.json()
+    if (data.ok) {
+      ElMessage.success('发送成功')
+      telegramTestMessage.value = ''
+    } else {
+      ElMessage.error(data.error || '发送失败')
+    }
+  } catch (err) {
+    ElMessage.error('发送失败')
+  } finally {
+    sendingToTelegram.value = false
+  }
+}
+
 function saveRemoteControlConfig() {
   try {
-    localStorage.setItem(remoteControlStorageKey, JSON.stringify(remoteControlConfig))
+    const payload = {
+      enabled: remoteControlConfig.enabled,
+      commandPrefix: remoteControlConfig.commandPrefix,
+      verifyCode: remoteControlConfig.verifyCode,
+      telegram: {
+        enabled: remoteControlConfig.telegram.enabled,
+        botToken: remoteControlConfig.telegram.botToken,
+        chatId: remoteControlConfig.telegram.chatId
+      },
+      qq: {
+        enabled: remoteControlConfig.qq.enabled,
+        botId: remoteControlConfig.qq.botId,
+        webhook: remoteControlConfig.qq.webhook
+      },
+      wechat: {
+        enabled: remoteControlConfig.wechat.enabled,
+        webhook: remoteControlConfig.wechat.webhook
+      },
+      feishu: {
+        enabled: remoteControlConfig.feishu.enabled,
+        appId: remoteControlConfig.feishu.appId,
+        appSecret: remoteControlConfig.feishu.appSecret,
+        webhook: remoteControlConfig.feishu.webhook
+      },
+      discord: {
+        enabled: remoteControlConfig.discord.enabled,
+        botToken: remoteControlConfig.discord.botToken,
+        channelId: remoteControlConfig.discord.channelId
+      },
+      slack: {
+        enabled: remoteControlConfig.slack.enabled,
+        botToken: remoteControlConfig.slack.botToken,
+        channelId: remoteControlConfig.slack.channelId
+      },
+      teams: {
+        enabled: remoteControlConfig.teams.enabled,
+        appId: remoteControlConfig.teams.appId,
+        appSecret: remoteControlConfig.teams.appSecret,
+        webhook: remoteControlConfig.teams.webhook
+      },
+      whatsapp: {
+        enabled: remoteControlConfig.whatsapp.enabled,
+        accountSid: remoteControlConfig.whatsapp.accountSid,
+        authToken: remoteControlConfig.whatsapp.authToken,
+        fromNumber: remoteControlConfig.whatsapp.fromNumber
+      }
+    }
+
+    fetch(buildApiUrl('/api/remote-control/config'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).catch(() => {})
+
     ElMessage.success(t('controlSaved'))
   } catch (error: any) {
     ElMessage.error(String(error?.message || error || t('saveFailed')))
@@ -2163,6 +3255,21 @@ function saveRemoteControlConfig() {
 
 function toggleSidebar() {
   sidebarCollapsed.value = !sidebarCollapsed.value
+}
+
+async function loadOfficeAgents() {
+  try {
+    const res = await fetch(buildApiUrl('/api/agents'))
+    const data = await res.json()
+    officeAgents.value = Array.isArray(data) ? data : []
+  } catch (error) {
+    console.error('加载3D办公室代理失败:', error)
+    officeAgents.value = []
+  }
+}
+
+function openOffice3d() {
+  office3dVisible.value = true
 }
 
 function switchNav(nav: NavKey) {
@@ -2174,6 +3281,21 @@ function switchNav(nav: NavKey) {
     void fetchSkillMarket(1)
   }
 }
+
+watch(office3dVisible, (visible) => {
+  if (visible) {
+    void loadOfficeAgents()
+    if (officePollTimer) clearInterval(officePollTimer)
+    officePollTimer = setInterval(() => {
+      void loadOfficeAgents()
+    }, 3000) as unknown as ReturnType<typeof setInterval>
+    return
+  }
+  if (officePollTimer) {
+    clearInterval(officePollTimer)
+    officePollTimer = null
+  }
+})
 
 function newChat() {
   const newId = `chat-${Date.now()}`
@@ -2220,18 +3342,36 @@ function handleGlobalPointerDown(event: MouseEvent) {
 }
 
 function handleGlobalKeydown(event: KeyboardEvent) {
+  const isMeta = event.ctrlKey || event.metaKey
+
   if (contextMenuVisible.value) {
     if (event.key === 'Escape') {
       hideContextMenu()
       event.preventDefault()
     }
+    return
   }
-  if (event.ctrlKey || event.metaKey) {
-    if (event.key === 'v' && document.activeElement?.closest('.chat-input-area')) {
-      if (chatInputRef.value) {
+
+  if (isMeta && document.activeElement?.closest('.chat-input-area')) {
+    const textarea = document.querySelector('.chat-input-area textarea') as HTMLTextAreaElement
+    switch (event.key) {
+      case 'v':
         event.preventDefault()
         void pasteFromClipboard()
-      }
+        break
+      case 'a':
+        if (textarea) {
+          event.preventDefault()
+          textarea.select()
+        }
+        break
+      case 'c':
+        const selection = window.getSelection()
+        if (selection && selection.toString()) {
+          navigator.clipboard.writeText(selection.toString())
+          ElMessage.success('已复制')
+        }
+        break
     }
   }
 }
@@ -2299,6 +3439,7 @@ async function deleteConversationHistory() {
 function pushMessage(role: string, text: string, meta?: any, options: any = {}) {
   currentConversation.value.messages.push({ role, text, meta, ...options })
   scrollChatToBottom()
+  scheduleSaveChatHistory()
 }
 
 function serializeConversationsForSave() {
@@ -2310,7 +3451,8 @@ function serializeConversationsForSave() {
       text: msg.text,
       agentName: msg.agentName,
       meta: msg.meta,
-      error: Boolean(msg.error)
+      error: Boolean(msg.error),
+      typing: Boolean(msg.typing)
     }))
   }))
 }
@@ -2350,7 +3492,23 @@ async function loadChatHistory() {
     const storedConversations = response?.data?.conversations
 
     if (Array.isArray(storedConversations) && storedConversations.length > 0) {
-      conversations.value = storedConversations
+      conversations.value = storedConversations.map((conversation: any) => ({
+        ...conversation,
+        messages: Array.isArray(conversation?.messages)
+          ? conversation.messages.map((message: any) => {
+              const wasTyping = Boolean(message?.typing)
+              const nextMeta = {
+                ...(message?.meta && typeof message.meta === 'object' ? message.meta : {}),
+                animateOnLoad: wasTyping || Boolean(message?.meta?.animateOnLoad)
+              }
+              return {
+                ...message,
+                meta: nextMeta,
+                typing: false
+              }
+            })
+          : []
+      }))
       const defaultConversation = conversations.value[0]
       currentConversationId.value = defaultConversation?.id || 'default'
     }
@@ -2410,6 +3568,8 @@ async function saveChatStorageDirectory() {
     ElMessage.success(t('dataDirectorySaved'))
 
     await loadChatHistory()
+    await nextTick()
+    await replayPersistedAssistantAnimation()
   } catch (error: any) {
     ElMessage.error(String(error.message || error))
   }
@@ -2436,6 +3596,13 @@ function stopTypewriter() {
 function enqueueTypewriter(messageIndex: number, text: string) {
   if (!text) return
 
+  if (fastStreamDisplay.value) {
+    if (!messages.value[messageIndex]) return
+    messages.value[messageIndex].text += text
+    scrollChatToBottom()
+    return
+  }
+
   if (typewriterState.messageIndex !== messageIndex) {
     stopTypewriter()
     typewriterState.messageIndex = messageIndex
@@ -2457,21 +3624,24 @@ function enqueueTypewriter(messageIndex: number, text: string) {
       return
     }
 
-    const chunk = queueItem.slice(0, 2)
+    const chunk = queueItem.slice(0, TYPEWRITER_CHUNK_SIZE)
     if (!messages.value[messageIndex]) {
       stopTypewriter()
       return
     }
     messages.value[messageIndex].text += chunk
-    typewriterState.queue[0] = queueItem.slice(2)
+    typewriterState.queue[0] = queueItem.slice(TYPEWRITER_CHUNK_SIZE)
     if (!typewriterState.queue[0]) {
       typewriterState.queue.shift()
     }
     scrollChatToBottom()
-  }, 18)
+  }, TYPEWRITER_INTERVAL_MS)
 }
 
 function waitTypewriterDrain(): Promise<void> {
+  if (fastStreamDisplay.value) {
+    return Promise.resolve()
+  }
   if (!typewriterState.queue.length && !typewriterTimer) {
     return Promise.resolve()
   }
@@ -2479,6 +3649,39 @@ function waitTypewriterDrain(): Promise<void> {
   return new Promise((resolve) => {
     typewriterState.resolver = resolve
   })
+}
+
+async function replayPersistedAssistantAnimation() {
+  if (fastStreamDisplay.value) return
+  const list = messages.value
+  if (!Array.isArray(list) || list.length === 0) return
+
+  const targetIndex = [...list]
+    .map((message, index) => ({ message, index }))
+    .reverse()
+    .find(({ message }) => (
+      message.role === 'assistant' &&
+      Boolean(message?.meta?.animateOnLoad) &&
+      String(message?.text || '').trim().length > 0
+    ))?.index ?? -1
+
+  if (targetIndex < 0 || !list[targetIndex]) return
+
+  const message = list[targetIndex]
+  const fullText = String(message.text || '')
+  message.text = ''
+  message.typing = true
+
+  enqueueTypewriter(targetIndex, fullText)
+  await waitTypewriterDrain()
+
+  if (!list[targetIndex]) return
+  list[targetIndex].typing = false
+  list[targetIndex].meta = {
+    ...(list[targetIndex].meta && typeof list[targetIndex].meta === 'object' ? list[targetIndex].meta : {}),
+    animateOnLoad: false
+  }
+  scheduleSaveChatHistory()
 }
 
 function buildApiUrl(path: string): string {
@@ -2533,6 +3736,8 @@ async function bootstrap() {
     await checkBackend()
     await loadChatStorageConfig()
     await loadChatHistory()
+    await nextTick()
+    await replayPersistedAssistantAnimation()
     // 设置默认聊天模型（使用模型 ID，复用已配置模型）
     const activeModel = config.value?.models?.find(m => m.id === config.value.settings.activeModelId)
     if (activeModel) {
@@ -2563,7 +3768,8 @@ async function loadConfig() {
         theme: data?.settings?.theme ?? "light",
         language: data?.settings?.language ?? "zh-CN",
         activeModelId: data?.settings?.activeModelId ?? "",
-        userDataDir: data?.settings?.userDataDir ?? ""
+        userDataDir: data?.settings?.userDataDir ?? "",
+        skillsDir: data?.settings?.skillsDir ?? ""
       },
       models: Array.isArray(data?.models) && data.models.length > 0 ? data.models : [],
       skills: Array.isArray(data?.skills) ? data.skills : []
@@ -2581,6 +3787,10 @@ async function loadState() {
   } catch (error) {
     console.error("加载状态失败:", error)
   }
+}
+
+function checkForUpdate() {
+  ElMessage.info('已是最新版本')
 }
 
 async function persistConfig(message = t('saveSuccess')) {
@@ -2632,183 +3842,171 @@ async function sendChat(
   chatInput.value = ""
   loading.chat = true
   isChatPaused.value = false
+  customAiAutoAskStopRequested.value = false
   
-  // 清空计划列表
   clearPlan()
   
-  // 创建 AbortController 用于取消请求
   chatAbortController = new AbortController()
 
+  let messageIndex = -1
+  let traceMessage: any = null
+
   try {
-    // 创建一个临时的 assistant 消息，用于显示打字效果
-    const messageIndex = messages.value.length
+    messageIndex = messages.value.length
     messages.value.push({
       role: "assistant",
       text: "",
       typing: true,
       agentName: aiNameOverride || getModelLabelById(modelOverride || selectedChatModel.value) || undefined
     })
-    const traceMessage = messages.value[messageIndex]
+    traceMessage = messages.value[messageIndex]
     ensureMessageTrace(traceMessage)
     
-    // 获取对话历史用于上下文
     const conversationHistory = messages.value
       .filter(m => !m.typing && m.text)
       .slice(-20)
       .map(m => ({ role: m.role, text: m.text }))
     
-    // 发送聊天请求（流式响应）
-    const response = await fetch(buildApiUrl('/api/chat'), {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        message,
-        conversationHistory,
-        selectedSkillId: aiConfigOverride?.skillId || selectedChatSkillId.value,
-        model: modelOverride || selectedChatModel.value,
-        executionMode: chatExecutionMode.value,
-        promptInstruction: aiConfigOverride?.prompt || '',
-        allowedMcpServers: Array.isArray(aiConfigOverride?.mcpServers) ? aiConfigOverride?.mcpServers : undefined
-      }),
-      signal: chatAbortController.signal
-    })
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`)
+    if (!chatWs.isConnected.value) {
+      chatWs.connect(`ws://${window.location.hostname}:17870/ws`)
+      await new Promise(resolve => setTimeout(resolve, 1000))
     }
 
-    // 处理流式响应
-    const reader = response.body?.getReader()
-    if (!reader) {
-      throw new Error("无法读取响应流")
-    }
-
-    const decoder = new TextDecoder()
-    let buffer = ""
-
-    let streamError: string | null = null
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split("\n")
-      buffer = lines.pop() || ""
-
-      for (const line of lines) {
-        if (line.startsWith("data: ")) {
-          let chunk: any
-          try {
-            chunk = JSON.parse(line.slice(6))
-          } catch (e) {
-            console.error("解析流数据失败:", e)
-            continue
-          }
-
-          if (chunk.type === "plan") {
-            updatePlan(chunk.plan)
-            syncPlanToMessage(traceMessage, chunk.plan)
-          } else if (chunk.type === "detail") {
-            const detail = chunk.detail || {}
-            pushExecutionDetailToMessage(traceMessage, String(detail.stage || 'detail'), String(detail.text || ''), String(detail.time || ''))
-          } else if (chunk.type === "mcp") {
-            applyMcpEventToMessage(traceMessage, chunk.mcp || {})
-          } else if (chunk.type === "confirm") {
-            const confirmData = chunk.confirm || {}
-            traceMessage.pendingConfirm = {
-              server: String(confirmData.server || ''),
-              tool: String(confirmData.tool || ''),
-              args: confirmData.args && typeof confirmData.args === 'object' ? confirmData.args : {},
-              message: String(confirmData.message || ''),
-              executing: false
-            }
-            pushExecutionDetailToMessage(
-              traceMessage,
-              'confirm',
-              String(confirmData.message || `待确认执行：${traceMessage.pendingConfirm.server}/${traceMessage.pendingConfirm.tool}`)
-            )
-          } else if (chunk.type === "reply") {
-            const replyText = String(chunk.reply || "")
-            if (!chunk.delta) {
-              messages.value[messageIndex].text = ""
-            }
-            enqueueTypewriter(messageIndex, replyText)
-          } else if (chunk.type === "error") {
-            streamError = String(chunk.error || "未知流式错误")
-            break
-          } else if (chunk.type === "done") {
-            if (chunk.usage && messages.value[messageIndex]) {
-              messages.value[messageIndex].meta = {
-                ...messages.value[messageIndex].meta,
-                total_tokens: chunk.usage.totalTokens,
-                prompt_tokens: chunk.usage.promptTokens,
-                completion_tokens: chunk.usage.completionTokens
-              }
-            }
+    const chunkHandler = (chunk: any) => {
+      if (chunk.type === "plan") {
+        updatePlan(chunk.plan)
+        syncPlanToMessage(traceMessage, chunk.plan)
+      } else if (chunk.type === "detail") {
+        const detail = chunk.detail || {}
+        pushExecutionDetailToMessage(traceMessage, String(detail.stage || 'detail'), String(detail.text || ''), String(detail.time || ''))
+      } else if (chunk.type === "mcp") {
+        applyMcpEventToMessage(traceMessage, chunk.mcp || {})
+      } else if (chunk.type === "task") {
+        const taskData = chunk.task || {}
+        const hasStepInfo = Boolean(taskData.stepId || taskData.title || taskData.error || taskData.stepStatus)
+        if (hasStepInfo) {
+          const title = String(taskData.title || taskData.stepId || taskData.status || 'task')
+          const status = String(taskData.stepStatus || taskData.status || 'running')
+          pushExecutionDetailToMessage(traceMessage, 'task', `${title} · ${status}`, String(taskData.time || ''))
+        }
+      } else if (chunk.type === "confirm") {
+        const confirmData = chunk.confirm || {}
+        traceMessage.pendingConfirm = {
+          server: String(confirmData.server || ''),
+          tool: String(confirmData.tool || ''),
+          args: confirmData.args && typeof confirmData.args === 'object' ? confirmData.args : {},
+          message: String(confirmData.message || ''),
+          executing: false
+        }
+        pushExecutionDetailToMessage(
+          traceMessage,
+          'confirm',
+          String(confirmData.message || `待确认执行：${traceMessage.pendingConfirm.server}/${traceMessage.pendingConfirm.tool}`)
+        )
+      } else if (chunk.type === "step") {
+        const stepData = chunk.step || {}
+        const stepText = String(stepData.text || '')
+        const stepStatus = String(stepData.status || 'start')
+        const prefix = stepStatus === 'done' ? '✅ ' : stepStatus === 'error' ? '❌ ' : '🔄 '
+        if (stepText) {
+          pushExecutionDetailToMessage(traceMessage, 'step', prefix + stepText, '')
+        }
+      } else if (chunk.type === "reply") {
+        const replyText = String(chunk.reply || "")
+        if (!chunk.delta) {
+          messages.value[messageIndex].text = ""
+        }
+        enqueueTypewriter(messageIndex, replyText)
+      } else if (chunk.type === "error") {
+        throw new Error(String(chunk.error || "未知流式错误"))
+      } else if (chunk.type === "done") {
+        if (chunk.usage && messages.value[messageIndex]) {
+          messages.value[messageIndex].meta = {
+            ...messages.value[messageIndex].meta,
+            total_tokens: chunk.usage.totalTokens,
+            prompt_tokens: chunk.usage.promptTokens,
+            completion_tokens: chunk.usage.completionTokens
           }
         }
+        void loadScheduledTasks()
       }
-
-      if (streamError) break
     }
 
-    if (streamError) {
-      throw new Error(streamError)
-    }
+    const unsubscribe = chatWs.onChatChunk(chunkHandler)
+
+    chatWs.sendChat({
+      message,
+      conversationHistory,
+      selectedSkillId: aiConfigOverride?.skillId || selectedChatSkillId.value,
+      model: modelOverride || selectedChatModel.value,
+      executionMode: chatExecutionMode.value,
+      promptInstruction: aiConfigOverride?.prompt || '',
+      allowedMcpServers: Array.isArray(aiConfigOverride?.mcpServers) ? aiConfigOverride?.mcpServers : undefined
+    })
+
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        unsubscribe()
+        reject(new Error('请求中断'))
+      }, 120000)
+
+      chatWs.on('stream_end', () => {
+        clearTimeout(timeout)
+        unsubscribe()
+        resolve(null)
+      })
+
+      chatWs.on('error', (payload: any) => {
+        clearTimeout(timeout)
+        unsubscribe()
+        reject(new Error(payload?.message || 'WebSocket error'))
+      })
+    })
 
     await waitTypewriterDrain()
     if (messages.value[messageIndex]) {
       messages.value[messageIndex].typing = false
+      messages.value[messageIndex].meta = {
+        ...(messages.value[messageIndex].meta && typeof messages.value[messageIndex].meta === 'object'
+          ? messages.value[messageIndex].meta
+          : {}),
+        animateOnLoad: true
+      }
+      void saveChatHistoryNow()
       return String(messages.value[messageIndex].text || '')
     }
   } catch (error) {
     stopTypewriter()
     const errorMessage = String((error as any).message || error || '')
+
     const abortedByUser =
       customAiAutoAskStopRequested.value ||
       errorMessage.toLowerCase().includes('abort') ||
       errorMessage.includes('The user aborted a request')
 
     if (abortedByUser) {
-      if (messages.value.length > 0 && messages.value[messages.value.length - 1].role === "assistant" && messages.value[messages.value.length - 1].typing) {
-        messages.value[messages.value.length - 1].typing = false
-        if (!messages.value[messages.value.length - 1].text) {
-          messages.value.pop()
-        }
+      const lastMsg = messages.value[messages.value.length - 1]
+      if (lastMsg && lastMsg.role === "assistant") {
+        lastMsg.typing = false
+        lastMsg.text = lastMsg.text || "用户取消了本次对话"
+      } else {
+        pushMessage("assistant", "用户取消了本次对话")
       }
       return null
     }
 
-    if (isChatPaused.value) {
-      // 如果是用户主动暂停，不显示错误消息
-      if (messages.value.length > 0 && messages.value[messages.value.length - 1].role === "assistant" && messages.value[messages.value.length - 1].typing) {
-        messages.value[messages.value.length - 1].text = "对话已暂停"
-        messages.value[messages.value.length - 1].typing = false
-      }
+    if (messages.value.length > 0 && messages.value[messages.value.length - 1].role === "assistant" && messages.value[messages.value.length - 1].typing) {
+      messages.value.pop()
+    }
+
+    if (errorMessage.includes('ARK_API_KEY') || errorMessage.includes('未配置') || errorMessage.includes('请在 .env 中设置')) {
+      ElMessage.error({
+        message: '聊天 AI 功能暂不可用，请先配置大模型 API 密钥',
+        duration: 0
+      })
+      pushMessage("assistant", "聊天 AI 功能暂不可用，请先配置大模型 API 密钥。")
     } else {
-      // 移除临时消息，添加错误消息
-      if (messages.value.length > 0 && messages.value[messages.value.length - 1].role === "assistant" && messages.value[messages.value.length - 1].typing) {
-        messages.value.pop()
-      }
-      
-      // 检查是否是配置相关的友好提示
-      if (errorMessage.includes('ARK_API_KEY') || errorMessage.includes('未配置') || errorMessage.includes('请在 .env 中设置')) {
-        // 显示友好的配置提示弹窗
-        ElMessageBox.alert(
-          '聊天 AI 功能需要配置大模型 API 密钥。\n\n请在 .env 文件中设置 ARK_API_KEY 环境变量，或联系管理员进行配置。',
-          '配置提示',
-          {
-            confirmButtonText: '确定',
-            type: 'warning',
-            customClass: 'config-alert'
-          }
-        )
-        pushMessage("assistant", "聊天 AI 功能暂不可用，请先配置大模型 API 密钥。")
-      } else {
-        pushMessage("assistant", `请求失败: ${errorMessage}`, null, { error: true })
-      }
+      pushMessage("assistant", `请求失败: ${errorMessage}`, null, { error: true })
     }
     return null
   } finally {
@@ -2905,6 +4103,9 @@ async function pauseChat() {
   customAiAutoAskRunning.value = false
   stopTypewriter()
   isChatPaused.value = true
+  if (chatWs.isConnected.value) {
+    chatWs.send({ type: 'chat_cancel', payload: { reason: 'user_pause' } })
+  }
   if (chatAbortController) {
     chatAbortController.abort()
     chatAbortController = null
@@ -2917,6 +4118,7 @@ function handleChatKeydown(event: KeyboardEvent) {
   if (event.key === "Enter" && !event.shiftKey) {
     event.preventDefault()
     void sendChat()
+    return
   }
 }
 
@@ -2928,6 +4130,68 @@ function showContextMenu(event: MouseEvent) {
 
 function hideContextMenu() {
   contextMenuVisible.value = false
+}
+
+function showMessageContextMenu(event: MouseEvent, text: string) {
+  contextMenuTargetText.value = text || ''
+  contextMenuX.value = event.clientX
+  contextMenuY.value = event.clientY
+  contextMenuVisible.value = true
+  
+  setTimeout(() => {
+    const bubble = document.querySelector('.message-bubble.context-menu-target') as HTMLElement
+    if (bubble) bubble.classList.remove('context-menu-target')
+    const target = event.target as HTMLElement
+    const parentBubble = target.closest('.message-bubble') as HTMLElement
+    if (parentBubble) parentBubble.classList.add('context-menu-target')
+  }, 0)
+}
+
+function copyMessageContent() {
+  const selection = window.getSelection()
+  const selectedText = selection?.toString()
+  if (selectedText) {
+    navigator.clipboard.writeText(selectedText)
+    ElMessage.success('已复制选中内容')
+  } else if (contextMenuTargetText.value) {
+    navigator.clipboard.writeText(contextMenuTargetText.value)
+    ElMessage.success('已复制')
+  }
+  hideContextMenu()
+}
+
+function pasteToInput() {
+  navigator.clipboard.readText().then(text => {
+    const textarea = document.querySelector('.chat-input-area textarea') as HTMLTextAreaElement
+    if (textarea) {
+      const start = textarea.selectionStart
+      const end = textarea.selectionEnd
+      const before = chatInput.value.substring(0, start)
+      const after = chatInput.value.substring(end)
+      chatInput.value = before + text + after
+      nextTick(() => {
+        textarea.selectionStart = textarea.selectionEnd = start + text.length
+        textarea.focus()
+      })
+    } else {
+      chatInput.value += text
+    }
+  }).catch(() => {
+    ElMessage.error('无法访问剪贴板')
+  })
+  hideContextMenu()
+}
+
+function selectMessageAll() {
+  const selection = window.getSelection()
+  const messageText = document.querySelector('.message-bubble.context-menu-target .message-text')
+  if (messageText) {
+    const range = document.createRange()
+    range.selectNodeContents(messageText)
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+  }
+  hideContextMenu()
 }
 
 function copySelection() {
@@ -2970,15 +4234,51 @@ function selectAll() {
 }
 
 function handleAttach() {
-  // 附件功能处理逻辑，目前为空实现
   ElMessage.info('附件功能开发中')
 }
+
+function handleVoiceInput() {
+  if (!voiceInput.isSupported()) {
+    ElMessage.error('当前浏览器不支持语音识别')
+    return
+  }
+  if (voiceInput.isRecording.value) {
+    const fullText = voiceInput.getFullTranscript()
+    if (fullText) {
+      chatInput.value += (chatInput.value ? ' ' : '') + fullText
+    }
+    voiceInput.stop()
+    showVoiceIndicator.value = false
+  } else {
+    voiceInput.reset()
+    voiceInput.start()
+    showVoiceIndicator.value = true
+  }
+}
+
+watch(() => voiceInput.interimTranscript.value, (val) => {
+  if (val && showVoiceIndicator.value) {
+    const preview = chatInput.value + (chatInput.value ? ' ' : '') + voiceInput.transcript.value + val
+    console.log('Voice preview:', preview)
+  }
+})
+
+watch(() => voiceInput.isRecording.value, (recording) => {
+  if (!recording && showVoiceIndicator.value) {
+    const fullText = voiceInput.getFullTranscript()
+    if (fullText) {
+      chatInput.value += (chatInput.value ? ' ' : '') + fullText
+    }
+    showVoiceIndicator.value = false
+  }
+})
 
 function openCustomAiAskDialog() {
   if (!availableModels.value.length) {
     ElMessage.warning(t('customAiNoModel'))
     return
   }
+  void loadCustomAskAiList()
   const selectedAi = customAskAiList.value.find(item => item.id === selectedCustomAskAiId.value)
   customAiAskForm.modelId = selectedAi?.modelId || selectedChatModel.value || availableModels.value[0].value
   customAiAskForm.question = ''
@@ -2999,7 +4299,37 @@ function getAvatarText(name: string) {
   return chars[0].toUpperCase()
 }
 
-function addCustomAskAi() {
+function mapAgentToCustomAskAiItem(agent: any): CustomAskAiItem {
+  const name = String(agent?.name || '').trim() || getModelLabelById(String(agent?.modelId || '')) || 'AI'
+  return {
+    id: String(agent?.id || ''),
+    modelId: String(agent?.modelId || ''),
+    modelLabel: getModelLabelById(String(agent?.modelId || '')),
+    name,
+    avatarText: getAvatarText(name),
+    prompt: String(agent?.prompt || '').trim(),
+    skillId: String(agent?.skillId || '').trim(),
+    mcpServers: Array.isArray(agent?.mcpServers) ? agent.mcpServers.map((v: unknown) => String(v || '').trim()).filter(Boolean) : []
+  }
+}
+
+async function loadCustomAskAiList() {
+  try {
+    const res = await fetch(buildApiUrl('/api/agents'))
+    const data = await res.json()
+    if (!Array.isArray(data)) return
+    customAskAiList.value = data
+      .filter((agent: any) => String(agent?.modelId || '').trim())
+      .map((agent: any) => mapAgentToCustomAskAiItem(agent))
+    if (!customAskAiList.value.some(item => item.id === selectedCustomAskAiId.value)) {
+      selectedCustomAskAiId.value = customAskAiList.value[0]?.id || ''
+    }
+  } catch (error) {
+    console.error('加载代理列表失败:', error)
+  }
+}
+
+async function addCustomAskAi() {
   if (!customAiAskForm.modelId) {
     ElMessage.warning(t('customAiNoModel'))
     return
@@ -3010,29 +4340,50 @@ function addCustomAskAi() {
     return
   }
   const displayName = String(customAiAskForm.aiName || '').trim() || model.label
-  const newAi: CustomAskAiItem = {
-    id: `ask-ai-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    modelId: customAiAskForm.modelId,
-    modelLabel: model.label,
-    name: displayName,
-    avatarText: getAvatarText(displayName),
-    prompt: String(customAiAskForm.prompt || '').trim(),
-    skillId: String(customAiAskForm.skillId || '').trim(),
-    mcpServers: Array.isArray(customAiAskForm.mcpServers) ? [...customAiAskForm.mcpServers] : []
+  try {
+    const res = await fetch(buildApiUrl('/api/agents'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: displayName,
+        role: 'analyst',
+        modelId: customAiAskForm.modelId,
+        prompt: String(customAiAskForm.prompt || '').trim(),
+        skillId: String(customAiAskForm.skillId || '').trim(),
+        mcpServers: Array.isArray(customAiAskForm.mcpServers) ? [...customAiAskForm.mcpServers] : [],
+        executionMode: 'auto'
+      })
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      ElMessage.error(String(data?.error || '创建失败'))
+      return
+    }
+    await loadCustomAskAiList()
+    selectedCustomAskAiId.value = String(data?.id || selectedCustomAskAiId.value)
+    ElMessage.success(t('customAiAdded'))
+  } catch (error) {
+    console.error('创建代理失败:', error)
+    ElMessage.error('创建失败')
   }
-  customAskAiList.value.push(newAi)
-  selectedCustomAskAiId.value = newAi.id
-  ElMessage.success(t('customAiAdded'))
 }
 
-function removeCustomAskAi(id: string) {
-  const index = customAskAiList.value.findIndex(item => item.id === id)
-  if (index < 0) return
-  customAskAiList.value.splice(index, 1)
-  if (selectedCustomAskAiId.value === id) {
-    selectedCustomAskAiId.value = customAskAiList.value[0]?.id || ''
+async function removeCustomAskAi(id: string) {
+  try {
+    const res = await fetch(buildApiUrl(`/api/agents/${id}`), {
+      method: 'DELETE'
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      ElMessage.error(String(data?.error || '删除失败'))
+      return
+    }
+    await loadCustomAskAiList()
+    ElMessage.success(t('customAiRemoved'))
+  } catch (error) {
+    console.error('删除代理失败:', error)
+    ElMessage.error('删除失败')
   }
-  ElMessage.success(t('customAiRemoved'))
 }
 
 function selectCustomAskAi(item: CustomAskAiItem) {
@@ -3315,9 +4666,32 @@ function syncSelectedChatModelWithConfig() {
   selectedChatModel.value = activeModel?.id || models[0].id
 }
 
-onMounted(() => {
-  loadRemoteControlConfig()
+onMounted(async () => {
+  isInitializing.value = true
+  initProgress.value = 10
+
+  await Promise.all([
+    loadRemoteControlConfig(),
+    loadScheduledTasks(),
+    loadChatHistory(),
+    loadChatStorageConfig(),
+    loadTokenStats()
+  ])
+  initProgress.value = 60
+
+  await loadCustomAskAiList()
+  initProgress.value = 80
+
   void bootstrap()
+  initProgress.value = 90
+
+  chatWs.connect(`ws://${window.location.hostname}:17870/ws`)
+
+  chatWs.on('remote_message', (payload: any) => {
+    const msg = payload as { platform: string; text: string; sender: string; timestamp: number }
+    pushMessage('user', `[${msg.platform.toUpperCase()}] ${msg.sender}: ${msg.text}`)
+  })
+
   backendPollTimer = setInterval(() => {
     void checkBackend()
     void loadState()
@@ -3326,6 +4700,11 @@ onMounted(() => {
   window.addEventListener('scroll', handleGlobalScroll, true)
   window.addEventListener('resize', handleGlobalScroll)
   window.addEventListener('keydown', handleGlobalKeydown)
+
+  initProgress.value = 100
+
+  await new Promise(resolve => setTimeout(resolve, 1000))
+  isInitializing.value = false
 })
 
 watch(
@@ -3333,7 +4712,12 @@ watch(
   () => {
     syncSelectedChatModelWithConfig()
     const validModelIds = new Set(config.value.models.map(m => m.id))
-    customAskAiList.value = customAskAiList.value.filter(item => validModelIds.has(item.modelId))
+    customAskAiList.value = customAskAiList.value
+      .filter(item => validModelIds.has(item.modelId))
+      .map(item => ({
+        ...item,
+        modelLabel: getModelLabelById(item.modelId)
+      }))
     if (!customAskAiList.value.some(item => item.id === selectedCustomAskAiId.value)) {
       selectedCustomAskAiId.value = customAskAiList.value[0]?.id || ''
     }
@@ -3345,6 +4729,15 @@ onBeforeUnmount(() => {
     clearInterval(backendPollTimer)
     backendPollTimer = null
   }
+  if (officePollTimer) {
+    clearInterval(officePollTimer)
+    officePollTimer = null
+  }
+  if (taskLogsInterval) {
+    clearInterval(taskLogsInterval)
+    taskLogsInterval = null
+  }
+  chatWs.disconnect()
   window.removeEventListener('pointerdown', handleGlobalPointerDown)
   window.removeEventListener('scroll', handleGlobalScroll, true)
   window.removeEventListener('resize', handleGlobalScroll)
@@ -3616,6 +5009,90 @@ function deleteModel(modelId: string) {
   line-height: 1.4;
 }
 
+:deep(.md-table-wrapper) {
+  overflow-x: auto;
+  margin: 12px 0;
+  border-radius: 8px;
+  border: 1px solid #e4e7ed;
+}
+
+:deep(.md-table) {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+:deep(.md-table th) {
+  background: #f5f7fa;
+  padding: 10px 16px;
+  text-align: left;
+  font-weight: 600;
+  color: #303133;
+  border-bottom: 1px solid #e4e7ed;
+}
+
+:deep(.md-table td) {
+  padding: 10px 16px;
+  color: #606266;
+  border-bottom: 1px solid #ebeef5;
+}
+
+:deep(.md-table tr:last-child td) {
+  border-bottom: none;
+}
+
+:deep(.md-table tr:hover td) {
+  background: #f5f7fa;
+}
+
+:deep(.md-code) {
+  background: #f3f4f6;
+  border-radius: 8px;
+  margin: 12px 0;
+  overflow: hidden;
+}
+
+:deep(.md-code-lang) {
+  background: #e5e7eb;
+  color: #374151;
+  font-size: 12px;
+  padding: 6px 12px;
+  font-family: monospace;
+}
+
+:deep(.md-code code) {
+  display: block;
+  padding: 16px;
+  overflow-x: auto;
+  font-family: 'Fira Code', 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #111827;
+}
+
+.hljs-keyword { color: #569cd6; }
+.hljs-string { color: #ce9178; }
+.hljs-number { color: #b5cea8; }
+.hljs-comment { color: #6a9955; }
+.hljs-function { color: #dcdcaa; }
+.hljs-class { color: #4ec9b0; }
+.hljs-variable { color: #9cdcfe; }
+.hljs-operator { color: #d4d4d4; }
+.hljs-punctuation { color: #d4d4d4; }
+.hljs-property { color: #9cdcfe; }
+.hljs-attr { color: #9cdcfe; }
+.hljs-tag { color: #569cd6; }
+.hljs-name { color: #569cd6; }
+.hljs-attribute { color: #9cdcfe; }
+.hljs-selector-class { color: #d7ba7d; }
+.hljs-selector-id { color: #d7ba7d; }
+.hljs-built_in { color: #4ec9b0; }
+.hljs-literal { color: #569cd6; }
+.hljs-type { color: #4ec9b0; }
+.hljs-params { color: #9cdcfe; }
+.hljs-meta { color: #9b9b9b; }
+.hljs-regexp { color: #d16969; }
+
 .pagination-container {
   display: flex;
   justify-content: center;
@@ -3652,8 +5129,8 @@ function deleteModel(modelId: string) {
 }
 
 .model-item.active {
-  border-color: var(--el-color-primary);
-  background: var(--el-color-primary-light-9);
+  border-color: var(--el-border-color);
+  background: var(--el-fill-color-light);
 }
 
 .model-item-left {
@@ -3920,11 +5397,186 @@ function deleteModel(modelId: string) {
   line-height: 1.6;
 }
 
+.scheduled-tasks-section {
+  margin: 14px 20px;
+  padding: 14px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 10px;
+  background: var(--el-bg-color);
+}
+
+.scheduled-tasks-section h4 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  color: var(--el-text-color-primary);
+}
+
+.tasks-loading, .tasks-empty {
+  text-align: center;
+  padding: 20px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+
+.scheduled-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.scheduled-task-card {
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--el-fill-color-light);
+}
+
+.scheduled-task-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.scheduled-task-name {
+  font-weight: 500;
+  font-size: 14px;
+}
+
+.scheduled-task-info {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.scheduled-task-row {
+  display: flex;
+  gap: 4px;
+}
+
+.scheduled-task-label {
+  color: var(--el-text-color-regular);
+}
+
+.scheduled-task-tool {
+  font-family: monospace;
+  font-size: 11px;
+}
+
+.scheduled-task-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  align-items: center;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+
+.task-logs-section {
+  margin: 14px 20px;
+  padding: 10px;
+  border: 1px solid #1f2937;
+  border-radius: 8px;
+  background: #0b1220;
+}
+
+.task-logs-inline {
+  margin: 10px 0 0;
+}
+
+.logs-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.logs-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.logs-header h4 {
+  margin: 0;
+  font-size: 13px;
+  color: #cbd5e1;
+}
+
+.task-log-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.task-log-item {
+  border: 1px solid #1f2937;
+  border-radius: 4px;
+  padding: 6px 8px;
+  background: #0f172a;
+  color: #e5e7eb;
+  font-family: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  line-height: 1.35;
+}
+
+.task-log-item.log-success {
+  border-left: 2px solid #22c55e;
+}
+
+.task-log-item.log-error {
+  border-left: 2px solid #ef4444;
+}
+
+.task-log-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2px;
+}
+
+.task-log-time {
+  font-size: 10px;
+  color: #94a3b8;
+}
+
+.task-log-result {
+  font-size: 11px;
+  color: #d1d5db;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.task-log-error {
+  font-size: 11px;
+  color: #f87171;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
 .task-automation-actions {
   margin-top: 12px;
   display: flex;
   gap: 10px;
   align-items: center;
+}
+
+.tasks-settings-panel {
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-bottom: 24px;
+}
+
+.tasks-settings-panel .panel-header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--bg-primary);
 }
 
 .control-global-card {
@@ -4037,5 +5689,17 @@ function deleteModel(modelId: string) {
 .context-menu-item:hover {
   background: var(--el-fill-color-light);
   color: var(--el-color-primary);
+}
+
+.office-entry-btn {
+  border-radius: 10px;
+}
+
+.office-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  font-weight: 600;
 }
 </style>

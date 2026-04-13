@@ -1,0 +1,14 @@
+[
+  {
+    "id": "lmem-ca9a3985-4536-4b36-ac94-0096f7e477ba",
+    "content": "{\"location\":\"百度中搜索小红书\"}",
+    "type": "long",
+    "createdAt": 1775884720422,
+    "lastAccessedAt": 1775884720422,
+    "accessCount": 0,
+    "metadata": {
+      "type": "user_profile",
+      "updatedAt": 1775884720422
+    }
+  }
+]

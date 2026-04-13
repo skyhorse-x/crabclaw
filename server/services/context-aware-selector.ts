@@ -454,7 +454,7 @@ export class ContextAwareSelector {
       if (task.includes('config') || task.includes('设置')) {
         parameters.path = './config.json'
       } else if (task.includes('log') || task.includes('日志')) {
-        parameters.path = './logs/app.log'
+        parameters.path = './server/logs/app.log'
       }
     }
     

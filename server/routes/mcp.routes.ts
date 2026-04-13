@@ -9,8 +9,9 @@ import type { McpServerMarketItem } from '../shared/types'
 import { logger } from '../services/logger.service'
 import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { PATHS } from '../shared/constants'
 
-const MCP_CONFIG_PATH = path.join(process.cwd(), 'mcp-config.json')
+const MCP_CONFIG_PATH = PATHS.MCP_CONFIG_PATH
 const PACKAGE_JSON_PATH = path.join(process.cwd(), 'package.json')
 
 const PACKAGE_ID_TO_CONFIG_KEY: Record<string, string> = {
