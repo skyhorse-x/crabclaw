@@ -1,4 +1,4 @@
-# HelixAgent - 专业级桌面 AI Agent 平台
+# crabclaw - 专业级桌面 AI Agent 平台
 
 <div align="center">
 
@@ -35,7 +35,7 @@
 
 ### 项目背景
 
-**HelixAgent** 是一个专业级的桌面 AI Agent 平台，旨在为开发者和用户提供一个功能完善、可扩展的 AI Agent 开发框架。平台采用现代化的分层架构设计，集成了 MCP (Model Context Protocol) 协议、智能任务规划、统一工具系统、记忆系统、技能编排、多 Agent 协作等核心能力。
+**crabclaw** 是一个专业级的桌面 AI Agent 平台，旨在为开发者和用户提供一个功能完善、可扩展的 AI Agent 开发框架。平台采用现代化的分层架构设计，集成了 MCP (Model Context Protocol) 协议、智能任务规划、统一工具系统、记忆系统、技能编排、多 Agent 协作等核心能力。
 
 ### 设计目标
 
@@ -47,7 +47,7 @@
 
 ### 核心问题解决
 
-| 问题 | HelixAgent 解决方案 |
+| 问题 | crabclaw 解决方案 |
 |------|-------------------|
 | 工具调用碎片化 | 统一工具注册表，支持 MCP 协议标准化 |
 | 任务规划复杂 | 智能任务拆解，自动依赖管理 |
@@ -89,7 +89,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                          HelixAgent 整体架构                                 │
+│                          crabclaw 整体架构                                 │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
@@ -169,29 +169,28 @@ crabclaw/
 
 ### 环境要求
 
-- Node.js 18+ / Bun 1.0+
-- TypeScript 5.0+
-- Neutralinojs CLI (用于桌面应用构建)
+- Node.js 18+ (用于 npm 包管理)
+- Neutralinojs CLI (`npm install -g @neutralinojs/neu`)
 
 ### 安装步骤
 
 ```bash
 # 克隆仓库
-git clone https://github.com/qingfeng2055/HelixAgent.git
-cd HelixAgent
+git clone git@github.com:skyhorse-x/crabclaw.git
+cd crabclaw
 
 # 安装依赖
 bun install
 
-# 启动开发服务器
-bun run dev
+# 使用 Neutralino 启动开发服务器
+neu run
 ```
 
 ### 配置
 
-1. 复制 `.env.example` 到 `.env`
+1. 复制 `server/.env.example` 到 `server/.env`
 2. 配置你的 LLM 提供商 API 密钥
-3. 使用 `bun run dev` 启动服务器
+3. 使用 `neu run` 启动服务器
 
 ---
 
@@ -280,26 +279,30 @@ PUT /api/tasks/:id - 更新任务
 bun install
 
 # 运行类型检查
-bun run typecheck
+npm run typecheck
 
 # 运行代码检查
-bun run lint
+npm run lint
 
 # 运行测试
-bun test
+npm test
 ```
 
 ### 构建
 
 ```bash
 # 构建前端
-cd frontend && bun run build
+npm run frontend:build
 
-# 构建后端
-bun run build:server
+# 使用 Neutralino 构建桌面应用
+npm run build:shell
+```
 
-# 构建桌面应用
-bun run build:desktop
+### 运行开发
+
+```bash
+# 使用 Neutralino 启动
+neu run
 ```
 
 ---
@@ -311,19 +314,10 @@ bun run build:desktop
 使用 Neutralinojs 构建跨平台桌面应用：
 
 ```bash
-bun run build:desktop
+npm run build:shell
 ```
 
 可执行文件将生成在 `dist/` 目录。
-
-### 服务器部署
-
-将后端服务器部署到你喜欢的平台：
-
-```bash
-bun run build:server
-node dist/server/index.js
-```
 
 ---
 
@@ -341,7 +335,8 @@ MIT 许可证 - 详见 LICENSE 文件。
 
 ## 🔗 相关链接
 
-- [GitHub 仓库](https://github.com/qingfeng2055/HelixAgent)
+- [GitHub 仓库](https://github.com/skyhorse-x/crabclaw)
+- [克隆仓库](git@github.com:skyhorse-x/crabclaw.git)
 - [MCP 协议文档](https://modelcontextprotocol.io)
 - [Neutralinojs 文档](https://neutralino.js.org)
 - [Bun 运行时文档](https://bun.sh)

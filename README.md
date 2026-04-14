@@ -1,4 +1,4 @@
-# HelixAgent - Professional Desktop AI Agent Platform
+# crabclaw - Professional Desktop AI Agent Platform
 
 <div align="center">
 
@@ -35,7 +35,7 @@
 
 ### Project Background
 
-**HelixAgent** is a professional-grade desktop AI Agent platform designed to provide developers and users with a fully-featured, extensible AI Agent development framework. The platform implements a modern layered architecture and integrates core capabilities including MCP (Model Context Protocol), intelligent task planning, unified tool system, memory system, skill orchestration, and multi-agent collaboration.
+**crabclaw** is a professional-grade desktop AI Agent platform designed to provide developers and users with a fully-featured, extensible AI Agent development framework. The platform implements a modern layered architecture and integrates core capabilities including MCP (Model Context Protocol), intelligent task planning, unified tool system, memory system, skill orchestration, and multi-agent collaboration.
 
 ### Design Goals
 
@@ -47,7 +47,7 @@
 
 ### Core Problems Solved
 
-| Problem | HelixAgent Solution |
+| Problem | crabclaw Solution |
 |---------|-------------------|
 | Fragmented tool calling | Unified tool registry with MCP protocol standardization |
 | Complex task planning | Intelligent task decomposition with automatic dependency management |
@@ -89,7 +89,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                          HelixAgent Architecture                            │
+│                          crabclaw Architecture                            │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
@@ -169,29 +169,28 @@ crabclaw/
 
 ### Prerequisites
 
-- Node.js 18+ / Bun 1.0+
-- TypeScript 5.0+
-- Neutralinojs CLI (for desktop builds)
+- Node.js 18+ (for npm packages management)
+- Neutralinojs CLI (`npm install -g @neutralinojs/neu`)
 
 ### Installation
 
 ```bash
 # Clone the repository
-git clone https://github.com/qingfeng2055/HelixAgent.git
-cd HelixAgent
+git clone git@github.com:skyhorse-x/crabclaw.git
+cd crabclaw
 
 # Install dependencies
 bun install
 
-# Start development server
-bun run dev
+# Start development server with Neutralino
+neu run
 ```
 
 ### Configuration
 
-1. Copy `.env.example` to `.env`
+1. Copy `server/.env.example` to `server/.env`
 2. Configure your LLM provider API keys
-3. Start the server with `bun run dev`
+3. Start the server with `neu run`
 
 ---
 
@@ -280,26 +279,30 @@ PUT /api/tasks/:id - Update task
 bun install
 
 # Run type checking
-bun run typecheck
+npm run typecheck
 
 # Run linter
-bun run lint
+npm run lint
 
 # Run tests
-bun test
+npm test
 ```
 
 ### Build
 
 ```bash
 # Build frontend
-cd frontend && bun run build
+npm run frontend:build
 
-# Build backend
-bun run build:server
+# Build desktop app with Neutralino
+npm run build:shell
+```
 
-# Build desktop app
-bun run build:desktop
+### Run Development
+
+```bash
+# Start with Neutralino
+neu run
 ```
 
 ---
@@ -311,19 +314,10 @@ bun run build:desktop
 Use Neutralinojs to build cross-platform desktop applications:
 
 ```bash
-bun run build:desktop
+npm run build:shell
 ```
 
 Executables will be generated in the `dist/` directory.
-
-### Server Deployment
-
-Deploy the backend server to your preferred platform:
-
-```bash
-bun run build:server
-node dist/server/index.js
-```
 
 ---
 
@@ -341,7 +335,8 @@ MIT License - see LICENSE file for details.
 
 ## 🔗 Links
 
-- [GitHub Repository](https://github.com/qingfeng2055/HelixAgent)
+- [GitHub Repository](https://github.com/skyhorse-x/crabclaw)
+- [Clone Repository](git@github.com:skyhorse-x/crabclaw.git)
 - [MCP Protocol Documentation](https://modelcontextprotocol.io)
 - [Neutralinojs Documentation](https://neutralino.js.org)
 - [Bun Runtime Documentation](https://bun.sh)

@@ -1,0 +1,63 @@
+name: Documentation Update
+description: Report a documentation issue or suggest improvements
+title: "[Docs] "
+labels: ["documentation"]
+assignees: []
+body:
+  - type: dropdown
+    id: doc-type
+    attributes:
+      label: Documentation Type
+      description: What type of documentation needs updating?
+      options:
+        - README
+        - API Documentation
+        - Guide / Tutorial
+        - Code Comments
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: file
+    attributes:
+      label: File Path
+      description: |
+        If applicable, provide the path to the documentation file that needs updating.
+      placeholder: "e.g., docs/guides/README.md"
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Documentation Issue
+      description: Describe the documentation issue or what needs to be improved.
+      placeholder: "Describe the issue or improvement..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested Change
+      description: |
+        If you have a suggestion for how to fix or improve the documentation, describe it here.
+      placeholder: |
+        Describe your suggested change...
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Add any other context about the documentation issue here.
+      placeholder: |
+        Add any other context here...
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Checklist
+      options:
+        - label: I have checked for typos and grammar errors
+          required: true
+        - label: I have verified the information is incorrect
+          required: true
