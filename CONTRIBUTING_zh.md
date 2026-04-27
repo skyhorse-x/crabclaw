@@ -1,6 +1,6 @@
 # 贡献指南
 
-感谢您对 crabclaw 项目的关注！本文档提供了贡献代码的指南和说明。
+感谢您对 HelixAgent 项目的关注！本文档提供了贡献代码的指南和说明。
 
 ---
 
@@ -229,7 +229,7 @@ describe('UserService', () => {
 
 使用 [问题模板](./.github/ISSUE_TEMPLATE/) 并包括：
 
-- crabclaw 版本
+- HelixAgent 版本
 - 操作系统
 - Node.js/Bun 版本
 - 复现问题的清晰步骤

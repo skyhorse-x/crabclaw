@@ -11,7 +11,7 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability within crabclaw, please follow these steps:
+If you discover a security vulnerability within HelixAgent, please follow these steps:
 
 ### Do NOT
 
@@ -39,7 +39,7 @@ If you discover a security vulnerability within crabclaw, please follow these st
 
 ## Security Best Practices
 
-When using crabclaw, please follow these security best practices:
+When using HelixAgent, please follow these security best practices:
 
 ### API Keys
 
@@ -120,7 +120,7 @@ For security-related inquiries, please contact:
 
 ## Acknowledgments
 
-We appreciate the efforts of security researchers who help improve crabclaw's security. If you report a vulnerability, you will be acknowledged (unless you prefer to remain anonymous).
+We appreciate the efforts of security researchers who help improve HelixAgent's security. If you report a vulnerability, you will be acknowledged (unless you prefer to remain anonymous).
 
 ---
 

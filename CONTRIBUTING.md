@@ -1,6 +1,6 @@
-# Contributing to crabclaw
+# Contributing to HelixAgent
 
-Thank you for your interest in contributing to crabclaw! This document provides guidelines and instructions for contributing.
+Thank you for your interest in contributing to HelixAgent! This document provides guidelines and instructions for contributing.
 
 ---
 
@@ -229,7 +229,7 @@ describe('UserService', () => {
 
 Use the [issue template](./.github/ISSUE_TEMPLATE/) and include:
 
-- crabclaw version
+- HelixAgent version
 - Operating system
 - Node.js/Bun version
 - Clear steps to reproduce
