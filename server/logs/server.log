@@ -2914,3 +2914,44 @@
 [2026-04-14T07:58:51.696Z] [INFO] [UnifiedMessage] Config updated
 [2026-04-14T07:58:51.696Z] [INFO] [TaskScheduler] Executing task {"id":"task_1774407128862_6v2uug","name":"每隔2分钟获取黄金价格发送到Telegram","toolName":"builtin/send_message"}
 [2026-04-14T07:58:52.079Z] [INFO] [TaskScheduler] Task executed {"id":"task_1774407128862_6v2uug","toolName":"send_message","result":{"success":true,"result":"消息已发送到 telegram: 最新黄金价格参考：截至3月23日，国际现货黄金价格已跌破41..."}}
+[2026-05-06T08:39:38.519Z] [INFO] [BuiltinTools] Registered builtin tools {"count":2}
+[2026-05-06T08:39:38.540Z] [INFO] [ConfigDB] Database initialized {"path":"/Users/472733389qq.com/Desktop/project/crabclaw/server/data.db"}
+[2026-05-06T08:39:38.543Z] [INFO] [TaskScheduler] Executing task {"id":"task_1774411035349_wm21th","name":"定期发送系统运行信息到Telegram","toolName":"shell/shell_execute"}
+[2026-05-06T08:39:38.540Z] [INFO] [TaskScheduler] Executing task {"id":"task_1774407128862_6v2uug","name":"每隔2分钟获取黄金价格发送到Telegram","toolName":"builtin/send_message"}
+[2026-05-06T08:39:38.540Z] [INFO] [UnifiedMessage] Config updated
+[2026-05-06T08:39:38.543Z] [INFO] [TaskScheduler] Interval task scheduled {"id":"task_1774407128862_6v2uug","intervalMs":120000}
+[2026-05-06T08:39:38.544Z] [INFO] [TaskScheduler] Tools registered
+[2026-05-06T08:39:38.544Z] [INFO] [TaskScheduler] Tasks loaded {"count":2}
+[2026-05-06T08:39:38.545Z] [INFO] [AgentDB] Database initialized
+[2026-05-06T08:39:38.544Z] [INFO] [TaskScheduler] Scheduler started
+[2026-05-06T08:39:38.540Z] [INFO] [UnifiedMessage] Sending message {"platform":"telegram","contentLength":80,"parseMode":"plain"}
+[2026-05-06T08:39:38.544Z] [INFO] [TaskScheduler] Interval task scheduled {"id":"task_1774411035349_wm21th","intervalMs":180000}
+[2026-05-06T08:39:38.546Z] [INFO] Starting application bootstrap...
+[2026-05-06T08:39:38.546Z] [INFO] [RemoteControl] Config loaded from database {"enabled":true}
+[2026-05-06T08:39:38.546Z] [INFO] [UnifiedMessage] Config updated
+[2026-05-06T08:39:38.556Z] [INFO] Server started successfully {"url":"http://localhost:17870"}
+[2026-05-06T08:39:38.547Z] [INFO] Config service initialized {"port":17870,"skillsCount":0,"tasksCount":0}
+[2026-05-06T08:39:38.548Z] [INFO] Task schedules applied {"enabledTasks":0}
+[2026-05-06T08:39:38.547Z] [INFO] Local skills loaded {"count":0}
+[2026-05-06T08:39:38.548Z] [INFO] Application bootstrap completed successfully
+[2026-05-06T08:39:38.547Z] [WARN] [SkillRegistry] Skills directory not found {"dirPath":"/Users/472733389qq.com/Desktop/学习项目/crabclaw/server/data/skills"}
+[2026-05-06T08:39:38.570Z] [INFO] HTTP server created {"port":17870,"url":"http://localhost:17870","hostname":"localhost"}
+[2026-05-06T08:39:38.571Z] [INFO] WebSocket service initialized on path: /ws
+[2026-05-06T08:39:39.690Z] [INFO] [MCP] Connected to filesystem {"tools":"read_file, read_text_file, read_media_file, read_multiple_files, write_file, edit_file, create_directory, list_directory, list_directory_with_sizes, directory_tree, move_file, search_files, get_file_info, list_allowed_directories"}
+[2026-05-06T08:39:40.189Z] [INFO] [TaskScheduler] Task executed {"id":"task_1774407128862_6v2uug","toolName":"send_message","result":{"success":true,"result":"消息已发送到 telegram: 最新黄金价格参考：截至3月23日，国际现货黄金价格已跌破41..."}}
+[2026-05-06T08:39:40.586Z] [INFO] [MCP] Connected to memory {"tools":"create_entities, create_relations, add_observations, delete_entities, delete_observations, delete_relations, read_graph, search_nodes, open_nodes"}
+[2026-05-06T08:39:40.860Z] [INFO] [ChatHistory] SQLite initialized {"path":"/Users/472733389qq.com/Desktop/project/crabclaw/server/data.db"}
+[2026-05-06T08:39:40.955Z] [INFO] WebSocket client connected for chat {"clientId":"e4dc84e1-e284-4f0d-9f96-d9ca8bfcd038"}
+[2026-05-06T08:39:41.069Z] [INFO] [Bridge] Desktop mode detected {"desktopMode":false}
+[2026-05-06T08:39:41.069Z] [INFO] [Bridge] Connection test {"connected":true,"desktopMode":false}
+[2026-05-06T08:39:41.069Z] [INFO] [Bridge] Calling command {"command":"state","payload":{}}
+[2026-05-06T08:39:41.081Z] [INFO] [SkillMarket] Fetching remote market {"url":"https://clawhub.ai/api/v1/skills?sort=downloads"}
+[2026-05-06T08:39:41.391Z] [INFO] [MCP] Connected to shell {"tools":"shell_execute, process_get_execution, shell_set_default_workdir, list_execution_outputs, read_execution_output, delete_execution_outputs, get_cleanup_suggestions, perform_auto_cleanup, terminal_operate, terminal_list, terminal_get_info, terminal_close, command_history_query"}
+[2026-05-06T08:39:41.664Z] [INFO] [MCP] Connected to shell {"tools":"shell_execute, process_get_execution, shell_set_default_workdir, list_execution_outputs, read_execution_output, delete_execution_outputs, get_cleanup_suggestions, perform_auto_cleanup, terminal_operate, terminal_list, terminal_get_info, terminal_close, command_history_query"}
+[2026-05-06T08:39:42.123Z] [INFO] [SkillMarket] Remote market synced {"total":25,"dbPath":"/Users/472733389qq.com/Desktop/project/crabclaw/server/data.db"}
+[2026-05-06T08:39:42.123Z] [INFO] [SkillMarket] Skills retrieved {"total":25,"page":1,"pageSize":10}
+[2026-05-06T08:39:42.294Z] [INFO] [MCP] Connected to fetch {"tools":"fetch_html, fetch_markdown, fetch_txt, fetch_json, fetch_readable, fetch_youtube_transcript"}
+[2026-05-06T08:39:42.294Z] [INFO] [MCP] Connected to fetch {"tools":"fetch_html, fetch_markdown, fetch_txt, fetch_json, fetch_readable, fetch_youtube_transcript"}
+[2026-05-06T08:39:43.913Z] [INFO] [MCP] Connected to chrome-devtools {"tools":"click, close_page, drag, emulate, evaluate_script, fill, fill_form, get_console_message, get_network_request, handle_dialog, hover, lighthouse_audit, list_console_messages, list_network_requests, list_pages, navigate_page, new_page, performance_analyze_insight, performance_start_trace, performance_stop_trace, press_key, resize_page, select_page, take_memory_snapshot, take_screenshot, take_snapshot, type_text, upload_file, wait_for"}
+[2026-05-06T08:39:43.928Z] [INFO] [MCP] Connected to chrome-devtools {"tools":"click, close_page, drag, emulate, evaluate_script, fill, fill_form, get_console_message, get_network_request, handle_dialog, hover, lighthouse_audit, list_console_messages, list_network_requests, list_pages, navigate_page, new_page, performance_analyze_insight, performance_start_trace, performance_stop_trace, press_key, resize_page, select_page, take_memory_snapshot, take_screenshot, take_snapshot, type_text, upload_file, wait_for"}
+[2026-05-06T08:39:45.451Z] [INFO] WebSocket client disconnected from chat {"clientId":"e4dc84e1-e284-4f0d-9f96-d9ca8bfcd038"}
