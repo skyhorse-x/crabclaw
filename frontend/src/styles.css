@@ -2593,6 +2593,75 @@ a:hover {
 .skill-selector-name {
   font-size: 14px;
   color: var(--text-primary);
+  flex: 1;
+}
+
+.skill-selector-check {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 18px;
+}
+
+.skill-selector-empty-circle {
+  display: block;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid #d0d0d0;
+}
+
+.skill-selector-item.active .skill-selector-empty-circle {
+  display: none;
+}
+
+.skill-selector-tag {
+  flex-shrink: 0;
+  font-size: 11px;
+  border-color: #e0e0e0 !important;
+  color: #888 !important;
+}
+
+.skill-selector-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 4px;
+}
+
+.skill-clear-btn {
+  background: none;
+  border: none;
+  font-size: 13px;
+  color: #888;
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+
+.skill-clear-btn:hover {
+  background: #f0f0f0;
+  color: #444;
+}
+
+.skill-confirm-btn {
+  background: #1a1a1a;
+  color: #fff;
+  border: none;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 7px 20px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.skill-confirm-btn:hover {
+  opacity: 0.85;
 }
 
 /* ===== 附件预览区域 ===== */
@@ -2965,6 +3034,86 @@ a:hover {
 }
 
 .ai-trace-row-status--idle {
+  opacity: 0.25;
+}
+
+/* 工具分组标题行 */
+.ai-trace-group-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 18px 6px;
+}
+
+.ai-trace-group-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1e293b;
+  flex: 1;
+}
+
+.ai-trace-group-header--running {
+  background: #fefce8;
+  border-radius: 6px;
+  margin: 2px 4px;
+}
+
+.ai-trace-group-count {
+  font-size: 11px;
+  color: #94a3b8;
+  flex-shrink: 0;
+}
+
+/* 工具操作子项 */
+.ai-trace-sub-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 18px 4px 60px;
+  border-bottom: 1px solid #f8fafd;
+  transition: background 0.12s;
+}
+
+.ai-trace-sub-row:last-child {
+  border-bottom: none;
+}
+
+.ai-trace-sub-row:hover {
+  background: #f8fafd;
+}
+
+.ai-trace-sub-indent {
+  width: 1px;
+  align-self: stretch;
+  background: #e2e8f0;
+  flex-shrink: 0;
+  margin-right: 4px;
+}
+
+.ai-trace-sub-desc {
+  font-size: 12px;
+  color: #64748b;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ai-trace-sub-time {
+  font-size: 11px;
+  color: #94a3b8;
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-width: 60px;
+  text-align: right;
+}
+
+.ai-trace-sub-status {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.ai-trace-sub-status--idle {
   opacity: 0.25;
 }
 

@@ -79,6 +79,56 @@
       "triggerPhrases": [],
       "delayMs": 500,
       "steps": []
+    },
+    {
+      "id": "gsap",
+      "name": "gsap",
+      "category": "browser",
+      "description": "GSAP animation skill from hyperframes",
+      "tags": [],
+      "triggerPhrases": [],
+      "delayMs": 500,
+      "steps": []
+    },
+    {
+      "id": "hyperframes",
+      "name": "hyperframes",
+      "category": "browser",
+      "description": "Hyperframes UI framework skill",
+      "tags": [],
+      "triggerPhrases": [],
+      "delayMs": 500,
+      "steps": []
+    },
+    {
+      "id": "hyperframes-cli",
+      "name": "hyperframes-cli",
+      "category": "browser",
+      "description": "Hyperframes CLI skill",
+      "tags": [],
+      "triggerPhrases": [],
+      "delayMs": 500,
+      "steps": []
+    },
+    {
+      "id": "tailwind",
+      "name": "tailwind",
+      "category": "browser",
+      "description": "Tailwind CSS skill from hyperframes",
+      "tags": [],
+      "triggerPhrases": [],
+      "delayMs": 500,
+      "steps": []
+    },
+    {
+      "id": "website-to-hyperframes",
+      "name": "website-to-hyperframes",
+      "category": "browser",
+      "description": "Convert website to hyperframes skill",
+      "tags": [],
+      "triggerPhrases": [],
+      "delayMs": 500,
+      "steps": []
     }
   ],
   "tasks": []

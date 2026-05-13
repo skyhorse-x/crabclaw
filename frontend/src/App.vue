@@ -201,31 +201,35 @@
                       <!-- 正在运行的工具 -->
                       <div
                         v-if="message.typing && traceRunningCalls(message).length > 0"
-                        class="ai-trace-row ai-trace-row--running"
+                        class="ai-trace-group-header ai-trace-group-header--running"
                       >
                         <div class="ai-trace-row-icon ai-trace-row-icon--running">
                           <el-icon style="animation:spin 1s linear infinite"><LoadingIcon /></el-icon>
                         </div>
-                        <span class="ai-trace-row-name">{{ traceRunningCalls(message)[0].split('/').pop() }}</span>
-                        <span class="ai-trace-row-desc">正在调用中...</span>
-                        <span class="ai-trace-row-time"></span>
-                        <span class="ai-trace-row-status"></span>
+                        <span class="ai-trace-group-name">{{ traceRunningCalls(message)[0] }}</span>
+                        <span class="ai-trace-group-count">调用中...</span>
                       </div>
-                      <!-- 分组 trace 行 -->
+                      <!-- 分组 trace 行：工具名一行，操作列表缩进在下方 -->
                       <template v-for="group in groupedTraceDetails(message)" :key="group.key">
+                        <!-- 工具标题行 -->
+                        <div class="ai-trace-group-header">
+                          <div class="ai-trace-row-icon ai-trace-icon--document">
+                            <el-icon><component :is="group.items.length > 0 ? traceIcons[getItemIcon(group.items[0])] : traceIcons['document']" /></el-icon>
+                          </div>
+                          <span class="ai-trace-group-name">{{ group.key }}</span>
+                          <span class="ai-trace-group-count" v-if="group.items.length > 0">{{ group.items.length }} 次</span>
+                        </div>
+                        <!-- 操作子项 -->
                         <div
                           v-for="(item, idx) in group.items"
                           :key="`${item.time}-${idx}`"
-                          class="ai-trace-row"
+                          class="ai-trace-sub-row"
                         >
-                          <div class="ai-trace-row-icon" :class="`ai-trace-icon--${getItemIcon(item).toLowerCase()}`">
-                            <el-icon><component :is="traceIcons[getItemIcon(item)]" /></el-icon>
-                          </div>
-                          <span class="ai-trace-row-name">{{ group.key }}</span>
-                          <span class="ai-trace-row-desc">{{ item.text }}</span>
-                          <span class="ai-trace-row-time">{{ formatTraceTime(item.time) }}</span>
-                          <el-icon v-if="isStepSuccess(item)" class="ai-trace-row-status" color="#22c55e"><CircleCheckFilled /></el-icon>
-                          <el-icon v-else class="ai-trace-row-status ai-trace-row-status--idle" color="#94a3b8"><CircleCheckFilled /></el-icon>
+                          <div class="ai-trace-sub-indent"></div>
+                          <span class="ai-trace-sub-desc">{{ item.text }}</span>
+                          <span class="ai-trace-sub-time">{{ formatTraceTime(item.time) }}</span>
+                          <el-icon v-if="isStepSuccess(item)" class="ai-trace-sub-status" color="#22c55e"><CircleCheckFilled /></el-icon>
+                          <el-icon v-else class="ai-trace-sub-status ai-trace-sub-status--idle" color="#94a3b8"><CircleCheckFilled /></el-icon>
                         </div>
                       </template>
                     </div>
@@ -1131,27 +1135,31 @@
     </el-dialog>
 
     <!-- 技能选择对话框 -->
-    <el-dialog v-model="skillSelectorVisible" title="选择技能" width="500px">
+    <el-dialog v-model="skillSelectorVisible" title="选择技能" width="440px">
       <div class="skill-selector-list">
-        <div 
-          class="skill-selector-item"
-          :class="{ active: selectedChatSkillId === '' }"
-          @click="selectSkill('')"
-        >
-          <span class="skill-selector-icon"></span>
-          <span class="skill-selector-name">默认（无技能）</span>
-        </div>
-        <div 
+        <div
           v-for="skill in config.skills"
           :key="skill.id"
           class="skill-selector-item"
-          :class="{ active: selectedChatSkillId === skill.id }"
-          @click="selectSkill(skill.id)"
+          :class="{ active: selectedChatSkillIds.includes(skill.id) }"
+          @click="toggleSkillSelection(skill.id)"
         >
-          <span class="skill-selector-icon"></span>
+          <span class="skill-selector-check">
+            <el-icon v-if="selectedChatSkillIds.includes(skill.id)" color="#1a1a1a"><CircleCheckFilled /></el-icon>
+            <span v-else class="skill-selector-empty-circle"></span>
+          </span>
           <span class="skill-selector-name">{{ skill.name }}</span>
+          <el-tag size="small" effect="plain" class="skill-selector-tag">{{ skill.category }}</el-tag>
         </div>
       </div>
+      <template #footer>
+        <div class="skill-selector-footer">
+          <button class="skill-clear-btn" @click="clearSkillSelection">清除全部</button>
+          <button class="skill-confirm-btn" @click="confirmSkillSelection">
+            确认{{ selectedChatSkillIds.length > 0 ? `（${selectedChatSkillIds.length}）` : '' }}
+          </button>
+        </div>
+      </template>
     </el-dialog>
 
     <!-- MCP 安装配置对话框 -->
@@ -2610,7 +2618,8 @@ const contextMenuVisible = ref(false)
 const contextMenuX = ref(0)
 const contextMenuY = ref(0)
 const contextMenuTargetText = ref('')
-const selectedChatSkillId = ref("")
+const selectedChatSkillId = ref("")  // 保留兼容旧逻辑
+const selectedChatSkillIds = ref<string[]>([])
 const skillDialogVisible = ref(false)
 const skillSelectorVisible = ref(false)
 const skillDetailVisible = ref(false)
@@ -2632,9 +2641,12 @@ const userAvatarText = computed(() => {
 })
 
 const selectedSkillName = computed(() => {
-  if (!selectedChatSkillId.value) return '技能'
-  const skill = config.value.skills.find(s => s.id === selectedChatSkillId.value)
-  return skill?.name || '技能'
+  if (selectedChatSkillIds.value.length === 0) return '技能'
+  if (selectedChatSkillIds.value.length === 1) {
+    const skill = config.value.skills.find(s => s.id === selectedChatSkillIds.value[0])
+    return skill?.name || '技能'
+  }
+  return `技能 (${selectedChatSkillIds.value.length})`
 })
 
 // 选项按钮点击处理
@@ -2654,10 +2666,26 @@ function openSkillsDialog() {
   skillSelectorVisible.value = true
 }
 
+function toggleSkillSelection(skillId: string) {
+  const idx = selectedChatSkillIds.value.indexOf(skillId)
+  if (idx === -1) {
+    selectedChatSkillIds.value = [...selectedChatSkillIds.value, skillId]
+  } else {
+    selectedChatSkillIds.value = selectedChatSkillIds.value.filter(id => id !== skillId)
+  }
+}
+
+function confirmSkillSelection() {
+  skillSelectorVisible.value = false
+}
+
+function clearSkillSelection() {
+  selectedChatSkillIds.value = []
+}
+
 function selectSkill(skillId: string) {
   selectedChatSkillId.value = skillId
   skillSelectorVisible.value = false
-  ElMessage.success(skillId ? `已选择技能` : '已清除技能')
 }
 
 function openInspirationDialog() {
@@ -2775,13 +2803,103 @@ function pushExecutionDetailToMessage(message: any, stage: string, text: string,
   }
 }
 
+function friendlyToolName(server: string, tool: string): string {
+  const s = server.toLowerCase()
+  const t = tool.toLowerCase()
+
+  // 浏览器 / DevTools
+  if (s.includes('chrome') || s.includes('devtools') || s.includes('browser') || s.includes('puppeteer') || s.includes('playwright')) {
+    if (t.includes('navigate') || t.includes('goto') || t.includes('open')) return '正在浏览网页'
+    if (t.includes('screenshot') || t.includes('capture')) return '正在截图'
+    if (t.includes('click')) return '正在点击页面'
+    if (t.includes('type') || t.includes('input') || t.includes('fill')) return '正在输入内容'
+    if (t.includes('scroll')) return '正在滚动页面'
+    if (t.includes('evaluate') || t.includes('script') || t.includes('execute')) return '正在操作控制台'
+    if (t.includes('wait')) return '等待页面加载'
+    if (t.includes('content') || t.includes('html') || t.includes('text') || t.includes('get_page')) return '正在读取网页内容'
+    if (t.includes('element') || t.includes('find') || t.includes('query') || t.includes('select')) return '正在查找页面元素'
+    if (t.includes('tab') || t.includes('window')) return '正在管理浏览器标签'
+    if (t.includes('network') || t.includes('request')) return '正在监听网络请求'
+    return '正在操作浏览器'
+  }
+
+  // 文件系统
+  if (s.includes('filesystem') || s.includes('file') || s.includes('fs')) {
+    if (t.includes('read') || t.includes('get')) return '正在读取文件'
+    if (t.includes('write') || t.includes('create') || t.includes('save')) return '正在写入文件'
+    if (t.includes('delete') || t.includes('remove')) return '正在删除文件'
+    if (t.includes('list') || t.includes('dir') || t.includes('ls')) return '正在浏览目录'
+    if (t.includes('move') || t.includes('rename')) return '正在移动文件'
+    if (t.includes('search') || t.includes('find')) return '正在搜索文件'
+    return '正在操作文件'
+  }
+
+  // Shell / 终端
+  if (s.includes('shell') || s.includes('terminal') || s.includes('bash') || s.includes('exec') || s.includes('command')) {
+    if (t.includes('run') || t.includes('exec') || t.includes('command') || t.includes('bash')) return '正在操作控制台'
+    return '正在操作控制台'
+  }
+
+  // 网络请求 / Fetch
+  if (s.includes('fetch') || s.includes('http') || s.includes('request') || s.includes('curl')) {
+    return '正在访问网络'
+  }
+
+  // 内存 / 知识库
+  if (s.includes('memory') || s.includes('knowledge') || s.includes('vector')) {
+    if (t.includes('search') || t.includes('query') || t.includes('find')) return '正在查询记忆库'
+    if (t.includes('store') || t.includes('save') || t.includes('add')) return '正在保存记忆'
+    return '正在访问记忆库'
+  }
+
+  // 数据库
+  if (s.includes('sqlite') || s.includes('database') || s.includes('db') || s.includes('sql') || s.includes('mysql') || s.includes('postgres')) {
+    if (t.includes('select') || t.includes('query') || t.includes('read')) return '正在查询数据库'
+    if (t.includes('insert') || t.includes('create') || t.includes('write')) return '正在写入数据库'
+    if (t.includes('update')) return '正在更新数据库'
+    if (t.includes('delete') || t.includes('drop')) return '正在删除数据'
+    return '正在操作数据库'
+  }
+
+  // GitHub
+  if (s.includes('github') || s.includes('git')) {
+    if (t.includes('search')) return '正在搜索代码仓库'
+    if (t.includes('commit') || t.includes('push')) return '正在提交代码'
+    if (t.includes('pull') || t.includes('pr')) return '正在处理 Pull Request'
+    if (t.includes('issue')) return '正在处理 Issue'
+    if (t.includes('file') || t.includes('content')) return '正在读取仓库文件'
+    return '正在操作 GitHub'
+  }
+
+  // 搜索
+  if (s.includes('search') || s.includes('google') || s.includes('bing') || s.includes('brave')) {
+    return '正在搜索信息'
+  }
+
+  // 邮件
+  if (s.includes('email') || s.includes('mail') || s.includes('gmail')) {
+    if (t.includes('send')) return '正在发送邮件'
+    if (t.includes('read') || t.includes('get')) return '正在读取邮件'
+    return '正在处理邮件'
+  }
+
+  // 日历
+  if (s.includes('calendar') || s.includes('schedule')) {
+    return '正在操作日历'
+  }
+
+  // 默认：取 tool 名最后一段，转为可读格式
+  const readable = tool.replace(/[_-]/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase()
+  return `正在使用 ${readable}`
+}
+
 function applyMcpEventToMessage(message: any, eventData: any) {
   const trace = ensureMessageTrace(message)
   const server = String(eventData?.server || '')
   const tool = String(eventData?.tool || '')
   if (!server || !tool) return
   const key = `${server}/${tool}`
-  const label = `${server}/${tool}`
+  const label = friendlyToolName(server, tool)
   const status = eventData?.status === 'error' ? 'error' : eventData?.status === 'success' ? 'success' : 'start'
   trace.mcpRuntime[key] = {
     status,
@@ -2842,8 +2960,7 @@ function tracePanelSubtitle(message: any): string {
 
   const runningCalls = traceRunningCalls(message)
   if (runningCalls.length > 0) {
-    const toolName = runningCalls[0].split('/').pop() || runningCalls[0]
-    return `正在调用 ${toolName} 工具...`
+    return runningCalls[0]
   }
 
   const details = traceDetails(message)
@@ -3042,23 +3159,76 @@ function formatNumber(num: number): string {
   return num.toLocaleString()
 }
 
+function extractTextFromAgentJson(text: string): string {
+  const trimmed = text.trim()
+  if (!trimmed.startsWith('{')) return text
+
+  const parts: string[] = []
+  let searchPos = 0
+  while (searchPos < trimmed.length) {
+    const firstBrace = trimmed.indexOf('{', searchPos)
+    if (firstBrace < 0) break
+    let depth = 0
+    let inString = false
+    let endPos = -1
+    for (let i = firstBrace; i < trimmed.length; i++) {
+      const ch = trimmed[i]
+      if (ch === '"' && (i === 0 || trimmed[i - 1] !== '\\')) inString = !inString
+      if (!inString) {
+        if (ch === '{') depth++
+        else if (ch === '}') {
+          depth--
+          if (depth === 0) { endPos = i; break }
+        }
+      }
+    }
+    if (endPos < 0) { searchPos = firstBrace + 1; continue }
+
+    const jsonStr = trimmed.slice(firstBrace, endPos + 1)
+    searchPos = endPos + 1
+
+    try {
+      const parsed = JSON.parse(jsonStr)
+      if (!parsed || typeof parsed !== 'object') {
+        parts.push(jsonStr)
+        continue
+      }
+      const type = String(parsed.type || '').trim()
+      const data = parsed.data || parsed
+
+      if (type === 'message' && data?.content) {
+        parts.push(String(data.content))
+      } else if (type === 'action' && data?.tool) {
+        parts.push(`[调用工具: ${data.tool}]`)
+      } else if (type === 'actions' && Array.isArray(data?.actions)) {
+        for (const a of data.actions) {
+          if (a?.tool) parts.push(`[调用工具: ${a.tool}]`)
+        }
+      } else if (data?.result) {
+        parts.push(String(data.result))
+      } else if (data?.message) {
+        parts.push(String(data.message))
+      } else if (data?.content) {
+        parts.push(String(data.content))
+      } else if (data?.text) {
+        parts.push(String(data.text))
+      } else if (type && ['plan', 'done', 'error'].includes(type)) {
+        continue
+      } else {
+        parts.push(jsonStr)
+      }
+    } catch {
+      parts.push(jsonStr)
+    }
+  }
+
+  return parts.length > 0 ? parts.join('\n\n') : text
+}
+
 function renderMessageText(text: string): string {
   if (!text) return ""
 
-  try {
-    const trimmed = text.trim()
-    const jsonMatch = trimmed.match(/^\{[\s\S]*\}$/)
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0])
-      if (parsed && parsed.type === 'message' && parsed.data && typeof parsed.data === 'object' && parsed.data.content) {
-        text = String(parsed.data.content)
-      } else if (parsed && parsed.content && typeof parsed.content === 'string') {
-        text = String(parsed.content)
-      } else if (parsed && parsed.text && typeof parsed.text === 'string') {
-        text = String(parsed.text)
-      }
-    }
-  } catch {}
+  text = extractTextFromAgentJson(text)
 
   const codeBlocks: string[] = []
   let html = escapeHtml(text)
@@ -3261,6 +3431,7 @@ async function installSkill(skill: any) {
     if (data.ok) {
       ElMessage.success(data.message)
       fetchSkillMarket(skillCurrentPage.value)
+      loadConfig()
     } else {
       ElMessage.error(data.error)
     }
@@ -3291,6 +3462,7 @@ async function uninstallSkill(skill: any) {
     if (data.ok) {
       ElMessage.success(data.message)
       fetchSkillMarket(skillCurrentPage.value)
+      loadConfig()
     } else {
       ElMessage.error(data.error)
     }
@@ -3507,6 +3679,7 @@ function newChat() {
   })
   currentConversationId.value = newId
   selectedChatSkillId.value = ""
+  selectedChatSkillIds.value = []
   chatInput.value = ""
   ElMessage.success(t('newChatCreated'))
 }
@@ -4152,7 +4325,8 @@ async function sendChat(
       message: fullMessage,
       images: imageAttachments.length > 0 ? imageAttachments : undefined,
       conversationHistory,
-      selectedSkillId: aiConfigOverride?.skillId || selectedChatSkillId.value,
+      selectedSkillId: aiConfigOverride?.skillId || (selectedChatSkillIds.value.length === 1 ? selectedChatSkillIds.value[0] : ''),
+      selectedSkillIds: aiConfigOverride?.skillId ? [aiConfigOverride.skillId] : selectedChatSkillIds.value,
       model: modelOverride || selectedChatModel.value,
       executionMode: chatExecutionMode.value,
       promptInstruction: aiConfigOverride?.prompt || '',

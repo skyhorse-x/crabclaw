@@ -365,6 +365,7 @@ interface ImageAttachment {
 
 interface ChatStreamOptions {
   selectedSkillId?: string
+  selectedSkillIds?: string[]
   model?: string
   executionMode?: 'auto' | 'manual'
   promptInstruction?: string
@@ -649,43 +650,59 @@ async function requestModelReply(
   const historyWindow = Array.isArray(conversationHistory) ? conversationHistory.slice(-10) : []
   const historyChars = historyWindow.reduce((sum, msg) => sum + String(msg?.text || '').length, 0)
 
-  const input: Array<{ role: string; content: Array<Record<string, unknown>> }> = [
-    { role: 'system', content: [{ type: 'input_text', text: safeSystemPrompt }] }
+  const isOpenAIFormat = apiBaseUrl.includes('/chat/completions')
+
+  const input: Array<{ role: string; content: any }> = [
+    isOpenAIFormat
+      ? { role: 'system', content: safeSystemPrompt }
+      : { role: 'system', content: [{ type: 'input_text', text: safeSystemPrompt }] }
   ]
 
   if (historyWindow.length > 0) {
     for (const msg of historyWindow) {
       if (msg.role === 'user' || msg.role === 'assistant') {
-        input.push({ role: msg.role, content: [{ type: 'input_text', text: msg.text }] })
+        input.push(
+          isOpenAIFormat
+            ? { role: msg.role, content: msg.text }
+            : { role: msg.role, content: [{ type: 'input_text', text: msg.text }] }
+        )
       }
     }
   }
 
-  // 构建当前用户消息内容，支持图片
-  const userContent: Array<Record<string, unknown>> = [{ type: 'input_text', text: safeUserMessage }]
+  const userContent: Array<Record<string, unknown>> = isOpenAIFormat
+    ? [{ type: 'text', text: safeUserMessage }]
+    : [{ type: 'input_text', text: safeUserMessage }]
+
   if (Array.isArray(images) && images.length > 0) {
     for (const img of images) {
-      // dataUrl 格式: data:<type>;base64,<data>
       const base64 = img.dataUrl.split(',')[1]
       if (base64) {
-        userContent.push({
-          type: 'input_image',
-          image_url: `data:${img.type};base64,${base64}`
-        })
+        if (isOpenAIFormat) {
+          userContent.push({
+            type: 'image_url',
+            image_url: { url: `data:${img.type};base64,${base64}` }
+          })
+        } else {
+          userContent.push({
+            type: 'input_image',
+            image_url: `data:${img.type};base64,${base64}`
+          })
+        }
       }
     }
   }
+
   input.push({ role: 'user', content: userContent })
 
-  const requestPayload = {
-    model: modelName,
-    input
-  }
+  const requestPayload = isOpenAIFormat
+    ? { model: modelName, messages: input }
+    : { model: modelName, input }
 
   void logger.info('[AI] LLM request', {
     apiBaseUrl,
     model: modelName,
-    requestFormat: 'POST JSON { model, input:[{role,content:[{type,text}]}] }',
+    requestFormat: isOpenAIFormat ? 'OpenAI { model, messages }' : 'Anthropic { model, input }',
     inputMessageCount: input.length,
     systemPromptLength: safeSystemPrompt.length,
     userMessageLength: safeUserMessage.length,
@@ -1304,10 +1321,38 @@ function parseAgentEnvelope(reply: string): AgentEnvelope | null {
   if (fenced?.[1]) {
     candidates.unshift(String(fenced[1]).trim())
   }
-  const firstBrace = text.indexOf('{')
-  const lastBrace = text.lastIndexOf('}')
-  if (firstBrace >= 0 && lastBrace > firstBrace) {
-    candidates.push(text.slice(firstBrace, lastBrace + 1))
+
+  // 提取第一个完整的 JSON 对象（支持多 JSON 对象并列的情况）
+  const jsonObjects: string[] = []
+  let searchPos = 0
+  while (searchPos < text.length) {
+    const firstBrace = text.indexOf('{', searchPos)
+    if (firstBrace < 0) break
+    let depth = 0
+    let inString = false
+    let endPos = -1
+    for (let i = firstBrace; i < text.length; i++) {
+      const ch = text[i]
+      if (ch === '"' && (i === 0 || text[i - 1] !== '\\')) inString = !inString
+      if (!inString) {
+        if (ch === '{') depth++
+        else if (ch === '}') {
+          depth--
+          if (depth === 0) { endPos = i; break }
+        }
+      }
+    }
+    if (endPos > firstBrace) {
+      jsonObjects.push(text.slice(firstBrace, endPos + 1))
+      searchPos = endPos + 1
+    } else {
+      searchPos = firstBrace + 1
+    }
+  }
+
+  // 把独立 JSON 对象加入候选列表
+  for (const obj of jsonObjects) {
+    if (!candidates.includes(obj)) candidates.push(obj)
   }
 
   for (const candidate of candidates) {
@@ -1955,12 +2000,16 @@ export async function* handleChatStream(
     const builtinToolsDesc = builtinTools.getToolDescriptions()
     const allToolsDesc = mcpToolsDesc + (builtinToolsDesc ? '\n' + builtinToolsDesc : '')
 
-    const selectedSkill = options.selectedSkillId
-      ? skills.find(s => s.id === options.selectedSkillId)
-      : null
+    const effectiveSkillIds = (options.selectedSkillIds && options.selectedSkillIds.length > 0)
+      ? options.selectedSkillIds
+      : (options.selectedSkillId ? [options.selectedSkillId] : [])
 
-    const selectedSkillHint = selectedSkill
-      ? `\n用户在界面中选择了技能：${selectedSkill.id}（${selectedSkill.name}）。如果任务匹配该技能，优先返回对应 skill 调用。`
+    const selectedSkills = effectiveSkillIds
+      .map(id => skills.find(s => s.id === id))
+      .filter(Boolean)
+
+    const selectedSkillHint = selectedSkills.length > 0
+      ? `\n用户在界面中选择了技能：${selectedSkills.map(s => `${s!.id}（${s!.name}）`).join('、')}。如果任务匹配这些技能，优先返回对应 skill 调用。`
       : ''
 
     const promptInstruction = String(options.promptInstruction || '').trim()
@@ -2162,7 +2211,8 @@ export async function* handleChatStream(
             actionName = actionName.replace('builtin/', '')
             toolType = 'builtin'
           }
-          if (!actionName && toolType.includes('/') && toolType !== 'mcp' && toolType !== 'builtin') {
+          if (toolType.includes('/') && toolType !== 'mcp' && toolType !== 'builtin') {
+            // toolType is already "server/tool" form — use it as actionName and normalize
             actionName = toolType
             toolType = 'mcp'
           }
@@ -3006,6 +3056,7 @@ export function registerWSChatHandler(wsService: any): void {
       const options: ChatStreamOptions = {
         model: payload.model,
         selectedSkillId: payload.selectedSkillId,
+        selectedSkillIds: Array.isArray(payload.selectedSkillIds) ? payload.selectedSkillIds : undefined,
         executionMode: payload.executionMode || 'auto',
         promptInstruction: payload.promptInstruction,
         allowedMcpServers: payload.allowedMcpServers,
