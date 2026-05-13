@@ -142,7 +142,7 @@ class TaskSchedulerService {
 
         const list = tasks.map(t => {
           const interval = t.intervalMs ? `每 ${Math.round(t.intervalMs / 60000)} 分钟` : ''
-          const status = t.enabled ? '✅ 启用' : '❌ 停用'
+          const status = t.enabled ? '[启用]' : '[停用]'
           return `${t.id}: ${t.name} ${interval} ${status}`
         }).join('\n')
 

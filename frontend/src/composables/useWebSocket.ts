@@ -146,9 +146,10 @@ function connect(wsUrl: string) {
       sharedReconnectAttempts.value = 0
       console.log('[WebSocket] Connected')
     }
-    sharedWs.value.onmessage = (event) => {
+    sharedWs.value.onmessage = async (event) => {
       try {
-        const message: WSMessage = JSON.parse(event.data)
+        const raw = event.data instanceof Blob ? await event.data.text() : String(event.data)
+        const message: WSMessage = JSON.parse(raw)
         console.log('[WebSocket] Received message:', message.type)
         handleMessage(message)
       } catch (e) {
@@ -216,6 +217,7 @@ export function useWebSocket() {
       promptInstruction?: string
       allowedMcpServers?: string[]
       conversationHistory?: Array<{ role: string; text: string }>
+      images?: Array<{ name: string; type: string; dataUrl: string }>
     }) => send({ type: 'chat_message', payload }),
     onChatChunk: (handler: (chunk: ChatChunk) => void) => {
       sharedChunkHandlers.push(handler)

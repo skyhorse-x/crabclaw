@@ -9,7 +9,6 @@
         <el-tab-pane name="global">
           <template #label>
             <span class="platform-tab-label">
-              <span class="platform-icon global-icon">⚙</span>
               <span>{{ t('controlGlobal') }}</span>
             </span>
           </template>
@@ -32,7 +31,6 @@
         <el-tab-pane name="telegram">
           <template #label>
             <span class="platform-tab-label">
-              <span class="platform-icon telegram-icon">✈</span>
               <span>Telegram</span>
             </span>
           </template>

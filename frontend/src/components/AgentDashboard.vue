@@ -6,10 +6,10 @@
         <span class="agent-count">{{ t('totalAgents') }}: {{ agents.length }}</span>
       </div>
       <div class="header-actions">
-        <el-button type="primary" @click="showCreateDialog = true">
-          <el-icon><Plus /></el-icon>
+        <button class="create-agent-btn" @click="showCreateDialog = true">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           {{ t('createAgent') }}
-        </el-button>
+        </button>
       </div>
     </div>
 
@@ -29,9 +29,9 @@
     </div>
 
     <el-empty v-else :description="t('noAgents')">
-      <el-button type="primary" @click="showCreateDialog = true">
+      <button class="create-agent-btn" @click="showCreateDialog = true">
         {{ t('createFirstAgent') }}
-      </el-button>
+      </button>
     </el-empty>
 
     <el-dialog
@@ -116,7 +116,7 @@
       </el-form>
       <template #footer>
         <el-button @click="showCreateDialog = false">{{ t('cancel') }}</el-button>
-        <el-button type="primary" @click="createAgent" :loading="creating">{{ t('confirm') }}</el-button>
+        <button class="create-agent-btn" :disabled="creating" @click="createAgent">{{ creating ? '创建中...' : t('confirm') }}</button>
       </template>
     </el-dialog>
 
@@ -140,7 +140,7 @@
       </el-form>
       <template #footer>
         <el-button @click="showTaskDialog = false">{{ t('cancel') }}</el-button>
-        <el-button type="primary" :loading="taskSubmitting" @click="submitAgentTask">{{ t('confirm') }}</el-button>
+        <button class="create-agent-btn" :disabled="taskSubmitting" @click="submitAgentTask">{{ taskSubmitting ? '提交中...' : t('confirm') }}</button>
       </template>
     </el-dialog>
 
@@ -251,8 +251,8 @@ const t = (key: string): string => {
 }
 
 const colorOptions = [
-  '#e5e7eb', '#d1d5db', '#cbd5e1', '#bfdbfe',
-  '#dbeafe', '#f1f5f9'
+  '#1a1a1a', '#3a3a3a', '#555555', '#777777',
+  '#999999', '#bbbbbb'
 ]
 
 const API_BASE = ''
@@ -617,9 +617,10 @@ onUnmounted(() => {
 
 <style scoped>
 .agent-dashboard {
-  padding: 20px;
+  padding: 28px 32px;
   height: 100%;
   overflow-y: auto;
+  background: #f5f5f5;
 }
 
 .dashboard-header {
@@ -637,20 +638,46 @@ onUnmounted(() => {
 
 .header-left h2 {
   font-size: 20px;
-  font-weight: 600;
-  color: var(--text-primary);
+  font-weight: 700;
+  color: #1a1a1a;
   margin: 0;
 }
 
 .agent-count {
   font-size: 13px;
-  color: var(--text-muted);
+  color: #999999;
+}
+
+.create-agent-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  background: #1a1a1a;
+  color: #ffffff;
+  border: none;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.15s;
+}
+
+.create-agent-btn:hover {
+  background: #333333;
+  transform: translateY(-1px);
+}
+
+.create-agent-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
 }
 
 .agent-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 14px;
 }
 
 .agent-dashboard :deep(.el-dialog) {

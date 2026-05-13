@@ -50,7 +50,19 @@
       "args": [
         "-y",
         "@modelcontextprotocol/server-github"
-      ]
+      ],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": ""
+      }
+    },
+    "@modelcontextprotocol/server-sqlite": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-sqlite",
+        "/Users/472733389qq.com/Desktop/project/crabclaw/server/data.db"
+      ],
+      "env": {}
     }
   }
 }

@@ -33,7 +33,7 @@
             <div class="desk-monitor">{{ seat.agent.name }}</div>
 
             <div class="worker">
-              <div class="worker-head" :style="{ backgroundColor: seat.agent.color || '#7c3aed' }"></div>
+              <div class="worker-head" :style="{ backgroundColor: seat.agent.color || '#3b82f6' }"></div>
               <div class="worker-body" :class="`status-${seat.agent.status}`"></div>
               <div class="worker-chair"></div>
             </div>
@@ -223,7 +223,7 @@ const seats = computed(() => {
 .desk-top {
   height: 14px;
   border-radius: 7px 7px 3px 3px;
-  background: linear-gradient(90deg, #8b5cf6, #7c3aed);
+  background: linear-gradient(90deg, #3b82f6, #1d4ed8);
 }
 
 .desk-front {

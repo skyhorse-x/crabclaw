@@ -3,7 +3,7 @@
     <div class="chat-container">
       <div class="chat-messages" ref="chatContainer">
         <div v-if="currentConversation.messages.length === 0" class="chat-empty">
-          <div class="empty-icon">💬</div>
+          <div class="empty-icon"></div>
           <p>{{ t('chatEmpty') }}</p>
         </div>
         <div
@@ -12,7 +12,6 @@
           class="message"
           :class="msg.role"
         >
-          <div class="message-avatar">{{ msg.role === 'user' ? 'U' : 'AI' }}</div>
           <div class="message-content">
             <div class="message-text" v-html="formatMessage(msg.text)"></div>
             <div v-if="msg.stages && msg.stages.length > 0" class="stages-progress">
@@ -23,19 +22,19 @@
             </div>
             <div v-if="msg.reasoning" class="reasoning-card">
               <div class="reasoning-header">
-                <span class="reasoning-icon">🤔</span>
+                <span class="reasoning-icon"></span>
                 <span>推理过程</span>
                 <span class="confidence-badge">{{ Math.round(msg.reasoning.confidence * 100) }}%</span>
               </div>
               <div class="reasoning-text">{{ msg.reasoning.text }}</div>
             </div>
             <div v-if="msg.mcpCalls && msg.mcpCalls.length > 0" class="mcp-calls">
-              <div class="mcp-header">🔧 工具调用</div>
+              <div class="mcp-header">工具调用</div>
               <div v-for="(call, i) in msg.mcpCalls" :key="i" class="mcp-call-card" :class="call.status">
                 <div class="mcp-call-header">
                   <span class="mcp-server">{{ call.server }}</span>
                   <span class="mcp-tool">/{{ call.tool }}</span>
-                  <span class="mcp-status" :class="call.status">{{ call.status === 'success' ? '✓' : '✗' }}</span>
+                  <span class="mcp-status" :class="call.status">{{ call.status === 'success' ? 'OK' : 'FAIL' }}</span>
                 </div>
                 <div v-if="call.duration" class="mcp-duration">{{ call.duration }}ms</div>
                 <div v-if="call.causalChain && call.causalChain.length > 0" class="causal-chain">
@@ -50,20 +49,20 @@
             </div>
             <div v-if="msg.error" class="error-card" :class="msg.error.severity">
               <div class="error-header">
-                <span class="error-icon">⚠️</span>
+                <span class="error-icon"></span>
                 <span class="error-code">{{ msg.error.code }}</span>
                 <span class="error-severity" :class="msg.error.severity">{{ msg.error.severity }}</span>
               </div>
               <div class="error-message">{{ msg.error.message }}</div>
               <div v-if="msg.error.suggestion" class="error-suggestion">
-                <span class="suggestion-icon">💡</span>
+                <span class="suggestion-icon"></span>
                 {{ msg.error.suggestion }}
               </div>
               <div v-if="msg.error.retryable" class="error-retry">可重试</div>
             </div>
             <div v-if="msg.learning && msg.learning.experienceGained" class="learning-card">
               <div class="learning-header">
-                <span class="learning-icon">📚</span>
+                <span class="learning-icon"></span>
                 <span>经验反馈</span>
               </div>
               <div v-if="msg.learning.recommendations" class="learning-recommendations">

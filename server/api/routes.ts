@@ -12,6 +12,7 @@ import { handleBridgeRoute } from '../routes/bridge.routes'
 import { handleAuthRoute } from '../routes/auth.routes'
 import { handleChatHistoryRoute } from '../routes/chat-history.routes'
 import { handleAgentRoute } from '../routes/agent.routes'
+import { handlePipelineRoute } from '../routes/pipeline.routes'
 import { handleRemoteControlRoute } from '../routes/remote-control.routes'
 import { handleScheduledTasksRoute } from '../routes/scheduled-tasks.routes'
 
@@ -36,7 +37,9 @@ const prefixRouteMap: Map<string, RouteHandler> = new Map([
   ['/api/bridge', handleBridgeRoute],
   ['/api/auth', handleAuthRoute],
   ['/api/chat-history', handleChatHistoryRoute],
+  ['/api/token-stats', handleChatHistoryRoute],
   ['/api/agents', handleAgentRoute],
+  ['/api/pipelines', handlePipelineRoute],
   ['/api/remote-control', handleRemoteControlRoute],
   ['/api/scheduled-tasks', handleScheduledTasksRoute]
 ])

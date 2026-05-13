@@ -133,7 +133,7 @@ export async function startServer() {
     logger.info('Server started successfully', {
       url: `http://localhost:${config.settings.backendPort}`
     })
-    console.log(`🚀 Desktop Agent Studio running at http://localhost:${config.settings.backendPort}`) // 保留这个用于启动提示
+    console.log(`Desktop Agent Studio running at http://localhost:${config.settings.backendPort}`) // 保留这个用于启动提示
   } catch (error) {
     serverStarted = false
     logger.error('Failed to start server', error)

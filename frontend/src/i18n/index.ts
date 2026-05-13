@@ -4,7 +4,7 @@ import { createI18n } from 'vue-i18n'
 const messages = {
   'zh-CN': {
     appTitle: '桌面AI助手',
-    initializing: '启动中...',
+    initializing: '小螃蟹启动中',
     
     // 导航栏
     navChat: '对话',

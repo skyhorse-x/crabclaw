@@ -234,6 +234,9 @@ export async function handleMcpRoute(pathname: string, request: Request) {
   if (pathname === '/api/mcp/install' && request.method === 'POST') {
     try {
       const body = await readJsonBody(request)
+      if (!body) {
+        return new Response(JSON.stringify({ ok: false, error: '请求体解析失败' }), { status: 400, headers: { 'content-type': 'application/json' } })
+      }
       const config = body?.config
 
       if (!config || !config.mcpServers || typeof config.mcpServers !== 'object') {
@@ -283,6 +286,9 @@ export async function handleMcpRoute(pathname: string, request: Request) {
   if (pathname === '/api/mcp/uninstall' && request.method === 'POST') {
     try {
       const body = await readJsonBody(request)
+      if (!body) {
+        return new Response(JSON.stringify({ ok: false, error: '请求体解析失败' }), { status: 400, headers: { 'content-type': 'application/json' } })
+      }
       const id = body?.id
 
       if (!id) {
@@ -310,6 +316,7 @@ export async function handleMcpRoute(pathname: string, request: Request) {
       delete updated.mcpServers[id]
       await saveMcpConfigFile(updated)
       await disconnectAllMcp()
+      await getMcpTools()
 
       return new Response(JSON.stringify({
         ok: true,

@@ -3,7 +3,7 @@
     <aside class="sidebar" :class="{ collapsed: sidebarCollapsed }">
       <div class="sidebar-header">
         <div class="logo">
-          <div class="logo-icon">AI</div>
+          <img class="logo-icon" src="/icons/appIcon.png" alt="Logo" />
           <div class="logo-text" v-if="!sidebarCollapsed">
             <h1>{{ t('appTitle') }}</h1>
           </div>

@@ -3,14 +3,14 @@
     "backendPort": 17870,
     "theme": "light",
     "language": "zh-CN",
-    "activeModelId": "doubao-default",
-    "userDataDir": "/Users/472733389qq.com/Desktop/学习项目/crabclaw/server",
+    "activeModelId": "model-1774600213090",
+    "userDataDir": "/Users/472733389qq.com/Desktop/project/crabclaw/server",
     "skillsDir": "/Users/472733389qq.com/Desktop/学习项目/crabclaw/server/data/skills"
   },
   "models": [
     {
       "id": "doubao-default",
-      "name": "豆包 Doubao",
+      "name": "豆包",
       "provider": "bytedance",
       "customProviderName": "豆包",
       "apiKeyEncrypted": "e1838af935659071b28fe5ff80188366:a5b59ef567fa3153a13c898aea5e73657601fbb98c80a452bcc997dc67f9a029f307e2e03e14da6e7578be352571b94f",
@@ -19,7 +19,7 @@
       "isBuiltIn": true,
       "isActive": true,
       "createdAt": "2026-03-18T00:00:00.000Z",
-      "updatedAt": "2026-03-27T03:53:51.771Z"
+      "updatedAt": "2026-05-13T08:43:55.132Z"
     },
     {
       "id": "model-1774583736490",
@@ -44,8 +44,42 @@
       "isActive": true,
       "createdAt": "2026-03-27T08:30:13.090Z",
       "updatedAt": "2026-03-27T08:30:13.090Z"
+    },
+    {
+      "id": "model-1778661568804",
+      "name": "Deepseek-v4-flash",
+      "provider": "custom",
+      "customProviderName": "Deepseek-v4",
+      "apiKeyEncrypted": "8d49bc5fdb7153cfb50246ec5e4b0d9b:89c2534192b7d183fc3edd0e33b4b174bd3f2a21e773dc9777ac3da0dc975217e62774566aa63b6e176a361793661028",
+      "modelName": "deepseek-v4-flash",
+      "apiBaseUrl": "https://api.deepseek.com/chat/completions",
+      "isBuiltIn": false,
+      "isActive": true,
+      "createdAt": "2026-05-13T08:39:28.804Z",
+      "updatedAt": "2026-05-13T08:42:57.639Z"
     }
   ],
-  "skills": [],
+  "skills": [
+    {
+      "id": "self-improving-agent",
+      "name": "self-improving-agent",
+      "category": "browser",
+      "description": "",
+      "tags": [],
+      "triggerPhrases": [],
+      "delayMs": 500,
+      "steps": []
+    },
+    {
+      "id": "ontology",
+      "name": "ontology",
+      "category": "browser",
+      "description": "",
+      "tags": [],
+      "triggerPhrases": [],
+      "delayMs": 500,
+      "steps": []
+    }
+  ],
   "tasks": []
 }

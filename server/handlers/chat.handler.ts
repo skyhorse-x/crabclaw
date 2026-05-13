@@ -53,7 +53,7 @@ async function extractAndStoreUserInfo(
     {
       key: 'name',
       patterns: [
-        /(?:我叫|名字是|叫我|是\s*)([^\s啊呀呢呀😊!！]{2,10})/,
+        /(?:我叫|名字是|叫我|是\s*)([^\s啊呀呢呀!！]{2,10})/,
         /(?:I am|I'm|call me)\s+([A-Za-z]{2,20})/i
       ]
     },
@@ -357,6 +357,12 @@ interface StreamChunk {
   progress?: ProgressDetail
 }
 
+interface ImageAttachment {
+  name: string
+  type: string
+  dataUrl: string  // base64 data URL
+}
+
 interface ChatStreamOptions {
   selectedSkillId?: string
   model?: string
@@ -364,6 +370,7 @@ interface ChatStreamOptions {
   promptInstruction?: string
   allowedMcpServers?: string[]
   signal?: AbortSignal
+  images?: ImageAttachment[]
 }
 
 interface PlannerToolCall {
@@ -436,7 +443,7 @@ interface PlannerOutput {
   execution_order?: string[]
 }
 
-type AgentResponseType = 'plan' | 'action' | 'message' | 'done' | 'error'
+type AgentResponseType = 'plan' | 'action' | 'actions' | 'message' | 'done' | 'error'
 
 interface AgentEnvelope {
   type: AgentResponseType
@@ -633,7 +640,8 @@ async function requestModelReply(
   systemPrompt: string,
   userMessage: string,
   conversationHistory?: Array<{ role: string; text: string }>,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  images?: ImageAttachment[]
 ): Promise<LlmResponse> {
   throwIfAborted(signal)
   const safeSystemPrompt = compactText(systemPrompt, HTTP.MAX_SYSTEM_PROMPT_CHARS)
@@ -641,7 +649,7 @@ async function requestModelReply(
   const historyWindow = Array.isArray(conversationHistory) ? conversationHistory.slice(-10) : []
   const historyChars = historyWindow.reduce((sum, msg) => sum + String(msg?.text || '').length, 0)
 
-  const input: Array<{ role: string; content: Array<{ type: string; text: string }> }> = [
+  const input: Array<{ role: string; content: Array<Record<string, unknown>> }> = [
     { role: 'system', content: [{ type: 'input_text', text: safeSystemPrompt }] }
   ]
 
@@ -653,7 +661,21 @@ async function requestModelReply(
     }
   }
 
-  input.push({ role: 'user', content: [{ type: 'input_text', text: safeUserMessage }] })
+  // 构建当前用户消息内容，支持图片
+  const userContent: Array<Record<string, unknown>> = [{ type: 'input_text', text: safeUserMessage }]
+  if (Array.isArray(images) && images.length > 0) {
+    for (const img of images) {
+      // dataUrl 格式: data:<type>;base64,<data>
+      const base64 = img.dataUrl.split(',')[1]
+      if (base64) {
+        userContent.push({
+          type: 'input_image',
+          image_url: `data:${img.type};base64,${base64}`
+        })
+      }
+    }
+  }
+  input.push({ role: 'user', content: userContent })
 
   const requestPayload = {
     model: modelName,
@@ -974,14 +996,14 @@ function buildAgentSystemPrompt(
   return `你是一个 AI Agent，但只有在任务需要时才进入 Agent 模式。
 
 ==============================
-🖥️ 当前运行环境
+[系统环境] 当前运行环境
 ==============================
 - 操作系统：${platformInfo}
 - 执行 Shell 命令时必须使用 ${platformCommands.shell} 命令
 ${platformCommands.systemInfo ? `- 系统监控命令：${platformCommands.systemInfo}` : ''}
 
 ==============================
-⚠️ 【跨平台 Shell 命令规范（必须严格遵守）】
+[警告] 【跨平台 Shell 命令规范（必须严格遵守）】
 ==============================
 调用 shell/shell_execute 时必须遵守以下规则：
 
@@ -1017,7 +1039,7 @@ ${platformCommands.systemInfo ? `- 系统监控命令：${platformCommands.syste
 - 禁止调用任何不存在的工具
 
 ==============================
-🎯 核心目标
+[核心目标] 核心目标
 ==============================
 - 理解用户意图
 - 判断是否需要执行任务
@@ -1026,7 +1048,7 @@ ${platformCommands.systemInfo ? `- 系统监控命令：${platformCommands.syste
 - 避免过度执行
 
 ==============================
-🧠 【最高优先级规则：意图判断】
+[最高优先级] 【最高优先级规则：意图判断】
 ==============================
 在执行任何 plan 或 action 前，必须先判断用户意图：
 
@@ -1048,7 +1070,7 @@ ${platformCommands.systemInfo ? `- 系统监控命令：${platformCommands.syste
 → 一律禁止调用 MCP 工具
 
 ==============================
-🚫 【禁止过度执行】
+[禁止] 【禁止过度执行】
 ==============================
 - 不要为简单问题生成 plan
 - 不要把单步任务拆成多步骤
@@ -1070,40 +1092,40 @@ ${platformCommands.systemInfo ? `- 系统监控命令：${platformCommands.syste
   4. 如果 shell 也不可用，再告知用户
 
 ==============================
-🔄 【任务执行实时反馈（必须遵守）】
+[任务反馈] 【任务执行实时反馈（必须遵守）】
 ==============================
 当用户要求执行任务（如创建网站、编写代码、操作文件等）时，必须分步骤实时反馈进度：
 
-✔ 每执行一个操作前，先输出简要说明：
+- 每执行一个操作前，先输出简要说明：
    - "正在读取 index.html..."
    - "正在创建 styles.css..."
    - "正在写入 package.json..."
    - "正在安装依赖 npm install..."
 
-✔ 反馈内容要具体：
+- 反馈内容要具体：
    - 包含文件名、操作类型
    - 让用户知道当前进度
 
-✔ 示例场景（创建 Vue 项目）：
+- 示例场景（创建 Vue 项目）：
    1. "正在读取项目结构..."
    2. "正在创建 src/App.vue..."
    3. "正在创建 src/components/Header.vue..."
    4. "正在安装依赖 npm install..."
    5. "项目创建完成！"
 
-✘ 禁止：只输出"任务完成"，不说明中间步骤
+X 禁止：只输出"任务完成"，不说明中间步骤
 
 ==============================
-🌐 【浏览器使用规则（强约束）】
+[浏览器] 【浏览器使用规则（强约束）】
 ==============================
 只有在以下情况才允许调用 chrome-devtools：
 
-✔ 用户明确要求：
+- 用户明确要求：
   - 打开某个 URL
   - 搜索网页内容
   - 操作网页（点击 / 输入）
 
-✘ 以下情况禁止调用：
+X 以下情况禁止调用：
   - 问候（你好 / hello）
   - 普通问答
   - 未提及网页操作
@@ -1115,7 +1137,7 @@ ${platformCommands.systemInfo ? `- 系统监控命令：${platformCommands.syste
 - 只有当 list_pages 返回空列表或找不到目标页面时，才使用 new_page
 
 ==============================
-🛠 【工具调用前检查（必须全部满足）】
+[工具调用] 【工具调用前检查（必须全部满足）】
 ==============================
 调用 MCP 前必须确认：
 
@@ -1127,19 +1149,19 @@ ${platformCommands.systemInfo ? `- 系统监控命令：${platformCommands.syste
 → 禁止调用工具
 
 ==============================
-⚠️ 【真实性约束（必须遵守）】
+[真实性约束] 【真实性约束（必须遵守）】
 ==============================
 - 未通过工具获取的本机信息，禁止编造为“当前运行环境/本机/实时”
 - 如果无法获取真实数据，必须明确说明“无法访问本机数据”，并给出用户自查方法
 
 ==============================
-⚠️ 【Truthfulness Rules (Must Follow)】
+[Truthfulness] 【Truthfulness Rules (Must Follow)】
 ==============================
 - Do NOT claim “local/real-time/current environment” data unless obtained via tools.
 - If real data cannot be accessed, explicitly say you cannot access it and provide user self-check steps.
 
 ==============================
-📦 输出格式（严格 JSON）
+[输出格式] 输出格式（严格 JSON）
 ==============================
 {
   "type": "plan | action | message | done | error",
@@ -1147,7 +1169,7 @@ ${platformCommands.systemInfo ? `- 系统监控命令：${platformCommands.syste
 }
 
 ==============================
-📏 输出规则
+[输出规则] 输出规则
 ==============================
 1. 不允许输出任何 JSON 以外的文本
 2. 每次只输出一个 JSON
@@ -1157,7 +1179,7 @@ ${platformCommands.systemInfo ? `- 系统监控命令：${platformCommands.syste
 6. 默认只输出“可读的结果摘要/结构化信息”，不要展示命令行、日志或原始终端输出；除非用户明确要求查看原始输出
 
 ==============================
-📌 类型说明
+[类型说明] 类型说明
 ==============================
 
 【message】
@@ -1167,13 +1189,13 @@ ${platformCommands.systemInfo ? `- 系统监控命令：${platformCommands.syste
 - 简单说明
 
 回复格式要求：
-- ✅ 优先使用表情符号（😊、👍、🎉、💡、🔍等）
-- ✅ 支持 Markdown 格式（**加粗**、*斜体*、列表、引用等）
-- ✅ 使用有序/无序列表组织信息
-- ✅ 友好亲切的语气
+- 优先使用表情符号（微笑、点赞、庆祝、灯泡、放大镜等）
+- 支持 Markdown 格式（**加粗**、*斜体*、列表、引用等）
+- 使用有序/无序列表组织信息
+- 友好亲切的语气
 
 content 内容示例：
-"你好呀！👋 我是你的 AI 助手，可以帮你：\n- 🔍 搜索网页信息\n- 🌐 打开和管理网页\n- 💻 执行命令和代码\n\n有什么需要帮忙的吗？"
+"你好呀！我是你的 AI 助手，可以帮你：\n- 搜索网页信息\n- 打开和管理网页\n- 执行命令和代码\n\n有什么需要帮忙的吗？"
 
 【plan】
 仅用于复杂任务拆解：
@@ -1187,7 +1209,7 @@ content 内容示例：
 }
 
 【action】
-调用 MCP：
+调用单个 MCP 工具：
 {
   "type": "action",
   "data": {
@@ -1196,6 +1218,19 @@ content 内容示例：
     "input": {}
   }
 }
+
+【actions】（批量顺序执行，减少来回次数，优先使用）
+当多个步骤不依赖彼此的返回结果时，一次性输出所有步骤：
+{
+  "type": "actions",
+  "data": {
+    "steps": [
+      { "tool": "mcp", "name": "工具名1", "input": {} },
+      { "tool": "mcp", "name": "工具名2", "input": {} }
+    ]
+  }
+}
+[警告] 只有当后一步不需要前一步的返回结果时才使用 actions；否则用单步 action。
 
 【done】
 任务完成：
@@ -1216,12 +1251,12 @@ content 内容示例：
 }
 
 ==============================
-🧩 可用技能
+[技能] 可用技能
 ==============================
 ${skills.map(s => `- ${s.id}`).join('\n')}
 
 ==============================
-🔧 可用 MCP 工具（按平台分组）
+[MCP工具] 可用 MCP 工具（按平台分组）
 ==============================
 ${mcpToolsDesc}
 
@@ -1237,11 +1272,11 @@ ${mcpToolsDesc}
 工具命名规范（必须严格遵守）：
 - 格式：server/tool（斜杠分隔）
 - 示例：shell/shell_execute, fetch/fetch_readable, filesystem/read_file, chrome-devtools/navigate_page
-- ❌ 禁止：不要使用下划线连接（如 fetch_readable）
-- ❌ 禁止：不要使用重复前缀（如 fetch_fetch_readable）
+- X 禁止：不要使用下划线连接（如 fetch_readable）
+- X 禁止：不要使用重复前缀（如 fetch_fetch_readable）
 
 ==============================
-📎 额外提示
+[额外提示] 额外提示
 ==============================
 ${selectedSkillHint || '无'}
 
@@ -1280,8 +1315,13 @@ function parseAgentEnvelope(reply: string): AgentEnvelope | null {
       const parsed = JSON.parse(candidate)
       if (!parsed || typeof parsed !== 'object') continue
       const type = String(parsed.type || '').trim() as AgentResponseType
-      if (!['plan', 'action', 'message', 'done', 'error'].includes(type)) continue
-      const data = parsed.data && typeof parsed.data === 'object' ? parsed.data : {}
+      if (!['plan', 'action', 'actions', 'message', 'done', 'error'].includes(type)) continue
+      let data: Record<string, any> = {}
+      if (parsed.data && typeof parsed.data === 'object') {
+        data = parsed.data
+      } else if (typeof parsed.data === 'string') {
+        try { data = JSON.parse(parsed.data) } catch { data = {} }
+      }
       void logger.info('[AI] Agent envelope parsed', {
         type,
         data: summarizeForLog(data, 800)
@@ -1429,7 +1469,8 @@ function buildAgentFollowupPrompt(
     toolResultSummary ? `工具执行结果：${toolResultSummary}` : '',
     extraSummary ? extraSummary : '',
     '请继续推进任务，只输出一个 JSON 对象。',
-    '如果任务未完成，优先输出 type="action"。',
+    '如果后续多个步骤不依赖彼此返回结果，优先用 type="actions" 批量输出所有步骤，减少来回次数。',
+    '如果任务未完成且步骤有依赖，用 type="action" 输出单步。',
     '只有全部完成后才输出 type="done"。'
   ].filter(Boolean)
   return lines.join('\n')
@@ -1948,7 +1989,7 @@ export async function* handleChatStream(
 
     const inferStep = openStep('模型推理')
     yield buildTaskEvent(taskId, 'running', { stepId: inferStep.stepId, stepStatus: 'running', title: inferStep.title })
-    const llmResult = await requestModelReply(apiBaseUrl, apiKey, modelName, finalSystemPrompt, message, conversationHistory, abortSignal)
+    const llmResult = await requestModelReply(apiBaseUrl, apiKey, modelName, finalSystemPrompt, message, conversationHistory, abortSignal, options.images)
     const reply = llmResult.reply
     if (llmResult.usage) {
       accumulatedUsage = llmResult.usage
@@ -2005,7 +2046,7 @@ export async function* handleChatStream(
       return
     }
 
-    if (agentEnvelope.type === 'action') {
+    if (agentEnvelope.type === 'action' || agentEnvelope.type === 'actions') {
       const availableServers = Object.keys(mcpToolsMap)
       let turn = 0
       const maxTurns = 16
@@ -2058,6 +2099,55 @@ export async function* handleChatStream(
             return
           }
           agentEnvelope = nextEnvelope
+          continue
+        }
+
+        if (agentEnvelope.type === 'actions') {
+          const batchSteps: Array<{ tool: string; name: string; input: Record<string, any> }> =
+            Array.isArray(agentEnvelope.data?.steps) ? agentEnvelope.data.steps : []
+          void logger.info('[AI] Batch actions', { turn, count: batchSteps.length })
+          const batchResults: string[] = []
+
+          for (const step of batchSteps) {
+            const batchInput = step.input && typeof step.input === 'object' ? { ...step.input } : {}
+            // 优先用 "server/tool" 拼接形式解析，兼容 AI 分开返回 tool(server) 和 name(tool) 的格式
+            const stepTool = String(step.tool || '').trim()
+            const stepName = String(step.name || '').trim()
+            const batchActionName = (stepTool && stepName && stepTool !== 'mcp' && stepTool !== 'builtin')
+              ? `${stepTool}/${stepName}`
+              : (stepName || stepTool)
+            const batchTarget = resolveActionTarget(batchActionName, mcpToolsMap)
+            if (!batchTarget) {
+              batchResults.push(`无法解析工具：${batchActionName}`)
+              continue
+            }
+            const { server: batchServer, tool: batchTool } = batchTarget
+            yield buildDetail('tool', `[批量] 正在调用 ${batchServer}/${batchTool}...`)
+            yield { type: 'mcp', mcp: { server: batchServer, tool: batchTool, status: 'start', time: new Date().toISOString() } }
+            const batchResult = await executeMcpToolWithPolicy(batchServer, batchTool, batchInput)
+            const batchOk = !!batchResult?.ok
+            yield { type: 'mcp', mcp: { server: batchServer, tool: batchTool, status: batchOk ? 'success' : 'error', error: batchOk ? undefined : String(batchResult?.error || ''), time: new Date().toISOString() } }
+            batchResults.push(batchOk ? String(batchResult?.result || '').trim() || '执行成功' : `失败：${batchResult?.error || ''}`)
+            updateRuntimeStateAfterAction(runtimeState, batchServer, batchTool, batchInput)
+            updateRuntimeStateAfterResult(runtimeState, batchServer, batchTool, batchInput, batchResults[batchResults.length - 1])
+          }
+
+          lastToolResultText = batchResults.join('\n---\n')
+          const nextBatchResult = await requestModelReply(
+            apiBaseUrl, apiKey, modelName, finalSystemPrompt,
+            buildAgentFollowupPrompt(message, agentEnvelope, {
+              toolResult: lastToolResultText,
+              extra: `${buildRuntimeStateHint(runtimeState)}\n批量步骤已全部执行完毕。如果任务未完成，继续输出下一步；若已完成，输出 type="done"。`
+            }),
+            conversationHistory, abortSignal
+          )
+          const nextBatchEnvelope = parseAgentEnvelope(nextBatchResult.reply)
+          if (!nextBatchEnvelope) {
+            yield* streamReplyChunks(lastToolResultText || '批量执行完成')
+            yield { type: 'done', usage: accumulatedUsage }
+            return
+          }
+          agentEnvelope = nextBatchEnvelope
           continue
         }
 
@@ -2669,7 +2759,7 @@ export async function* handleChatStream(
 
           execPlan[i].active = false
           execPlan[i].completed = true
-          execPlan[i].description = `执行完成：${step.title || step.id}`
+          execPlan[i].description = `已经执行了命令：${step.title || step.id}`
           yield { type: 'plan', plan: [...execPlan] }
           yield { type: 'step', step: { status: 'done', text: sanitizeStepTitle(step.description || step.title || step.id) } }
         }
@@ -2814,7 +2904,7 @@ export async function* handleChatStream(
 
           execPlan[i].active = false
           execPlan[i].completed = true
-          execPlan[i].description = `执行完成：${stepTitle}`
+          execPlan[i].description = `已经执行了命令：${stepTitle}`
           yield { type: 'plan', plan: [...execPlan] }
           yield { type: 'step', step: { status: 'done', text: `${server}/${tool}` } }
 
@@ -2919,7 +3009,8 @@ export function registerWSChatHandler(wsService: any): void {
         executionMode: payload.executionMode || 'auto',
         promptInstruction: payload.promptInstruction,
         allowedMcpServers: payload.allowedMcpServers,
-        signal: controller.signal
+        signal: controller.signal,
+        images: Array.isArray(payload.images) ? payload.images : undefined
       }
 
       const conversationHistory = Array.isArray(payload.conversationHistory)

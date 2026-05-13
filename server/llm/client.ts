@@ -175,7 +175,7 @@ export class LLMClient {
     const results = await this.gateway.testConnections()
 
     for (const [provider, connected] of Object.entries(results)) {
-      logger.info(`${provider}: ${connected ? '✅' : '❌'}`)
+      logger.info(`${provider}: ${connected ? 'connected' : 'disconnected'}`)
     }
 
     return results

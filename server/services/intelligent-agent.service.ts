@@ -228,15 +228,15 @@ export class IntelligentAgentService {
     const totalCount = context.steps.length
 
     let summary = overallSuccess
-      ? `✅ 任务成功完成`
-      : `⚠️ 任务部分完成 (${successCount}/${totalCount} 步骤)`
+      ? `任务成功完成`
+      : `任务部分完成 (${successCount}/${totalCount} 步骤)`
 
     if (context.relevantExperience && context.relevantExperience.length > 0) {
-      summary += `\n📚 参考历史经验：${context.relevantExperience[0].approach.substring(0, 30)}...`
+      summary += `\n参考历史经验：${context.relevantExperience[0].approach.substring(0, 30)}...`
     }
 
     if (reflection.learnedLessons.length > 0) {
-      summary += `\n💡 经验：${reflection.learnedLessons[0]}`
+      summary += `\n经验：${reflection.learnedLessons[0]}`
     }
 
     return summary

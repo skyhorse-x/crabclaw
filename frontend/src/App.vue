@@ -4,7 +4,7 @@
     <div v-if="isInitializing" class="loading-overlay">
       <div class="loading-content">
         <div class="loading-icon">
-          <div class="loading-icon-inner">AI</div>
+          <img src="/icons/appIcon.png" alt="Logo" class="loading-logo" />
         </div>
         <div class="loading-text">{{ t('initializing') || '启动中...' }}</div>
         <div class="loading-progress">
@@ -19,9 +19,9 @@
       <aside class="sidebar" :class="{ collapsed: sidebarCollapsed }">
         <div class="sidebar-header">
           <div class="logo">
-            <div class="logo-icon">AI</div>
+            <img class="logo-icon" src="/icons/appIcon.png" alt="Logo" />
             <div class="logo-text">
-              <h1>Desktop Agent</h1>
+              <h1>{{ t('appTitle') }}</h1>
             </div>
           </div>
           <div class="sidebar-toggle">
@@ -35,10 +35,10 @@
             <div class="new-chat-button">
               <el-button
                 :icon="Plus"
-                type="primary"
                 @click="newChat"
                 size="small"
                 :circle="sidebarCollapsed"
+                class="new-chat-btn"
                 :class="{ 'new-chat-icon-only': sidebarCollapsed }"
               >
                 <span v-if="!sidebarCollapsed">{{ t('newChat') }}</span>
@@ -75,15 +75,6 @@
           </template>
         </nav>
         
-        <!-- 底部状态 -->
-        <div class="sidebar-footer">
-          <div class="status-info">
-            <el-tag :type="backendOnline ? 'success' : 'danger'" size="small">
-              {{ backendOnline ? t('statusOnline') : t('statusOffline') }}
-            </el-tag>
-          </div>
-          <div class="version-info">v1.0.0</div>
-        </div>
       </aside>
 
       <!-- 右侧主内容区域 -->
@@ -133,93 +124,23 @@
               class="message-container"
               :class="[message.role, { error: message.error }]"
             >
-              <div class="message-avatar">
-                <div class="avatar" :class="message.role">
-                  {{ message.role === 'assistant' ? t('avatarAi') : t('avatarUser') }}
-                </div>
-              </div>
-              <div class="message-content">
+              <!-- ===== USER 消息 ===== -->
+              <div v-if="message.role === 'user'" class="message-content">
                 <div
-                  v-if="message?.meta?.traceExpanded || message.typing || traceRunningCalls(message).length > 0"
-                  class="trace-panel trace-panel-inline trace-panel-primary"
+                  class="message-bubble user"
+                  @contextmenu.prevent="showMessageContextMenu($event, message.text)"
                 >
-                  <div class="trace-status-bar">
-                    <div class="trace-status-main">
-                      <span v-if="!message?.typing" class="trace-status-name">{{ message.agentName || 'assistant' }}</span>
-                      <span class="trace-status-sub">{{ tracePanelSubtitle(message) }}</span>
-                      <span v-if="traceRunningCalls(message).length > 0" class="mcp-running">
-                        {{ t('mcpRunning') }}: {{ traceRunningCalls(message).join(', ') }}
-                      </span>
-                    </div>
-                  </div>
-                  <div class="trace-inline-details">
-                    <div v-if="traceDetails(message).length > 0" class="trace-group-list">
-                      <div
-                        v-for="group in groupedTraceDetails(message)"
-                        :key="group.key"
-                        class="trace-group"
-                      >
-                        <div class="trace-group-header">
-                          <span class="trace-group-title">{{ group.key }}</span>
-                        </div>
-                        <div class="trace-group-body">
-                          <div
-                            v-for="(item, idx) in group.items"
-                            :key="`${item.time}-${idx}`"
-                            class="trace-drawer-item"
-                          >
-                            <div class="trace-drawer-title">
-                              <span class="trace-branch">{{ idx === group.items.length - 1 ? '└─' : '├─' }}</span>
-                              <span class="trace-text">{{ item.text }}</span>
-                              <span v-if="formatTraceTime(item.time)" class="trace-detail-time">{{ formatTraceTime(item.time) }}</span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                    <el-empty v-else :description="t('noData')" />
-                  </div>
-                </div>
-                <div class="message-bubble" :class="message.role" @contextmenu.prevent="showMessageContextMenu($event, message.text)">
                   <div class="message-text" v-html="renderMessageText(message.text)"></div>
-                  <span v-if="message.typing && message.text && message.text.trim()" class="print-cursor">|</span>
-                  <span v-else-if="message.typing" class="typing-indicator" aria-label="AI 正在输入">
-                    <span class="typing-dot"></span>
-                    <span class="typing-dot"></span>
-                    <span class="typing-dot"></span>
-                  </span>
-                </div>
-                <div v-if="message.pendingConfirm" class="confirm-card">
-                  <div class="confirm-title">{{ t('confirmActionTitle') }}</div>
-                  <div class="confirm-tool">{{ message.pendingConfirm.server }}/{{ message.pendingConfirm.tool }}</div>
-                  <div class="confirm-args"><code>{{ JSON.stringify(message.pendingConfirm.args || {}) }}</code></div>
-                  <div class="confirm-actions">
-                    <el-button
-                      size="small"
-                      type="primary"
-                      :loading="message.pendingConfirm.executing"
-                      @click="executePendingConfirm(message)"
-                    >
-                      {{ t('confirmExecute') }}
-                    </el-button>
-                    <el-button
-                      size="small"
-                      :disabled="message.pendingConfirm.executing"
-                      @click="cancelPendingConfirm(message)"
-                    >
-                      {{ t('confirmCancel') }}
-                    </el-button>
+                  <div v-if="message.meta?.attachments?.length" class="msg-image-attachments">
+                    <template v-for="(att, i) in message.meta.attachments" :key="i">
+                      <img v-if="att.dataUrl" :src="att.dataUrl" :alt="att.name" class="msg-image-thumb" />
+                      <span v-else class="msg-file-chip">📎 {{ att.name }}</span>
+                    </template>
                   </div>
                 </div>
-                <div v-if="!message.typing" class="message-actions" :class="message.role">
-                  <el-tooltip v-if="message.role === 'user'" :content="t('resendMessage')" placement="bottom">
-                    <el-button
-                      text
-                      size="small"
-                      class="message-action-btn"
-                      :disabled="loading.chat"
-                      @click="resendMessage(message.text)"
-                    >
+                <div v-if="!message.typing" class="message-actions user">
+                  <el-tooltip :content="t('resendMessage')" placement="bottom">
+                    <el-button text size="small" class="message-action-btn" :disabled="loading.chat" @click="resendMessage(message.text)">
                       <el-icon><RefreshRight /></el-icon>
                     </el-button>
                   </el-tooltip>
@@ -228,36 +149,120 @@
                       <el-icon><CopyDocument /></el-icon>
                     </el-button>
                   </el-tooltip>
-                  <button
-                    v-if="message.role === 'assistant' && message.text && !message.typing"
-                    class="read-aloud-btn"
-                    :class="{ 'is-reading': message.isReading }"
-                    @click="toggleReadAloud(message)"
-                    :title="message.isReading ? '停止朗读' : '朗读'"
-                  >
-                    <el-icon><VideoPause v-if="message.isReading" /><Bell v-else /></el-icon>
-                  </button>
                   <el-tooltip :content="t('rollbackMessage')" placement="bottom">
-                    <el-button
-                      text
-                      size="small"
-                      class="message-action-btn"
-                      :disabled="loading.chat"
-                      @click="rollbackToMessage(index)"
-                    >
+                    <el-button text size="small" class="message-action-btn" :disabled="loading.chat" @click="rollbackToMessage(index)">
                       <el-icon><ArrowLeftBold /></el-icon>
                     </el-button>
                   </el-tooltip>
-                  <el-tooltip :content="t('showPlan')" placement="bottom">
-                    <el-button
-                      text
-                      size="small"
-                      class="message-action-btn"
+                </div>
+              </div>
+
+              <!-- ===== ASSISTANT 消息卡片 ===== -->
+              <div v-else class="message-content ai-result-card-wrap">
+                <div class="ai-result-card" :class="{ typing: message.typing, error: message.error }">
+
+                  <!-- 正文回复区 -->
+                  <div
+                    v-if="message.text && message.text.trim()"
+                    class="ai-result-body"
+                    @contextmenu.prevent="showMessageContextMenu($event, message.text)"
+                  >
+                    <div class="message-text" v-html="renderMessageText(message.text)"></div>
+                    <span v-if="message.typing" class="print-cursor">|</span>
+                  </div>
+                  <div v-else-if="message.typing && !message.text" class="ai-result-body ai-result-body--thinking">
+                    <span class="typing-indicator" aria-label="AI 正在思考">
+                      <span class="typing-dot"></span>
+                      <span class="typing-dot"></span>
+                      <span class="typing-dot"></span>
+                    </span>
+                    <span class="trace-status-sub">{{ tracePanelSubtitle(message) }}</span>
+                  </div>
+
+                  <!-- 工具使用过程（可折叠） -->
+                  <div
+                    v-if="groupedTraceDetails(message).length > 0 || (message.typing && traceRunningCalls(message).length > 0)"
+                    class="ai-result-trace"
+                  >
+                    <div
+                      class="ai-result-trace-header"
                       @click="toggleTraceInline(message)"
                     >
-                      <el-icon><Document /></el-icon>
-                    </el-button>
-                  </el-tooltip>
+                      <span class="ai-result-trace-icon">✦</span>
+                      <span class="ai-result-trace-label">工具使用过程</span>
+                      <span class="ai-result-trace-count" v-if="groupedTraceDetails(message).length > 0">
+                        {{ groupedTraceDetails(message).reduce((n, g) => n + g.items.length, 0) }} 步
+                      </span>
+                      <el-icon class="ai-result-trace-arrow" :class="{ expanded: !message.meta?.traceCollapsed }">
+                        <ArrowDown />
+                      </el-icon>
+                    </div>
+                    <div v-if="!message.meta?.traceCollapsed" class="ai-result-trace-body">
+                      <!-- 正在运行的工具 -->
+                      <div
+                        v-if="message.typing && traceRunningCalls(message).length > 0"
+                        class="ai-trace-row ai-trace-row--running"
+                      >
+                        <div class="ai-trace-row-icon ai-trace-row-icon--running">
+                          <el-icon style="animation:spin 1s linear infinite"><LoadingIcon /></el-icon>
+                        </div>
+                        <span class="ai-trace-row-name">{{ traceRunningCalls(message)[0].split('/').pop() }}</span>
+                        <span class="ai-trace-row-desc">正在调用中...</span>
+                        <span class="ai-trace-row-time"></span>
+                        <span class="ai-trace-row-status"></span>
+                      </div>
+                      <!-- 分组 trace 行 -->
+                      <template v-for="group in groupedTraceDetails(message)" :key="group.key">
+                        <div
+                          v-for="(item, idx) in group.items"
+                          :key="`${item.time}-${idx}`"
+                          class="ai-trace-row"
+                        >
+                          <div class="ai-trace-row-icon" :class="`ai-trace-icon--${getItemIcon(item).toLowerCase()}`">
+                            <el-icon><component :is="traceIcons[getItemIcon(item)]" /></el-icon>
+                          </div>
+                          <span class="ai-trace-row-name">{{ group.key }}</span>
+                          <span class="ai-trace-row-desc">{{ item.text }}</span>
+                          <span class="ai-trace-row-time">{{ formatTraceTime(item.time) }}</span>
+                          <el-icon v-if="isStepSuccess(item)" class="ai-trace-row-status" color="#22c55e"><CircleCheckFilled /></el-icon>
+                          <el-icon v-else class="ai-trace-row-status ai-trace-row-status--idle" color="#94a3b8"><CircleCheckFilled /></el-icon>
+                        </div>
+                      </template>
+                    </div>
+                  </div>
+
+                  <!-- 确认操作卡 -->
+                  <div v-if="message.pendingConfirm" class="confirm-card">
+                    <div class="confirm-title">{{ t('confirmActionTitle') }}</div>
+                    <div class="confirm-tool">{{ message.pendingConfirm.server }}/{{ message.pendingConfirm.tool }}</div>
+                    <div class="confirm-args"><code>{{ JSON.stringify(message.pendingConfirm.args || {}) }}</code></div>
+                    <div class="confirm-actions">
+                      <el-button size="small" type="primary" :loading="message.pendingConfirm.executing" @click="executePendingConfirm(message)">{{ t('confirmExecute') }}</el-button>
+                      <el-button size="small" :disabled="message.pendingConfirm.executing" @click="cancelPendingConfirm(message)">{{ t('confirmCancel') }}</el-button>
+                    </div>
+                  </div>
+
+                  <!-- 卡片底部操作栏 -->
+                  <div v-if="!message.typing" class="ai-result-footer">
+                    <div class="ai-result-footer-actions">
+                      <el-tooltip content="复制结果" placement="top">
+                        <button class="ai-footer-btn" @click="copyMessageText(message.text)">
+                          <el-icon><CopyDocument /></el-icon>
+                        </button>
+                      </el-tooltip>
+                      <el-tooltip :content="message.isReading ? '停止朗读' : '朗读'" placement="top">
+                        <button class="ai-footer-btn" :class="{ 'is-reading': message.isReading }" @click="toggleReadAloud(message)">
+                          <el-icon><VideoPause v-if="message.isReading" /><Bell v-else /></el-icon>
+                        </button>
+                      </el-tooltip>
+                      <el-tooltip :content="t('rollbackMessage')" placement="top">
+                        <button class="ai-footer-btn" @click="rollbackToMessage(index)">
+                          <el-icon><ArrowLeftBold /></el-icon>
+                        </button>
+                      </el-tooltip>
+                    </div>
+                  </div>
+
                 </div>
               </div>
             </div>
@@ -290,27 +295,72 @@
                   ref="chatInputRef"
                   v-model="chatInput"
                   class="main-input"
-                  :placeholder="t('inputPlaceholder')"
+                  :placeholder="supportsVision ? t('inputPlaceholder') + '（支持 Ctrl+V 粘贴图片）' : t('inputPlaceholder')"
                   @keydown="handleChatKeydown"
+                  @paste="handlePaste"
                   @focus="isInputFocused = true"
                   @blur="isInputFocused = false"
                   @contextmenu.prevent="showContextMenu"
                 ></textarea>
-                
+
+                <!-- 附件预览区 -->
+                <div v-if="pendingAttachments.length > 0" class="attachment-preview-list">
+                  <div
+                    v-for="(att, idx) in pendingAttachments"
+                    :key="idx"
+                    class="attachment-chip"
+                  >
+                    <img v-if="att.type.startsWith('image/')" :src="att.dataUrl" class="attachment-thumb" />
+                    <div v-else class="attachment-icon">📄</div>
+                    <div class="attachment-info">
+                      <span class="attachment-name">{{ att.name }}</span>
+                      <span class="attachment-size">{{ formatFileSize(att.size) }}</span>
+                    </div>
+                    <button class="attachment-remove" @click="removeAttachment(idx)">×</button>
+                  </div>
+                </div>
+
                 <div class="input-options">
                   <div class="option-group">
-                    <button class="option-btn" @click="openModelSelector">
-                      <span class="option-icon">🧠</span>
-                      <span class="option-text">{{ selectedChatModelLabel || '默认大模型' }}</span>
-                      <el-icon class="option-arrow"><ArrowDown /></el-icon>
-                    </button>
+                    <el-popover
+                      v-model:visible="modelSelectorVisible"
+                      placement="top-start"
+                      :width="200"
+                      trigger="click"
+                      popper-class="model-selector-popover"
+                    >
+                      <template #reference>
+                        <button class="option-btn">
+                          <span class="option-text">{{ selectedChatModelLabel || '默认大模型' }}</span>
+                          <el-icon class="option-arrow"><ArrowDown /></el-icon>
+                        </button>
+                      </template>
+                      <div class="model-selector-list">
+                        <div
+                          v-for="model in availableModels"
+                          :key="model.value"
+                          class="model-selector-item"
+                          :class="{ active: model.value === selectedChatModel }"
+                          @click="selectChatModel(model.value)"
+                        >
+                          <span class="model-selector-name">{{ model.label }}</span>
+                          <el-icon v-if="model.value === selectedChatModel" class="model-selector-check"><Check /></el-icon>
+                        </div>
+                        <div v-if="availableModels.length === 0" class="model-selector-empty">
+                          请先在设置中添加大模型
+                        </div>
+                        <div class="model-selector-divider"></div>
+                        <div class="model-selector-add" @click="openModelFromSelector">
+                          <el-icon><Plus /></el-icon>
+                          <span>添加自定义大模型</span>
+                        </div>
+                      </div>
+                    </el-popover>
                     <button class="option-btn" @click="openSkillsDialog">
-                      <span class="option-icon">⚡</span>
                       <span class="option-text">{{ selectedSkillName }}</span>
                       <el-icon class="option-arrow"><ArrowDown /></el-icon>
                     </button>
                     <button class="option-btn" @click="openInspirationDialog">
-                      <span class="option-icon">✨</span>
                       <span class="option-text">虾灵感</span>
                       <el-icon class="option-arrow"><ArrowDown /></el-icon>
                     </button>
@@ -391,6 +441,11 @@
           <AgentDashboard />
         </div>
 
+        <!-- 流水线面板 -->
+        <div class="agents-panel" v-if="selectedNav === 'pipeline'">
+          <PipelineDashboard />
+        </div>
+
         <!-- MCP 面板 -->
         <div class="mcp-panel" v-if="selectedNav === 'mcp'">
           <div class="panel-header">
@@ -450,38 +505,32 @@
           </div>
           <div class="market-list" v-loading="skillLoading" :element-loading-text="t('loading')">
             <template v-if="skillMarket.length > 0">
-              <div class="market-card" v-for="skill in skillMarket" :key="skill.id">
+              <div class="market-card" v-for="skill in skillMarket" :key="skill.id" @click="showSkillDetail(skill)">
                 <div class="market-card-header">
                   <div class="market-icon">{{ skill.name.charAt(0) }}</div>
                   <div class="market-info">
                     <div class="market-name">{{ skill.name }}</div>
                     <div class="market-category">{{ skill.category }}</div>
                   </div>
+                  <el-tag v-if="skill.author === 'local' || skill.isBuiltIn" type="info" size="small" effect="plain" style="margin-right:6px">内置</el-tag>
                   <el-tag :type="skill.installed ? 'success' : 'info'" size="small">
                     {{ skill.installed ? t('skillInstalled') : t('skillNotInstalled') }}
                   </el-tag>
+                  <el-dropdown style="margin-left:8px" @click.stop>
+                    <el-button :icon="MoreFilled" circle plain size="small"></el-button>
+                    <template #dropdown>
+                      <el-dropdown-menu>
+                        <el-dropdown-item v-if="!skill.installed" @click.stop="installSkill(skill)">
+                          {{ t('mcpInstall') }}
+                        </el-dropdown-item>
+                        <el-dropdown-item @click.stop="showSkillDetail(skill)">
+                          {{ t('mcpDetails') }}
+                        </el-dropdown-item>
+                      </el-dropdown-menu>
+                    </template>
+                  </el-dropdown>
                 </div>
                 <div class="market-desc">{{ skill.description }}</div>
-                <div class="market-stats">
-                  <span><el-icon><Star /></el-icon> {{ skill.downloads }}</span>
-                  <span v-if="skill.author">{{ skill.author }}</span>
-                </div>
-                <div class="market-actions">
-                  <el-button 
-                    v-if="!skill.installed" 
-                    size="small" 
-                    type="primary"
-                    @click="installSkill(skill)"
-                  >{{ t('mcpInstall') }}</el-button>
-                  <el-button 
-                    v-else 
-                    size="small" 
-                    type="danger" 
-                    plain
-                    @click="uninstallSkill(skill)"
-                  >{{ t('mcpUninstall') }}</el-button>
-                  <el-button size="small" @click="openSkillUrl(skill.url)">{{ t('mcpDetails') }}</el-button>
-                </div>
               </div>
             </template>
             <el-empty v-else-if="!skillLoading" :description="t('skillNoData')" />
@@ -687,7 +736,6 @@
             <el-tab-pane name="telegram">
               <template #label>
                 <span class="platform-tab-label">
-                  <span class="platform-icon telegram-icon">✈</span>
                   <span>{{ t('controlChannelTelegram') }}</span>
                 </span>
               </template>
@@ -918,7 +966,6 @@
                 </el-form-item>
                 <el-form-item :label="t('dataDirectory')">
                   <el-input v-model="chatStorageConfig.currentUserDataDir" />
-                  <div class="path-hint">{{ chatStorageConfig.platform }}</div>
                   <el-button style="margin-top: 8px" @click="saveChatStorageDirectory">
                     {{ t('saveDataDirectory') }}
                   </el-button>
@@ -939,7 +986,6 @@
                     :class="{ active: model.id === config.settings.activeModelId }"
                   >
                     <div class="model-item-left" @click="activateModel(model.id)">
-                      <div class="model-icon-small">{{ getProviderIcon(model.provider) }}</div>
                       <div class="model-item-info">
                         <div class="model-item-name">
                           {{ model.name }}
@@ -1014,8 +1060,8 @@
             <el-tab-pane label="关于" name="about">
               <div class="about-container">
                 <div class="about-logo">
-                  <div class="logo-icon" style="width: 60px; height: 60px; font-size: 24px;">AI</div>
-                  <h2>Desktop Agent</h2>
+                  <img class="logo-icon" style="width: 60px; height: 60px;" src="/icons/appIcon.png" alt="Logo" />
+                  <h2>{{ t('appTitle') }}</h2>
                 </div>
                 <div class="about-version">版本 v1.0.0</div>
                 <div class="about-desc">一个智能桌面助手，帮助你完成各种任务</div>
@@ -1048,6 +1094,42 @@
       </template>
     </el-dialog>
 
+    <!-- 技能详情对话框 -->
+    <el-dialog v-model="skillDetailVisible" title="技能详情" width="560px">
+      <template v-if="skillDetailData">
+        <div class="skill-detail-header">
+          <div class="skill-detail-icon">{{ skillDetailData.name?.charAt(0) || 'S' }}</div>
+          <div class="skill-detail-info">
+            <h3>{{ skillDetailData.name }}</h3>
+            <div class="skill-detail-meta">
+              <el-tag size="small">{{ skillDetailData.category }}</el-tag>
+              <el-tag v-if="skillDetailData.author === 'local' || skillDetailData.isBuiltIn" size="small" type="info" effect="plain">内置</el-tag>
+              <el-tag v-else size="small" type="warning" effect="plain">自定义</el-tag>
+              <span v-if="skillDetailData.author && skillDetailData.author !== 'local'" class="skill-detail-author">作者: {{ skillDetailData.author }}</span>
+              <span v-if="skillDetailData.stepsCount != null" class="skill-detail-steps">步骤: {{ skillDetailData.stepsCount }}</span>
+              <span v-if="skillDetailData.downloads != null" class="skill-detail-downloads">下载: {{ skillDetailData.downloads }}</span>
+            </div>
+          </div>
+        </div>
+        <div class="skill-detail-section">
+          <label>简介</label>
+          <p>{{ skillDetailData.description }}</p>
+        </div>
+        <div v-if="skillDetailData.tags && skillDetailData.tags.length > 0" class="skill-detail-section">
+          <label>标签</label>
+          <div class="skill-detail-tags">
+            <el-tag v-for="tag in skillDetailData.tags" :key="tag" size="small" effect="plain">{{ tag }}</el-tag>
+          </div>
+        </div>
+      </template>
+      <template #footer>
+        <el-button @click="skillDetailVisible = false">{{ t('close') }}</el-button>
+        <el-button v-if="!skillDetailData?.installed" type="primary" @click="installSkillFromDetail">
+          {{ t('mcpInstall') }}
+        </el-button>
+      </template>
+    </el-dialog>
+
     <!-- 技能选择对话框 -->
     <el-dialog v-model="skillSelectorVisible" title="选择技能" width="500px">
       <div class="skill-selector-list">
@@ -1056,7 +1138,7 @@
           :class="{ active: selectedChatSkillId === '' }"
           @click="selectSkill('')"
         >
-          <span class="skill-selector-icon">🌐</span>
+          <span class="skill-selector-icon"></span>
           <span class="skill-selector-name">默认（无技能）</span>
         </div>
         <div 
@@ -1066,7 +1148,7 @@
           :class="{ active: selectedChatSkillId === skill.id }"
           @click="selectSkill(skill.id)"
         >
-          <span class="skill-selector-icon">⚡</span>
+          <span class="skill-selector-icon"></span>
           <span class="skill-selector-name">{{ skill.name }}</span>
         </div>
       </div>
@@ -1361,8 +1443,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue"
 import { ElMessage, ElMessageBox } from "element-plus"
+import { ArrowRight } from "@element-plus/icons-vue"
 import MonitorPanel from "./components/MonitorPanel.vue"
 import AgentDashboard from "./components/AgentDashboard.vue"
+import PipelineDashboard from "./components/PipelineDashboard.vue"
 import AgentOffice3D from "./components/AgentOffice3D.vue"
 import hljs from "highlight.js"
 import { useVoiceInput } from "./composables/useVoiceInput"
@@ -1370,7 +1454,9 @@ import { useWebSocket } from "./composables/useWebSocket"
 import {
   ArrowDown,
   ArrowLeftBold,
+  Check,
   ChatLineRound,
+  CircleCheckFilled,
   CloseBold,
   Connection,
   CopyDocument,
@@ -1391,9 +1477,17 @@ import {
   Star,
   Timer,
   Document,
+  Tools,
+  Monitor,
+  MoreFilled,
+  Share,
 } from "@element-plus/icons-vue"
 
 const apiBase = ref("")
+
+const traceIcons: Record<string, any> = {
+  Tools, Monitor, Timer, Bell, Promotion, Document, CircleCheckFilled, LoadingIcon
+}
 
 const loading = reactive({
   bootstrap: true,
@@ -1914,13 +2008,14 @@ const remoteControlWebhookUrl = computed(() => buildApiUrl('/api/remote-control/
 const locales = {
   "zh-CN": {
     // 通用
-    appTitle: "AI Agent",
-    appSubtitle: "Desktop Studio",
-    initializing: "启动中...",
+    appTitle: "crabclaw",
+    appSubtitle: "crabclaw - AI桌面助手",
+    initializing: "小螃蟹启动中",
     sidebarFold: "折叠侧边栏",
     newChat: "新建对话",
     navChat: "对话",
     navAgents: "代理",
+    navPipeline: "流水线",
     navMcp: "MCP",
     navSkills: "技能",
     navTasks: "任务",
@@ -2041,7 +2136,7 @@ const locales = {
     aiDetailTitle: "AI 处理细节",
     noData: "暂无数据",
     runProcessingTitle: "正在执行",
-    runResultTitle: "运行结果",
+    runResultTitle: "任务已运行完成",
     mcpRunning: "当前调用 MCP",
     mcpRecent: "最近调用",
     monitorTitle: "监控面板",
@@ -2180,13 +2275,14 @@ const locales = {
   },
   "en-US": {
     // Common
-    appTitle: "AI Agent",
+    appTitle: "crabclaw",
     appSubtitle: "Desktop Studio",
     initializing: "Initializing...",
     sidebarFold: "Collapse sidebar",
     newChat: "New Chat",
     navChat: "Chat",
     navAgents: "Agents",
+    navPipeline: "Pipeline",
     navMcp: "MCP",
     navSkills: "Skills",
     navTasks: "Tasks",
@@ -2451,7 +2547,7 @@ const t = (key: string) => {
   return localeData?.[key as keyof typeof localeData] || key
 }
 
-type NavKey = "chat" | "agents" | "mcp" | "skills" | "tasks" | "control" | "settings"
+type NavKey = "chat" | "agents" | "pipeline" | "mcp" | "skills" | "tasks" | "control" | "settings"
 interface NavigationItem {
   id: NavKey
   icon: any
@@ -2462,6 +2558,7 @@ interface NavigationItem {
 const navigationItems = computed<NavigationItem[]>(() => [
   { id: "chat", icon: ChatLineRound, labelKey: "navChat", showInToolbar: true },
   { id: "agents", icon: Grid, labelKey: "navAgents", showInToolbar: true },
+  { id: "pipeline", icon: Share, labelKey: "navPipeline", showInToolbar: true },
   { id: "mcp", icon: Connection, labelKey: "navMcp" },
   { id: "skills", icon: Star, labelKey: "navSkills", showInToolbar: true },
   { id: "tasks", icon: Timer, labelKey: "navTasks", showInToolbar: true },
@@ -2500,6 +2597,15 @@ watch(
 
 const chatInput = ref("")
 const chatInputRef = ref<HTMLTextAreaElement | null>(null)
+
+interface AttachmentFile {
+  name: string
+  type: string       // MIME type
+  size: number
+  dataUrl: string    // base64 data URL，图片用于预览和发送
+  text?: string      // 文本文件内容
+}
+const pendingAttachments = ref<AttachmentFile[]>([])
 const contextMenuVisible = ref(false)
 const contextMenuX = ref(0)
 const contextMenuY = ref(0)
@@ -2507,6 +2613,8 @@ const contextMenuTargetText = ref('')
 const selectedChatSkillId = ref("")
 const skillDialogVisible = ref(false)
 const skillSelectorVisible = ref(false)
+const skillDetailVisible = ref(false)
+const skillDetailData = ref<any>(null)
 const selectedNav = ref<NavKey>("chat")
 const sidebarCollapsed = ref(false)
 const isInitializing = ref(true)
@@ -2530,8 +2638,16 @@ const selectedSkillName = computed(() => {
 })
 
 // 选项按钮点击处理
-function openModelSelector() {
-  ElMessage.info('模型选择功能开发中')
+const modelSelectorVisible = ref(false)
+
+function selectChatModel(modelId: string) {
+  selectedChatModel.value = modelId
+  modelSelectorVisible.value = false
+}
+
+function openModelFromSelector() {
+  modelSelectorVisible.value = false
+  openModelDialog('add')
 }
 
 function openSkillsDialog() {
@@ -2720,14 +2836,34 @@ function hasExecutionTrace(message: any): boolean {
 }
 
 function tracePanelSubtitle(message: any): string {
-  const details = traceDetails(message)
-  const planItems = details.filter(d => d.stage === 'plan')
-  const executionItems = details.filter(d => d.stage !== 'plan')
-  
-  if (message?.typing) {
-    return '思考中...'
+  if (!message?.typing) {
+    return t('runResultTitle')
   }
-  return t('runResultTitle')
+
+  const runningCalls = traceRunningCalls(message)
+  if (runningCalls.length > 0) {
+    const toolName = runningCalls[0].split('/').pop() || runningCalls[0]
+    return `正在调用 ${toolName} 工具...`
+  }
+
+  const details = traceDetails(message)
+  const nonPlanDetails = details.filter(d => d.stage !== 'plan')
+  if (nonPlanDetails.length > 0) {
+    const last = nonPlanDetails[nonPlanDetails.length - 1]
+    const stage = String(last.stage || '')
+    if (stage === 'mcp') return '正在使用工具处理，请稍等~'
+    if (stage === 'step') return '一步一步来，马上就好~'
+    if (stage === 'task') return '思考中，很快完成~'
+    if (stage === 'confirm') return '需要您确认一下哦~'
+  }
+
+  const hasText = message.text && message.text.trim()
+  if (hasText) return '正在组织语言...'
+
+  const hasTrace = details.length > 0
+  if (hasTrace) return '正在规划最佳方案...'
+
+  return '让我想想...'
 }
 
 function traceDetails(message: any): TraceDetailItem[] {
@@ -2739,6 +2875,25 @@ function traceDetails(message: any): TraceDetailItem[] {
     time: `plan-${idx}`
   }))
   return [...planItems, ...trace.details]
+}
+
+function isGroupSuccess(group: any): boolean {
+  if (!group.items || group.items.length === 0) return false
+  const lastItem = group.items[group.items.length - 1]
+  const text = String(lastItem.text || '').toLowerCase()
+  return text.includes('成功') || text.includes('完成') || text.includes('done') || text.includes('success')
+}
+
+function isGroupRunning(group: any): boolean {
+  if (!group.items || group.items.length === 0) return false
+  const lastItem = group.items[group.items.length - 1]
+  const text = String(lastItem.text || '').toLowerCase()
+  return text.includes('中...') || text.includes('running') || text.includes('执行')
+}
+
+function isStepSuccess(item: any): boolean {
+  const text = String(item.text || '').toLowerCase()
+  return text.includes('成功') || text.includes('完成') || text.includes('done') || text.includes('success')
 }
 
 function traceRunningCalls(message: any): string[] {
@@ -2784,9 +2939,9 @@ function toggleReadAloud(message: any) {
 function toggleTraceInline(message: any) {
   const trace = ensureMessageTrace(message)
   if (!message.meta) {
-    message.meta = { trace, traceExpanded: false }
+    message.meta = { trace, traceCollapsed: false }
   }
-  message.meta.traceExpanded = !message.meta.traceExpanded
+  message.meta.traceCollapsed = !message.meta.traceCollapsed
 }
 
 function groupedTraceDetails(message: any) {
@@ -2809,7 +2964,7 @@ function groupedTraceDetails(message: any) {
       '已加载模型与 MCP 工具清单', '正在解析用户请求并生成执行方案',
       '模型已返回响应，正在解析内容'
     ]
-    const textWithoutEmoji = t.replace(/^[🔄✅❌]\s*/, '')
+    const textWithoutEmoji = t
     if (skipPatterns.some(p => textWithoutEmoji === p || textWithoutEmoji.startsWith(p + ' ·'))) return true
     return false
   }
@@ -2827,7 +2982,7 @@ function groupedTraceDetails(message: any) {
       }
     } else {
       if (!isRedundant(item.text)) {
-        currentGroup = { key: '详情', items: [{ ...item, index }] }
+        currentGroup = { key: '调用工具', items: [{ ...item, index }] }
         groups.push(currentGroup)
       }
     }
@@ -2846,6 +3001,32 @@ function formatTraceTime(time: string): string {
 
 function formatTraceStage(stage: string): string {
   return String(stage || '步骤')
+}
+
+function getItemIcon(item: { stage: string; text: string }): string {
+  const stage = String(item.stage || '').toLowerCase()
+  const text = String(item.text || '').toLowerCase()
+  if (stage === 'mcp') {
+    if (text.includes('shell') || text.includes('exec') || text.includes('command')) {
+      return 'Monitor'
+    }
+    return 'Tools'
+  }
+  if (stage === 'task') return 'Timer'
+  if (stage === 'confirm') return 'Bell'
+  if (stage === 'step') return 'Promotion'
+  if (stage === 'plan') return 'Document'
+  return 'Promotion'
+}
+
+function getGroupIcon(group: { key: string }): string {
+  const key = String(group.key || '').toLowerCase()
+  if (key.includes('调用') || key.includes('工具') || key.includes('mcp')) return 'Tools'
+  if (key.includes('解析') || key.includes('规划') || key.includes('plan')) return 'Document'
+  if (key.includes('执行') || key.includes('运行') || key.includes('step')) return 'Promotion'
+  if (key.includes('确认') || key.includes('confirm')) return 'Bell'
+  if (key.includes('任务') || key.includes('task')) return 'Timer'
+  return 'Promotion'
 }
 
 function escapeHtml(input: string): string {
@@ -3062,7 +3243,11 @@ async function uninstallMcpServer(server: any) {
     } else {
       ElMessage.error(data.error)
     }
-  } catch {}
+  } catch (err: any) {
+    if (err !== 'cancel' && err?.message !== 'cancel') {
+      ElMessage.error(String(err?.message || '卸载失败'))
+    }
+  }
 }
 
 async function installSkill(skill: any) {
@@ -3082,6 +3267,17 @@ async function installSkill(skill: any) {
   } catch (e) {
     ElMessage.error(t('installFailed'))
   }
+}
+
+function showSkillDetail(skill: any) {
+  skillDetailData.value = skill
+  skillDetailVisible.value = true
+}
+
+async function installSkillFromDetail() {
+  if (!skillDetailData.value) return
+  await installSkill(skillDetailData.value)
+  skillDetailVisible.value = false
 }
 
 async function uninstallSkill(skill: any) {
@@ -3624,13 +3820,15 @@ function enqueueTypewriter(messageIndex: number, text: string) {
       return
     }
 
-    const chunk = queueItem.slice(0, TYPEWRITER_CHUNK_SIZE)
+    const pendingChars = typewriterState.queue.reduce((sum, s) => sum + s.length, 0)
+    const chunkSize = pendingChars > 200 ? TYPEWRITER_CHUNK_SIZE * 4 : pendingChars > 60 ? TYPEWRITER_CHUNK_SIZE * 2 : TYPEWRITER_CHUNK_SIZE
+    const chunk = queueItem.slice(0, chunkSize)
     if (!messages.value[messageIndex]) {
       stopTypewriter()
       return
     }
     messages.value[messageIndex].text += chunk
-    typewriterState.queue[0] = queueItem.slice(TYPEWRITER_CHUNK_SIZE)
+    typewriterState.queue[0] = queueItem.slice(chunkSize)
     if (!typewriterState.queue[0]) {
       typewriterState.queue.shift()
     }
@@ -3835,11 +4033,27 @@ async function sendChat(
   aiConfigOverride?: { skillId?: string; prompt?: string; mcpServers?: string[] }
 ) {
   const message = (messageOverride ?? chatInput.value).trim()
-  if (!message) return null
+  const attachments = pendingAttachments.value.slice()
+  if (!message && attachments.length === 0) return null
 
-  pushMessage("user", message)
-  updateConversationTitleFromMessage(message)
+  // 文本文件内容拼入消息末尾
+  const textAppend = attachments
+    .filter(a => a.text !== undefined)
+    .map(a => `\n\n【附件：${a.name}】\n\`\`\`\n${a.text}\n\`\`\``)
+    .join('')
+  const fullMessage = message + textAppend
+
+  // 图片附件提取 base64
+  const imageAttachments = attachments
+    .filter(a => a.type.startsWith('image/'))
+    .map(a => ({ name: a.name, type: a.type, dataUrl: a.dataUrl }))
+
+  // 用户消息气泡显示原始文字 + 附件名
+  const displayText = message + attachments.map(a => `\n📎 ${a.name}`).join('')
+  pushMessage("user", displayText, { attachments: attachments.map(a => ({ name: a.name, type: a.type, dataUrl: a.type.startsWith('image/') ? a.dataUrl : undefined })) })
+  updateConversationTitleFromMessage(message || attachments[0]?.name || '')
   chatInput.value = ""
+  pendingAttachments.value = []
   loading.chat = true
   isChatPaused.value = false
   customAiAutoAskStopRequested.value = false
@@ -3907,7 +4121,7 @@ async function sendChat(
         const stepData = chunk.step || {}
         const stepText = String(stepData.text || '')
         const stepStatus = String(stepData.status || 'start')
-        const prefix = stepStatus === 'done' ? '✅ ' : stepStatus === 'error' ? '❌ ' : '🔄 '
+        const prefix = stepStatus === 'done' ? '[完成] ' : stepStatus === 'error' ? '[失败] ' : '[进行] '
         if (stepText) {
           pushExecutionDetailToMessage(traceMessage, 'step', prefix + stepText, '')
         }
@@ -3935,7 +4149,8 @@ async function sendChat(
     const unsubscribe = chatWs.onChatChunk(chunkHandler)
 
     chatWs.sendChat({
-      message,
+      message: fullMessage,
+      images: imageAttachments.length > 0 ? imageAttachments : undefined,
       conversationHistory,
       selectedSkillId: aiConfigOverride?.skillId || selectedChatSkillId.value,
       model: modelOverride || selectedChatModel.value,
@@ -4234,7 +4449,137 @@ function selectAll() {
 }
 
 function handleAttach() {
-  ElMessage.info('附件功能开发中')
+  const isNeutralino = typeof window !== 'undefined' && (window as any).Neutralino
+  if (isNeutralino) {
+    handleNeutralinoAttach()
+  } else {
+    handleBrowserAttach()
+  }
+}
+
+async function handleNeutralinoAttach() {
+  const Neutralino = (window as any).Neutralino
+  try {
+    const result = await Neutralino.os.showOpenDialog('选择文件', {
+      multiSelections: true,
+      filters: [
+        { name: '图片', extensions: ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg'] },
+        { name: '文档', extensions: ['pdf', 'txt', 'md', 'csv'] },
+        { name: '代码', extensions: ['json', 'js', 'ts', 'py', 'java', 'c', 'cpp', 'html', 'css', 'xml', 'yaml', 'yml'] }
+      ]
+    })
+    const files = result.files || result
+    if (!files || files.length === 0) return
+    for (const filePath of files) {
+      const name = filePath.split(/[/\\]/).pop() || 'unknown'
+      const ext = name.split('.').pop()?.toLowerCase() || ''
+      const isText = /^(txt|md|csv|json|js|ts|py|java|c|cpp|html|css|xml|yaml|yml)$/i.test(ext)
+      const isImage = /^(jpg|jpeg|png|gif|bmp|webp|svg)$/i.test(ext)
+      let mime = ''
+      if (isImage) {
+        const mimeMap: Record<string, string> = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', bmp: 'image/bmp', webp: 'image/webp', svg: 'image/svg+xml' }
+        mime = mimeMap[ext] || 'application/octet-stream'
+      } else if (isText) {
+        const textMimeMap: Record<string, string> = { txt: 'text/plain', md: 'text/markdown', csv: 'text/csv', json: 'application/json', js: 'text/javascript', ts: 'text/typescript', py: 'text/x-python', java: 'text/x-java', c: 'text/x-c', cpp: 'text/x-cpp', html: 'text/html', css: 'text/css', xml: 'text/xml', yaml: 'text/yaml', yml: 'text/yaml' }
+        mime = textMimeMap[ext] || 'text/plain'
+      } else {
+        mime = 'application/octet-stream'
+      }
+      if (isText) {
+        const content = await Neutralino.filesystem.readFile(filePath)
+        const blob = new Blob([content], { type: mime })
+        const dataUrl = await new Promise<string>((resolve) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(reader.result as string)
+          reader.readAsDataURL(blob)
+        })
+        pendingAttachments.value.push({ name, type: mime, size: new Blob([content]).size, dataUrl, text: content })
+      } else if (isImage) {
+        const buffer = await Neutralino.filesystem.readBinaryFile(filePath)
+        const blob = new Blob([buffer], { type: mime })
+        const dataUrl = await new Promise<string>((resolve) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(reader.result as string)
+          reader.readAsDataURL(blob)
+        })
+        pendingAttachments.value.push({ name, type: mime, size: blob.size, dataUrl })
+      } else {
+        ElMessage.warning(`${name} 不支持的文件类型，已跳过`)
+      }
+    }
+  } catch (error: any) {
+    if (error?.message?.includes('rejected') || error?.code === 'NEUT_DIALOG_CANCELLED') return
+    console.error('Neutralino file dialog error:', error)
+    ElMessage.error('文件选择失败')
+  }
+}
+
+function handleBrowserAttach() {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.multiple = true
+  input.accept = 'image/*,.pdf,.txt,.md,.csv,.json,.js,.ts,.py,.java,.c,.cpp,.html,.css,.xml,.yaml,.yml'
+  input.onchange = async () => {
+    const files = Array.from(input.files || [])
+    for (const file of files) {
+      if (file.size > 10 * 1024 * 1024) {
+        ElMessage.warning(`${file.name} 超过 10MB 限制，已跳过`)
+        continue
+      }
+      const dataUrl = await new Promise<string>((resolve) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(reader.result as string)
+        reader.readAsDataURL(file)
+      })
+      let text: string | undefined
+      if (file.type.startsWith('text/') || /\.(txt|md|csv|json|js|ts|py|java|c|cpp|html|css|xml|yaml|yml)$/i.test(file.name)) {
+        text = await file.text()
+      }
+      pendingAttachments.value.push({ name: file.name, type: file.type, size: file.size, dataUrl, text })
+    }
+  }
+  input.click()
+}
+
+function removeAttachment(index: number) {
+  pendingAttachments.value.splice(index, 1)
+}
+
+const supportsVision = computed(() => {
+  const modelId = (selectedChatModel.value || '').toLowerCase()
+  const modelName = (config.value?.models?.find(m => m.id === selectedChatModel.value)?.modelName || '').toLowerCase()
+  const combined = modelId + ' ' + modelName
+  return /vision|vl[-_]|pro|gpt-4o|gemini|claude-3|haiku|sonnet|opus|qwen-vl|glm-4v|yi-vl|intern|llava|pixtral|mistral.*large/.test(combined)
+})
+
+async function handlePaste(event: ClipboardEvent) {
+  if (!supportsVision.value) return
+  const items = Array.from(event.clipboardData?.items || [])
+  const imageItems = items.filter(item => item.type.startsWith('image/'))
+  if (imageItems.length === 0) return
+  event.preventDefault()
+  for (const item of imageItems) {
+    const file = item.getAsFile()
+    if (!file) continue
+    if (file.size > 10 * 1024 * 1024) {
+      ElMessage.warning('粘贴的图片超过 10MB 限制')
+      continue
+    }
+    const dataUrl = await new Promise<string>((resolve) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(reader.result as string)
+      reader.readAsDataURL(file)
+    })
+    const name = `粘贴图片_${Date.now()}.${file.type.split('/')[1] || 'png'}`
+    pendingAttachments.value.push({ name, type: file.type, size: file.size, dataUrl })
+    ElMessage.success('图片已添加到附件')
+  }
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
 }
 
 function handleVoiceInput() {
@@ -5701,5 +6046,75 @@ function deleteModel(modelId: string) {
   justify-content: space-between;
   width: 100%;
   font-weight: 600;
+}
+
+/* 技能详情弹窗 */
+.skill-detail-header {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 20px;
+}
+
+.skill-detail-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 20px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.skill-detail-info {
+  flex: 1;
+}
+
+.skill-detail-info h3 {
+  margin: 0 0 8px 0;
+  font-size: 18px;
+}
+
+.skill-detail-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.skill-detail-author,
+.skill-detail-steps,
+.skill-detail-downloads {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.skill-detail-section {
+  margin-bottom: 16px;
+}
+
+.skill-detail-section label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+  margin-bottom: 6px;
+}
+
+.skill-detail-section p {
+  margin: 0;
+  font-size: 14px;
+  color: var(--el-text-color-regular);
+  line-height: 1.6;
+}
+
+.skill-detail-tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 </style>

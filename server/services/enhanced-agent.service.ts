@@ -289,24 +289,24 @@ export class EnhancedAgentService {
     const totalCount = context.steps.length
 
     let summary = overallSuccess
-      ? `✅ 任务成功完成`
-      : `⚠️ 任务部分完成 (${successCount}/${totalCount} 步骤)`
+      ? `任务成功完成`
+      : `任务部分完成 (${successCount}/${totalCount} 步骤)`
 
     if (context.learningInsights) {
       if (context.learningInsights.confidence > 0.6) {
-        summary += `\n🧠 学习置信度: ${Math.round(context.learningInsights.confidence * 100)}%`
+        summary += `\n学习置信度: ${Math.round(context.learningInsights.confidence * 100)}%`
       }
       if (context.learningInsights.appliedPatterns.length > 0) {
-        summary += `\n📋 应用模式: ${context.learningInsights.appliedPatterns[0].name}`
+        summary += `\n应用模式: ${context.learningInsights.appliedPatterns[0].name}`
       }
     }
 
     if (context.relevantExperience && context.relevantExperience.length > 0) {
-      summary += `\n📚 参考历史经验：${context.relevantExperience[0].approach.substring(0, 30)}...`
+      summary += `\n参考历史经验：${context.relevantExperience[0].approach.substring(0, 30)}...`
     }
 
     if (reflection.learnedLessons.length > 0) {
-      summary += `\n💡 经验：${reflection.learnedLessons[0]}`
+      summary += `\n经验：${reflection.learnedLessons[0]}`
     }
 
     return summary
