@@ -6,6 +6,8 @@ import { logger } from '../services/logger.service'
 import { getChatHistoryService } from '../services/chat-history.service'
 import { randomUUID } from 'node:crypto'
 import os from 'os'
+import path from 'path'
+import { PATHS } from '../shared/constants'
 import type { AppConfig, ModelConfig } from '../shared/types'
 import type { SkillConfig } from '../shared/types'
 import { HTTP } from '../shared/constants'
@@ -642,7 +644,8 @@ async function requestModelReply(
   userMessage: string,
   conversationHistory?: Array<{ role: string; text: string }>,
   signal?: AbortSignal,
-  images?: ImageAttachment[]
+  images?: ImageAttachment[],
+  maxTokens?: number
 ): Promise<LlmResponse> {
   throwIfAborted(signal)
   const safeSystemPrompt = compactText(systemPrompt, HTTP.MAX_SYSTEM_PROMPT_CHARS)
@@ -695,9 +698,10 @@ async function requestModelReply(
 
   input.push({ role: 'user', content: userContent })
 
+  const resolvedMaxTokens = maxTokens ?? 4096
   const requestPayload = isOpenAIFormat
-    ? { model: modelName, messages: input }
-    : { model: modelName, input }
+    ? { model: modelName, messages: input, max_tokens: resolvedMaxTokens }
+    : { model: modelName, input, max_tokens: resolvedMaxTokens }
 
   void logger.info('[AI] LLM request', {
     apiBaseUrl,
@@ -1009,6 +1013,10 @@ function buildAgentSystemPrompt(
   const platform = os.platform()
   const platformInfo = getPlatformInfo(platform)
   const platformCommands = getPlatformCommands(platform)
+  const homeDir = os.homedir()
+  const desktopDir = path.join(homeDir, 'Desktop')
+  const documentsDir = path.join(homeDir, 'Documents')
+  const downloadsDir = path.join(homeDir, 'Downloads')
 
   return `你是一个 AI Agent，但只有在任务需要时才进入 Agent 模式。
 
@@ -1018,9 +1026,26 @@ function buildAgentSystemPrompt(
 - 操作系统：${platformInfo}
 - 执行 Shell 命令时必须使用 ${platformCommands.shell} 命令
 ${platformCommands.systemInfo ? `- 系统监控命令：${platformCommands.systemInfo}` : ''}
+- 用户主目录：${homeDir}
+- 桌面路径：${desktopDir}
+- 文稿路径：${documentsDir}
+- 下载路径：${downloadsDir}
+- 项目工作区：${PATHS.WORKSPACE_DIR}
+【重要】操作文件时必须使用以上绝对路径，禁止使用 ~ 或 $HOME 等符号路径，filesystem 工具不支持路径展开。
+【默认保存位置】
+- 用户创建网站/应用/项目 → 保存到工作区 ${PATHS.WORKSPACE_DIR}/<项目名>/
+- 用户未指定路径的单个文件 → 保存到工作区根目录 ${PATHS.WORKSPACE_DIR}/
+- 用户明确说"桌面" → 保存到 ${desktopDir}
 
 ==============================
-[警告] 【跨平台 Shell 命令规范（必须严格遵守）】
+[重要] 【文件路径规范（必须严格遵守）】
+==============================
+1. 创建/操作文件后，必须返回完整的绝对路径，禁止使用相对路径
+2. 完整路径格式示例：/Users/用户名/Desktop/project/crabclaw/test.php
+3. 路径必须包含完整的 /Users/xxx/ 前缀，禁止使用 ~ 或 $HOME
+4. 返回结果时，路径单独放在一行，方便系统识别为可点击链接
+5. 如果是目录，返回格式：📁 目录：/Users/用户名/Desktop/project
+6. 如果是文件，返回格式：📄 文件：/Users/用户名/Desktop/project/file.php
 ==============================
 调用 shell/shell_execute 时必须遵守以下规则：
 
@@ -1178,22 +1203,34 @@ X 以下情况禁止调用：
 - If real data cannot be accessed, explicitly say you cannot access it and provide user self-check steps.
 
 ==============================
-[输出格式] 输出格式（严格 JSON）
+[输出格式] 输出格式（严格 JSON，这是强制要求）
 ==============================
+你的每一次回复必须是且只能是一个合法的 JSON 对象，格式如下：
 {
-  "type": "plan | action | message | done | error",
-  "data": {}
+  “type”: “plan | action | message | done | error”,
+  “data”: {}
 }
+
+⚠️ 警告：绝对禁止在 JSON 之外输出任何自然语言文字、解释、表情符号或 Markdown。
+⚠️ 警告：如果你输出了 JSON 之外的内容，系统将无法解析并导致任务失败。
+⚠️ 警告：即使是”正在处理...”这样的提示语也禁止出现在 JSON 外部。
+
+【正确示例】
+{“type”:”message”,”data”:{“content”:”你好！有什么可以帮你？”}}
+
+【错误示例（绝对禁止）】
+“好的，我来帮你...”
+“正在创建文件...”
 
 ==============================
 [输出规则] 输出规则
 ==============================
-1. 不允许输出任何 JSON 以外的文本
-2. 每次只输出一个 JSON
+1. 不允许输出任何 JSON 以外的文本（包括 Markdown、表情、说明文字）
+2. 每次只输出一个 JSON 对象
 3. 能 message 解决 → 不要 plan
 4. 能一步完成 → 不要拆步骤
-5. 【重要】执行完工具后必须把结果告诉用户，禁止只输出"运行结束"
-6. 默认只输出“可读的结果摘要/结构化信息”，不要展示命令行、日志或原始终端输出；除非用户明确要求查看原始输出
+5. 【重要】执行完工具后必须把结果告诉用户，禁止只输出”运行结束”
+6. 默认只输出”可读的结果摘要/结构化信息”，不要展示命令行、日志或原始终端输出；除非用户明确要求查看原始输出
 
 ==============================
 [类型说明] 类型说明
@@ -2038,7 +2075,7 @@ export async function* handleChatStream(
 
     const inferStep = openStep('模型推理')
     yield buildTaskEvent(taskId, 'running', { stepId: inferStep.stepId, stepStatus: 'running', title: inferStep.title })
-    const llmResult = await requestModelReply(apiBaseUrl, apiKey, modelName, finalSystemPrompt, message, conversationHistory, abortSignal, options.images)
+    const llmResult = await requestModelReply(apiBaseUrl, apiKey, modelName, finalSystemPrompt, message, conversationHistory, abortSignal, options.images, activeModel.maxTokens)
     const reply = llmResult.reply
     if (llmResult.usage) {
       accumulatedUsage = llmResult.usage
@@ -2062,7 +2099,31 @@ export async function* handleChatStream(
 
     // 优先处理 Agent JSON 结果
     let agentEnvelope = parseAgentEnvelope(reply)
-    
+
+    // 当模型未遵循 JSON 格式时，进行一次纠正重试
+    if (!agentEnvelope) {
+      void logger.warn('[AI] Model did not return JSON, retrying with format correction', { replyLength: reply.length })
+      const correctionHistory: Array<{ role: string; text: string }> = [
+        ...(conversationHistory || []).slice(-8),
+        { role: 'user', text: message },
+        { role: 'assistant', text: reply }
+      ]
+      const correctionPrompt = `你刚才的回复不是合法的 JSON 格式，系统无法解析。\n请严格按照以下格式重新回复，不要输出 JSON 之外的任何内容：\n{"type":"action","data":{...}} 或 {"type":"message","data":{"content":"..."}}\n\n原始用户请求：${message}`
+      try {
+        const retryResult = await requestModelReply(apiBaseUrl, apiKey, modelName, finalSystemPrompt, correctionPrompt, correctionHistory, abortSignal)
+        if (retryResult.usage) {
+          accumulatedUsage = {
+            promptTokens: accumulatedUsage.promptTokens + retryResult.usage.promptTokens,
+            completionTokens: accumulatedUsage.completionTokens + retryResult.usage.completionTokens,
+            totalTokens: accumulatedUsage.totalTokens + retryResult.usage.totalTokens
+          }
+        }
+        agentEnvelope = parseAgentEnvelope(retryResult.reply)
+      } catch {
+        // 重试失败，继续走降级路径
+      }
+    }
+
     // 尝试从 AI 回复中提取文本内容
     let aiReplyText = ''
     if (agentEnvelope?.type === 'message' && agentEnvelope?.data?.content) {
@@ -2172,10 +2233,10 @@ export async function* handleChatStream(
             }
             const { server: batchServer, tool: batchTool } = batchTarget
             yield buildDetail('tool', `[批量] 正在调用 ${batchServer}/${batchTool}...`)
-            yield { type: 'mcp', mcp: { server: batchServer, tool: batchTool, status: 'start', time: new Date().toISOString() } }
+            yield { type: 'mcp', mcp: { server: batchServer, tool: batchTool, status: 'start', input: batchInput, time: new Date().toISOString() } }
             const batchResult = await executeMcpToolWithPolicy(batchServer, batchTool, batchInput)
             const batchOk = !!batchResult?.ok
-            yield { type: 'mcp', mcp: { server: batchServer, tool: batchTool, status: batchOk ? 'success' : 'error', error: batchOk ? undefined : String(batchResult?.error || ''), time: new Date().toISOString() } }
+            yield { type: 'mcp', mcp: { server: batchServer, tool: batchTool, status: batchOk ? 'success' : 'error', error: batchOk ? undefined : String(batchResult?.error || ''), input: batchInput, time: new Date().toISOString() } }
             batchResults.push(batchOk ? String(batchResult?.result || '').trim() || '执行成功' : `失败：${batchResult?.error || ''}`)
             updateRuntimeStateAfterAction(runtimeState, batchServer, batchTool, batchInput)
             updateRuntimeStateAfterResult(runtimeState, batchServer, batchTool, batchInput, batchResults[batchResults.length - 1])
@@ -2472,6 +2533,7 @@ export async function* handleChatStream(
               server,
               tool: effectiveTool,
               status: 'start',
+              input: effectiveInput,
               time: new Date().toISOString()
             }
           }
@@ -2742,6 +2804,7 @@ export async function* handleChatStream(
                 server,
                 tool,
                 status: 'start',
+                input: args,
                 time: new Date().toISOString()
               }
             }
@@ -2905,6 +2968,7 @@ export async function* handleChatStream(
               server,
               tool,
               status: 'start',
+              input: args,
               time: new Date().toISOString()
             }
           }

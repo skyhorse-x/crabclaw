@@ -18,7 +18,8 @@ export const PATHS = {
   LOGS_DIR: path.join(SERVER_ROOT, 'logs'),
   SERVER_LOG: path.join(SERVER_ROOT, 'logs', 'server.log'),
   BRIDGE_PATH: path.join(SERVER_ROOT, 'bridge', 'action-runner.mjs'),
-  MCP_CONFIG_PATH: path.join(SERVER_ROOT, 'mcp-config.json')
+  MCP_CONFIG_PATH: path.join(SERVER_ROOT, 'mcp-config.json'),
+  WORKSPACE_DIR: path.join(PROJECT_ROOT, 'workspace')
 } as const
 
 /**

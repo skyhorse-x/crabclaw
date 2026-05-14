@@ -88,49 +88,49 @@ export class SystemAgent extends BaseAgent {
     switch (step.type) {
       case 'openApp':
         if (!step.app) {
-          return { error: '缺少 app 参数' }
+          return { ok: false, error: '缺少 app 参数' }
         }
         return actionService.openApp(step.app)
 
       case 'openUrl':
         if (!step.url) {
-          return { error: '缺少 url 参数' }
+          return { ok: false, error: '缺少 url 参数' }
         }
         return actionService.openUrl(step.url)
 
       case 'move':
         if (step.x === undefined || step.y === undefined) {
-          return { error: '缺少 x 或 y 参数' }
+          return { ok: false, error: '缺少 x 或 y 参数' }
         }
         return actionService.moveMouse(step.x, step.y)
 
       case 'click':
         if (step.x === undefined || step.y === undefined) {
-          return { error: '缺少 x 或 y 参数' }
+          return { ok: false, error: '缺少 x 或 y 参数' }
         }
         return actionService.click(step.x, step.y)
 
       case 'doubleClick':
         if (step.x === undefined || step.y === undefined) {
-          return { error: '缺少 x 或 y 参数' }
+          return { ok: false, error: '缺少 x 或 y 参数' }
         }
         return actionService.doubleClick(step.x, step.y)
 
       case 'type':
         if (!step.text) {
-          return { error: '缺少 text 参数' }
+          return { ok: false, error: '缺少 text 参数' }
         }
         return actionService.typeText(step.text)
 
       case 'key':
         if (!step.key) {
-          return { error: '缺少 key 参数' }
+          return { ok: false, error: '缺少 key 参数' }
         }
         return actionService.pressKey(step.key)
 
       case 'hotkey':
         if (!step.keys || step.keys.length === 0) {
-          return { error: '缺少 keys 参数' }
+          return { ok: false, error: '缺少 keys 参数' }
         }
         return actionService.pressHotkey(step.keys)
 
@@ -144,7 +144,7 @@ export class SystemAgent extends BaseAgent {
         return { ok: true, data: { skipped: true } }
 
       default:
-        return { error: `不支持的操作类型：${step.type}` }
+        return { ok: false, error: `不支持的操作类型：${step.type}` }
     }
   }
 

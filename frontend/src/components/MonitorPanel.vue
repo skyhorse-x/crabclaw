@@ -1,8 +1,4 @@
 <template>
-  <button class="monitor-toggle-btn" type="button" @click="$emit('toggle')">
-    {{ visible ? labels.hide : labels.show }}
-  </button>
-
   <aside
     class="monitor-panel"
     :class="{ collapsed: !visible }"
@@ -144,20 +140,6 @@ function stopDrag() {
 </script>
 
 <style scoped>
-.monitor-toggle-btn {
-  position: absolute;
-  right: 16px;
-  top: 10px;
-  z-index: 12;
-  border: 1px solid var(--el-border-color);
-  background: var(--el-bg-color-page);
-  color: var(--el-text-color-secondary);
-  border-radius: 12px;
-  padding: 6px 10px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
 .monitor-panel {
   position: absolute;
   right: 12px;

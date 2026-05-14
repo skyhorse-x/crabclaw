@@ -13,38 +13,21 @@
       </div>
     </div>
 
-    <!-- 左右布局 -->
-    <div class="split-layout">
-      <!-- 左侧边栏 -->
-      <aside class="sidebar" :class="{ collapsed: sidebarCollapsed }">
+    <!-- 三列布局 -->
+    <div class="three-column-layout">
+      <!-- 第一列：一级导航 -->
+      <aside class="nav-sidebar" :class="{ collapsed: sidebarCollapsed }">
         <div class="sidebar-header">
           <div class="logo">
             <img class="logo-icon" src="/icons/appIcon.png" alt="Logo" />
-            <div class="logo-text">
+            <div class="logo-text" v-if="!sidebarCollapsed">
               <h1>{{ t('appTitle') }}</h1>
             </div>
           </div>
-          <div class="sidebar-toggle">
-            <el-button :icon="Fold" circle plain @click="toggleSidebar" :title="t('sidebarFold')"></el-button>
-          </div>
+          <el-button :icon="Fold" circle plain @click="toggleSidebar" :title="sidebarCollapsed ? t('sidebarExpand') : t('sidebarFold')"></el-button>
         </div>
         
-        <!-- 导航菜单 -->
         <nav class="sidebar-nav">
-          <div class="nav-header">
-            <div class="new-chat-button">
-              <el-button
-                :icon="Plus"
-                @click="newChat"
-                size="small"
-                :circle="sidebarCollapsed"
-                class="new-chat-btn"
-                :class="{ 'new-chat-icon-only': sidebarCollapsed }"
-              >
-                <span v-if="!sidebarCollapsed">{{ t('newChat') }}</span>
-              </el-button>
-            </div>
-          </div>
           <div
             v-for="item in navigationItems"
             :key="item.id"
@@ -53,31 +36,56 @@
             @click="switchNav(item.id)"
           >
             <el-icon><component :is="item.icon" /></el-icon>
-            <span>{{ t(item.labelKey) }}</span>
+            <span v-if="!sidebarCollapsed">{{ t(item.labelKey) }}</span>
           </div>
-          <template v-if="selectedNav === 'chat'">
-            <div class="chat-history">
-              <div class="history-header">{{ t('historyTitle') }}</div>
-              <div class="history-list">
-                <div
-                  v-for="conv in conversations"
-                  :key="conv.id"
-                  class="history-item"
-                  :class="{ active: conv.id === currentConversationId }"
-                  @click="currentConversationId = conv.id"
-                  @contextmenu.prevent="openConversationContextMenu($event, conv.id)"
-                >
-                  <el-icon><ChatLineRound /></el-icon>
-                  <span class="history-title">{{ conv.title }}</span>
-                </div>
-              </div>
-            </div>
-          </template>
         </nav>
-        
       </aside>
 
-      <!-- 右侧主内容区域 -->
+      <!-- 第二列：代理列表和记录 -->
+      <aside class="agent-sidebar" v-if="selectedNav === 'chat'">
+        <div class="agent-sidebar-header">
+          <span class="agent-sidebar-title">{{ t('navAgents') }}</span>
+          <el-button :icon="Plus" size="small" plain @click="newChat">
+            <span>{{ t('newChat') }}</span>
+          </el-button>
+        </div>
+        
+        <div class="agent-list">
+          <div
+            v-for="agent in agents"
+            :key="agent.id"
+            class="agent-item"
+            :class="{ active: selectedAgentId === agent.id, expanded: expandedAgents.includes(agent.id) }"
+            @click="toggleAgent(agent.id)"
+          >
+            <div class="agent-header">
+              <span class="agent-icon">{{ agent.avatar }}</span>
+              <span class="agent-name">{{ agent.name }}</span>
+              <el-icon class="agent-expand-icon"><ArrowRight /></el-icon>
+            </div>
+            <div class="agent-history" v-if="expandedAgents.includes(agent.id)">
+              <div
+                v-for="conv in getAgentConversations(agent.id)"
+                :key="conv.id"
+                class="agent-history-item"
+                :class="{ active: currentConversationId === conv.id, 'remote-control': conv.id.startsWith('remote-') }"
+                @click.stop="currentConversationId = conv.id"
+                @contextmenu.prevent="showConversationMenu($event, conv)"
+              >
+                <el-icon v-if="conv.id.startsWith('remote-')" class="remote-icon"><Cellphone /></el-icon>
+                <el-icon v-else><ChatLineRound /></el-icon>
+                <span class="history-title">{{ conv.title }}</span>
+                <el-button class="context-menu-trigger" :icon="More" size="mini" @click.stop="showConversationMenu($event, conv)"></el-button>
+              </div>
+              <div v-if="getAgentConversations(agent.id).length === 0" class="agent-history-empty">
+                {{ t('noConversation') }}
+              </div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- 第三列：主内容区域 -->
       <main class="main-content">
         <!-- 顶部工具栏 -->
         <div class="main-toolbar">
@@ -86,6 +94,13 @@
           </div>
           <div class="toolbar-right">
             <div class="toolbar-actions">
+              <button
+                class="monitor-toggle-btn"
+                type="button"
+                @click="toggleMonitorPanel"
+              >
+                {{ monitorPanelVisible ? t('monitorHide') : t('monitorShow') }}
+              </button>
               <el-button class="office-entry-btn" plain @click="openOffice3d">
                 3D代理办公室
               </el-button>
@@ -113,11 +128,11 @@
           </div>
         </div>
 
-        <!-- 聊天面板 -->
-        <div class="chat-panel" v-if="selectedNav === 'chat'" :class="{ 'monitor-visible': monitorPanelVisible }">
-
-          <!-- 聊天消息区域 -->
-          <div class="chat-messages" ref="chatMessagesRef">
+        <!-- 聊天面板 (含文件编辑器) -->
+        <div class="chat-panel" v-if="selectedNav === 'chat'" :class="{ 'monitor-visible': monitorPanelVisible, 'editor-open': fileEditorVisible }">
+          <div class="chat-panel-main">
+            <!-- 聊天消息区域 -->
+            <div class="chat-messages" ref="chatMessagesRef" @click="handleChatClick">
             <div
               v-for="(message, index) in messages"
               :key="`${message.role}-${index}`"
@@ -161,6 +176,69 @@
               <div v-else class="message-content ai-result-card-wrap">
                 <div class="ai-result-card" :class="{ typing: message.typing, error: message.error }">
 
+                  <!-- 工具使用过程（时间线风格）- 放在回复文本前面 -->
+                  <div
+                    v-if="groupedTraceDetails(message).length > 0 || (message.typing && traceRunningCalls(message).length > 0)"
+                    class="ai-result-trace"
+                  >
+                    <div
+                      class="ai-result-trace-header"
+                      @click="toggleTraceInline(message)"
+                    >
+                      <span class="ai-result-trace-icon">
+                        <el-icon style="font-size:16px;color:#6366f1"><Tools /></el-icon>
+                      </span>
+                      <span class="ai-result-trace-label">执行记录</span>
+                      <span class="ai-result-trace-count" v-if="groupedTraceDetails(message).length > 0">
+                        {{ groupedTraceDetails(message).reduce((n, g) => n + g.items.length, 0) }} 步
+                      </span>
+                      <el-icon class="ai-result-trace-arrow" :class="{ expanded: !message.meta?.traceCollapsed }">
+                        <ArrowDown />
+                      </el-icon>
+                    </div>
+                    <div v-if="!message.meta?.traceCollapsed" class="ai-result-trace-body">
+                      <!-- 正在运行的工具 -->
+                      <div
+                        v-if="message.typing && traceRunningCalls(message).length > 0"
+                        class="ai-trace-running"
+                      >
+                        <div class="ai-trace-running-icon">
+                          <el-icon style="font-size:17px;color:#6366f1"><LoadingIcon /></el-icon>
+                        </div>
+                        <span class="ai-trace-running-label">{{ traceRunningCalls(message)[0] }}</span>
+                        <span class="ai-trace-running-badge">
+                          <el-icon style="font-size:12px"><LoadingIcon /></el-icon>
+                          调用中
+                        </span>
+                      </div>
+                      <!-- 时间线节点列表 -->
+                      <div class="ai-trace-timeline">
+                        <template v-for="group in groupedTraceDetails(message)" :key="group.key">
+                          <div
+                            v-for="(item, idx) in group.items"
+                            :key="`${item.time}-${idx}`"
+                            class="ai-trace-node"
+                            :class="getNodeStatusClass(item)"
+                          >
+                            <div class="ai-trace-node-content">
+                              <span class="ai-trace-tool-icon">
+                                <el-icon style="font-size:17px"><component :is="getToolIconComponent(item)" /></el-icon>
+                              </span>
+                              <span class="ai-trace-node-label" v-html="renderTraceNodeLabel(item.text)"></span>
+                              <span class="ai-trace-tool-tag">{{ group.key }}</span>
+                              <span v-if="item.time && !item.time.startsWith('plan-')" class="ai-trace-node-time">{{ formatTraceTime(item.time) }}</span>
+                              <span class="ai-trace-node-status">
+                                <el-icon v-if="isStepSuccess(item)" color="#10b981"><CircleCheckFilled /></el-icon>
+                                <el-icon v-else-if="isStepError(item)" color="#ef4444"><WarningFilled /></el-icon>
+                                <el-icon v-else color="#94a3b8" style="opacity:0.3"><CircleCheckFilled /></el-icon>
+                              </span>
+                            </div>
+                          </div>
+                        </template>
+                      </div>
+                    </div>
+                  </div>
+
                   <!-- 正文回复区 -->
                   <div
                     v-if="message.text && message.text.trim()"
@@ -177,62 +255,6 @@
                       <span class="typing-dot"></span>
                     </span>
                     <span class="trace-status-sub">{{ tracePanelSubtitle(message) }}</span>
-                  </div>
-
-                  <!-- 工具使用过程（可折叠） -->
-                  <div
-                    v-if="groupedTraceDetails(message).length > 0 || (message.typing && traceRunningCalls(message).length > 0)"
-                    class="ai-result-trace"
-                  >
-                    <div
-                      class="ai-result-trace-header"
-                      @click="toggleTraceInline(message)"
-                    >
-                      <span class="ai-result-trace-icon">✦</span>
-                      <span class="ai-result-trace-label">工具使用过程</span>
-                      <span class="ai-result-trace-count" v-if="groupedTraceDetails(message).length > 0">
-                        {{ groupedTraceDetails(message).reduce((n, g) => n + g.items.length, 0) }} 步
-                      </span>
-                      <el-icon class="ai-result-trace-arrow" :class="{ expanded: !message.meta?.traceCollapsed }">
-                        <ArrowDown />
-                      </el-icon>
-                    </div>
-                    <div v-if="!message.meta?.traceCollapsed" class="ai-result-trace-body">
-                      <!-- 正在运行的工具 -->
-                      <div
-                        v-if="message.typing && traceRunningCalls(message).length > 0"
-                        class="ai-trace-group-header ai-trace-group-header--running"
-                      >
-                        <div class="ai-trace-row-icon ai-trace-row-icon--running">
-                          <el-icon style="animation:spin 1s linear infinite"><LoadingIcon /></el-icon>
-                        </div>
-                        <span class="ai-trace-group-name">{{ traceRunningCalls(message)[0] }}</span>
-                        <span class="ai-trace-group-count">调用中...</span>
-                      </div>
-                      <!-- 分组 trace 行：工具名一行，操作列表缩进在下方 -->
-                      <template v-for="group in groupedTraceDetails(message)" :key="group.key">
-                        <!-- 工具标题行 -->
-                        <div class="ai-trace-group-header">
-                          <div class="ai-trace-row-icon ai-trace-icon--document">
-                            <el-icon><component :is="group.items.length > 0 ? traceIcons[getItemIcon(group.items[0])] : traceIcons['document']" /></el-icon>
-                          </div>
-                          <span class="ai-trace-group-name">{{ group.key }}</span>
-                          <span class="ai-trace-group-count" v-if="group.items.length > 0">{{ group.items.length }} 次</span>
-                        </div>
-                        <!-- 操作子项 -->
-                        <div
-                          v-for="(item, idx) in group.items"
-                          :key="`${item.time}-${idx}`"
-                          class="ai-trace-sub-row"
-                        >
-                          <div class="ai-trace-sub-indent"></div>
-                          <span class="ai-trace-sub-desc">{{ item.text }}</span>
-                          <span class="ai-trace-sub-time">{{ formatTraceTime(item.time) }}</span>
-                          <el-icon v-if="isStepSuccess(item)" class="ai-trace-sub-status" color="#22c55e"><CircleCheckFilled /></el-icon>
-                          <el-icon v-else class="ai-trace-sub-status ai-trace-sub-status--idle" color="#94a3b8"><CircleCheckFilled /></el-icon>
-                        </div>
-                      </template>
-                    </div>
                   </div>
 
                   <!-- 确认操作卡 -->
@@ -299,7 +321,8 @@
                   ref="chatInputRef"
                   v-model="chatInput"
                   class="main-input"
-                  :placeholder="supportsVision ? t('inputPlaceholder') + '（支持 Ctrl+V 粘贴图片）' : t('inputPlaceholder')"
+                  :disabled="isRemoteAgentConversation"
+                  :placeholder="isRemoteAgentConversation ? '🤖 CraBot 远程代理对话，请通过微信/Telegram 发送指令' : (supportsVision ? t('inputPlaceholder') + '（支持 Ctrl+V 粘贴图片）' : t('inputPlaceholder'))"
                   @keydown="handleChatKeydown"
                   @paste="handlePaste"
                   @focus="isInputFocused = true"
@@ -394,10 +417,11 @@
                     >
                       <el-icon><CloseBold /></el-icon>
                     </button>
-                    <button 
+                    <button
                       v-else
                       class="user-avatar-btn send-btn"
-                      :class="{ 'send-disabled': !chatInput.trim() }"
+                      :class="{ 'send-disabled': !chatInput.trim() || isRemoteAgentConversation }"
+                      :disabled="isRemoteAgentConversation"
                       @click="() => sendChat()"
                       :title="t('sendMessage')"
                     >
@@ -439,8 +463,14 @@
             @update:auto-run="chatExecutionAuto = $event"
           />
         </div>
+        <FileEditor
+          :visible="fileEditorVisible"
+          :file-path="fileEditorPath"
+          @close="closeFileEditor"
+        />
+      </div>
 
-        <!-- 代理仪表盘面板 -->
+      <!-- 代理仪表盘面板 -->
         <div class="agents-panel" v-if="selectedNav === 'agents'">
           <AgentDashboard />
         </div>
@@ -810,6 +840,85 @@
               </div>
             </el-tab-pane>
 
+            <el-tab-pane name="wechat-personal">
+              <template #label>
+                <span class="platform-tab-label">
+                  <span class="platform-icon wechat-personal-icon">信</span>
+                  <span>{{ '个人微信' }}</span>
+                </span>
+              </template>
+              <div class="platform-config">
+                <div class="wechat-personal-login-section">
+                  <div v-if="wechatAccounts.length === 0" class="wechat-personal-empty">
+                    <p style="color:#94a3b8;margin-bottom:16px;">扫码登录个人微信，接收消息并控制 Agent</p>
+                    <el-button type="primary" size="large" @click="startWechatLogin" :loading="wechatLoginLoading">
+                      扫码登录微信
+                    </el-button>
+                  </div>
+
+                  <div v-if="wechatQrCodeUrl" class="wechat-personal-qrcode">
+                    <img :src="wechatQrCodeUrl" alt="微信登录二维码" style="width:200px;height:200px;border:1px solid #e2e8f0;border-radius:8px;" />
+                    <p style="color:#94a3b8;font-size:13px;margin-top:8px;">请用微信扫码登录</p>
+                    <p v-if="wechatLoginStatus === 'waiting'" style="color:#f59e0b;font-size:12px;">
+                      <el-icon style="font-size:12px"><LoadingIcon /></el-icon> 等待扫码...
+                    </p>
+                    <p v-else-if="wechatLoginStatus === 'success'" style="color:#10b981;font-size:12px;">登录成功</p>
+                    <el-button size="small" @click="cancelWechatLogin" style="margin-top:8px;">取消</el-button>
+                  </div>
+
+                  <div v-if="wechatAccounts.length > 0" class="wechat-personal-accounts">
+                    <div class="wechat-personal-accounts-header">
+                      <span>已登录账号 ({{ wechatAccounts.length }})</span>
+                      <el-button size="small" type="primary" plain @click="startWechatLogin" :loading="wechatLoginLoading">添加账号</el-button>
+                    </div>
+                    <div v-for="acc in wechatAccounts" :key="acc.wxid" class="wechat-personal-account-item">
+                      <div class="wechat-personal-account-info">
+                        <span class="wechat-personal-account-nickname">{{ acc.nickname }}</span>
+                        <span class="wechat-personal-account-wxid">{{ acc.wxid }}</span>
+                      </div>
+                      <el-button size="small" type="danger" plain @click="logoutWechatAccount(acc.wxid)">登出</el-button>
+                    </div>
+                  </div>
+                </div>
+
+                <el-divider />
+
+                <div v-if="wechatAccounts.length > 0" class="wechat-received-section">
+                  <div class="wechat-received-header">
+                    <span>接收的消息</span>
+                    <el-button size="small" @click="fetchWechatStatus" :disabled="wechatMessages.length === 0">
+                      <el-icon style="font-size:12px"><Refresh /></el-icon> 刷新
+                    </el-button>
+                  </div>
+                  <div v-if="wechatMessages.length === 0" class="wechat-received-empty">
+                    <p style="color:#94a3b8;font-size:13px;">暂无消息，请在手机上给 bot 发消息测试</p>
+                  </div>
+                  <div v-else class="wechat-received-list">
+                    <div v-for="(msg, i) in wechatMessages.slice().reverse()" :key="i" class="wechat-received-item">
+                      <div class="wechat-received-item-header">
+                        <span class="wechat-received-sender">{{ msg.senderName || msg.sender }}</span>
+                        <span class="wechat-received-time">{{ formatWechatTime(msg.timestamp) }}</span>
+                      </div>
+                      <div class="wechat-received-text">{{ msg.text }}</div>
+                    </div>
+                  </div>
+                </div>
+
+                <el-divider />
+
+                <el-form label-width="100px" label-position="left">
+                  <el-form-item :label="t('controlTestMessage')">
+                    <el-input v-model="wechatTestMessage" :placeholder="t('controlTestMessagePlaceholder') || '输入要发送给自己的消息'" />
+                  </el-form-item>
+                  <el-form-item>
+                    <el-button type="primary" @click="sendTestToWechat" :loading="wechatSending" :disabled="wechatAccounts.length === 0">
+                      {{ t('controlSendTest') || '发送测试' }}
+                    </el-button>
+                  </el-form-item>
+                </el-form>
+              </div>
+            </el-tab-pane>
+
             <el-tab-pane name="feishu">
               <template #label>
                 <span class="platform-tab-label">
@@ -1082,6 +1191,29 @@
       </main>
     </div>
 
+    <!-- 对话右键菜单 -->
+    <Teleport to="body">
+      <div 
+        v-if="conversationMenuVisible" 
+        class="conversation-context-menu"
+        :style="{ left: conversationMenuPosition.x + 'px', top: conversationMenuPosition.y + 'px' }"
+        @click.self="conversationMenuVisible = false"
+      >
+        <div class="context-menu-item" @click="renameConv">
+          <el-icon><EditPen /></el-icon>
+          <span>{{ t('rename') }}</span>
+        </div>
+        <div class="context-menu-item" @click="clearConv">
+          <el-icon><Delete /></el-icon>
+          <span>{{ t('clearMessages') }}</span>
+        </div>
+        <div class="context-menu-item danger" @click="deleteConv">
+          <el-icon><Delete /></el-icon>
+          <span>{{ t('delete') }}</span>
+        </div>
+      </div>
+    </Teleport>
+
     <!-- 创建技能对话框 -->
     <el-dialog v-model="skillDialogVisible" title="创建技能" width="500px">
       <el-form :model="skillDialogForm" label-width="80px">
@@ -1149,7 +1281,7 @@
             <span v-else class="skill-selector-empty-circle"></span>
           </span>
           <span class="skill-selector-name">{{ skill.name }}</span>
-          <el-tag size="small" effect="plain" class="skill-selector-tag">{{ skill.category }}</el-tag>
+          <el-tag v-if="(skill as any).category" size="small" effect="plain" class="skill-selector-tag">{{ (skill as any).category }}</el-tag>
         </div>
       </div>
       <template #footer>
@@ -1445,22 +1577,51 @@
         </template>
       </div>
     </Teleport>
+
+    <!-- 微信消息面板 -->
+    <div v-if="wechatMessages.length > 0" class="wechat-msg-panel" :class="{ collapsed: !wechatPanelOpen }">
+      <div class="wechat-msg-header">
+        <span class="wechat-msg-header-label">
+          <el-icon style="font-size:14px;margin-right:4px;color:#6366f1"><ChatLineRound /></el-icon>
+          微信消息
+          <span class="wechat-msg-badge">{{ wechatMessages.length }}</span>
+        </span>
+        <div class="wechat-msg-header-actions">
+          <button class="wechat-msg-btn" @click="wechatPanelOpen = !wechatPanelOpen" :title="wechatPanelOpen ? '收起' : '展开'">
+            <el-icon><ArrowDown v-if="wechatPanelOpen" /><ArrowUp v-else /></el-icon>
+          </button>
+          <button class="wechat-msg-btn wechat-msg-btn-close" @click="clearWechatMessages" title="关闭">
+            <el-icon><Close /></el-icon>
+          </button>
+        </div>
+      </div>
+      <div v-if="wechatPanelOpen" class="wechat-msg-list">
+        <div v-for="(msg, i) in wechatMessages" :key="i" class="wechat-msg-item">
+          <div class="wechat-msg-sender">
+            <span class="wechat-msg-sender-name">{{ msg.senderName || msg.sender }}</span>
+            <span class="wechat-msg-time">{{ formatWechatTime(msg.timestamp) }}</span>
+          </div>
+          <div class="wechat-msg-text">{{ msg.text }}</div>
+        </div>
+      </div>
+    </div>
+
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue"
 import { ElMessage, ElMessageBox } from "element-plus"
-import { ArrowRight } from "@element-plus/icons-vue"
+import { ArrowRight, More, Cellphone } from "@element-plus/icons-vue"
 import MonitorPanel from "./components/MonitorPanel.vue"
 import AgentDashboard from "./components/AgentDashboard.vue"
 import PipelineDashboard from "./components/PipelineDashboard.vue"
 import AgentOffice3D from "./components/AgentOffice3D.vue"
+import FileEditor from "./components/FileEditor.vue"
 import hljs from "highlight.js"
 import { useVoiceInput } from "./composables/useVoiceInput"
 import { useWebSocket } from "./composables/useWebSocket"
-import {
-  ArrowDown,
+import { ArrowDown,
   ArrowLeftBold,
   Check,
   ChatLineRound,
@@ -1468,9 +1629,13 @@ import {
   CloseBold,
   Connection,
   CopyDocument,
+  Cpu,
+  DataBoard,
   Delete,
+  Document,
   EditPen,
   Fold,
+  Folder,
   Grid,
   Loading as LoadingIcon,
   Menu,
@@ -1478,17 +1643,20 @@ import {
   Paperclip,
   Plus,
   Promotion,
+  Refresh,
   RefreshRight,
+  Search,
   Setting,
   Bell,
   VideoPause,
   Star,
   Timer,
-  Document,
   Tools,
   Monitor,
   MoreFilled,
   Share,
+  Calendar,
+  ChatDotSquare,
 } from "@element-plus/icons-vue"
 
 const apiBase = ref("")
@@ -1522,6 +1690,81 @@ const chatHistoryReady = ref(false)
 
 const selectedChatModel = ref('')
 const chatExecutionMode = ref<'auto' | 'manual'>('auto')
+const fileEditorVisible = ref(false)
+const fileEditorPath = ref('')
+
+function openFileEditor(filePath: string) {
+  fileEditorPath.value = filePath
+  fileEditorVisible.value = true
+}
+
+function closeFileEditor() {
+  fileEditorVisible.value = false
+  fileEditorPath.value = ''
+}
+
+function buildFileApiUrl(path: string): string {
+  const port = location.port === '4173' ? '17870' : location.port
+  return `http://${location.hostname}:${port}${path}`
+}
+
+async function handleChatClick(event: MouseEvent) {
+  const target = event.target as HTMLElement
+  const fileLink = target.closest('[data-file-path]')
+  if (fileLink) {
+    const path = fileLink.getAttribute('data-file-path')
+    if (path) {
+      event.preventDefault()
+      try {
+        const res = await fetch(buildFileApiUrl('/api/file/type?path=' + encodeURIComponent(path)))
+        const data = await res.json()
+        if (data.ok && data.isDirectory) {
+          try {
+            await fetch(buildFileApiUrl('/api/file/open-in-finder'), {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ path })
+            })
+          } catch {
+            // 打开 Finder 失败，静默处理
+          }
+        } else if (data.ok && data.isFile) {
+          openFileEditor(path)
+        } else {
+          const hasExt = /\.[a-zA-Z0-9]+$/.test(path)
+          if (hasExt) {
+            openFileEditor(path)
+          } else {
+            try {
+              await fetch(buildFileApiUrl('/api/file/open-in-finder'), {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ path })
+              })
+            } catch {
+              // 无法判断类型，尝试在 Finder 打开
+            }
+          }
+        }
+      } catch {
+        const hasExt = /\.[a-zA-Z0-9]+$/.test(path)
+        if (hasExt) {
+          openFileEditor(path)
+        } else {
+          try {
+            await fetch(buildFileApiUrl('/api/file/open-in-finder'), {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ path })
+            })
+          } catch {
+            // API 调用失败，静默处理
+          }
+        }
+      }
+    }
+  }
+}
 const customAiAskDialogVisible = ref(false)
 const customAiAskForm = reactive({
   modelId: '',
@@ -1862,6 +2105,7 @@ interface AppConfig {
 interface Conversation {
   id: string
   title: string
+  agentId?: string
   messages: Array<{
     role: string
     text: string
@@ -2524,6 +2768,7 @@ const locales = {
 
     // System - History / Editor
     historyTitle: "Conversation History",
+    noConversation: "No conversations",
     configEditorTitle: "Configuration Editor",
     skillConfigTab: "Skill Configuration",
     skillNameLabel: "Skill Name",
@@ -2703,10 +2948,103 @@ watch(activeSettingTab, (newTab) => {
   }
 })
 
+// 代理列表
+const agents = ref([
+  { id: 'builtin-bot', name: 'CraBot', avatar: '🤖', isBuiltIn: true },
+  { id: 'custom-ai-1', name: '自定义AI 1', avatar: 'A' },
+  { id: 'custom-ai-2', name: '自定义AI 2', avatar: 'C' }
+])
+
+// 对话右键菜单状态
+const conversationMenuVisible = ref(false)
+const conversationMenuPosition = ref({ x: 0, y: 0 })
+const selectedConvForMenu = ref<Conversation | null>(null)
+
+function showConversationMenu(event: MouseEvent, conv: Conversation) {
+  conversationMenuPosition.value = { x: event.clientX, y: event.clientY }
+  selectedConvForMenu.value = conv
+  conversationMenuVisible.value = true
+  document.addEventListener('click', closeConversationMenu)
+}
+
+function closeConversationMenu() {
+  conversationMenuVisible.value = false
+  document.removeEventListener('click', closeConversationMenu)
+}
+
+async function renameConv() {
+  closeConversationMenu()
+  if (!selectedConvForMenu.value) return
+  
+  const { value: newName } = await ElMessageBox.prompt('请输入新的对话名称', '重命名', {
+    confirmButtonText: '确定',
+    cancelButtonText: '取消',
+    inputValue: selectedConvForMenu.value.title
+  })
+  
+  if (newName) {
+    const conv = conversations.value.find(c => c.id === selectedConvForMenu.value?.id)
+    if (conv) {
+      conv.title = newName
+    }
+  }
+}
+
+async function clearConv() {
+  closeConversationMenu()
+  if (!selectedConvForMenu.value) return
+  
+  await ElMessageBox.confirm('确定清空此对话的所有消息吗？', '确认清空', {
+    confirmButtonText: '确定',
+    cancelButtonText: '取消',
+    type: 'warning'
+  })
+  
+  const conv = conversations.value.find(c => c.id === selectedConvForMenu.value?.id)
+  if (conv) {
+    conv.messages = []
+  }
+}
+
+async function deleteConv() {
+  closeConversationMenu()
+  if (!selectedConvForMenu.value) return
+  
+  await ElMessageBox.confirm('确定删除此对话吗？此操作不可恢复。', '确认删除', {
+    confirmButtonText: '确定',
+    cancelButtonText: '取消',
+    type: 'warning'
+  })
+  
+  const index = conversations.value.findIndex(c => c.id === selectedConvForMenu.value?.id)
+  if (index !== -1) {
+    conversations.value.splice(index, 1)
+    if (currentConversationId.value === selectedConvForMenu.value.id) {
+      currentConversationId.value = conversations.value[0]?.id || ''
+    }
+  }
+}
+
+const selectedAgentId = ref('builtin-bot')
+const expandedAgents = ref<string[]>(['builtin-bot'])
+
+function toggleAgent(agentId: string) {
+  selectedAgentId.value = agentId
+  const index = expandedAgents.value.indexOf(agentId)
+  if (index === -1) {
+    expandedAgents.value = [agentId]
+  }
+}
+
+function getAgentConversations(agentId: string) {
+  return conversations.value.filter(c => c.agentId === agentId || (agentId === 'builtin-bot' && !c.agentId))
+}
+
 // 聊天历史记录支持
 const conversations = ref<Conversation[]>([{
   id: "default",
   title: "新对话",
+  agentId: 'builtin-bot',
   messages: [
     {
       role: "assistant",
@@ -2722,6 +3060,11 @@ const currentConversation = computed(() =>
 )
 
 const messages = computed(() => currentConversation.value.messages)
+
+/** 远程代理专属对话，不允许前端手动输入 */
+const isRemoteAgentConversation = computed(() =>
+  currentConversationId.value.startsWith('agent-remote-agent-')
+)
 const chatMessagesRef = ref<HTMLElement | null>(null)
 const completedPlanCount = computed(() =>
   currentPlan.value.filter(step => Boolean(step?.completed)).length
@@ -2807,90 +3150,82 @@ function friendlyToolName(server: string, tool: string): string {
   const s = server.toLowerCase()
   const t = tool.toLowerCase()
 
-  // 浏览器 / DevTools
-  if (s.includes('chrome') || s.includes('devtools') || s.includes('browser') || s.includes('puppeteer') || s.includes('playwright')) {
-    if (t.includes('navigate') || t.includes('goto') || t.includes('open')) return '正在浏览网页'
-    if (t.includes('screenshot') || t.includes('capture')) return '正在截图'
-    if (t.includes('click')) return '正在点击页面'
-    if (t.includes('type') || t.includes('input') || t.includes('fill')) return '正在输入内容'
-    if (t.includes('scroll')) return '正在滚动页面'
-    if (t.includes('evaluate') || t.includes('script') || t.includes('execute')) return '正在操作控制台'
-    if (t.includes('wait')) return '等待页面加载'
-    if (t.includes('content') || t.includes('html') || t.includes('text') || t.includes('get_page')) return '正在读取网页内容'
-    if (t.includes('element') || t.includes('find') || t.includes('query') || t.includes('select')) return '正在查找页面元素'
-    if (t.includes('tab') || t.includes('window')) return '正在管理浏览器标签'
-    if (t.includes('network') || t.includes('request')) return '正在监听网络请求'
-    return '正在操作浏览器'
-  }
-
   // 文件系统
   if (s.includes('filesystem') || s.includes('file') || s.includes('fs')) {
-    if (t.includes('read') || t.includes('get')) return '正在读取文件'
-    if (t.includes('write') || t.includes('create') || t.includes('save')) return '正在写入文件'
-    if (t.includes('delete') || t.includes('remove')) return '正在删除文件'
-    if (t.includes('list') || t.includes('dir') || t.includes('ls')) return '正在浏览目录'
-    if (t.includes('move') || t.includes('rename')) return '正在移动文件'
-    if (t.includes('search') || t.includes('find')) return '正在搜索文件'
-    return '正在操作文件'
+    if (t === 'create_directory') return '创建文件夹'
+    if (t.includes('write') || t.includes('save')) return '创建文件'
+    if (t === 'edit_file') return '修改文件'
+    if (t.includes('read') || t.includes('get')) return '读取文件'
+    if (t.includes('delete') || t.includes('remove')) return '删除文件'
+    if (t.includes('list') || t.includes('dir') || t.includes('ls')) return '查看目录'
+    if (t.includes('move') || t.includes('rename')) return '移动文件'
+    if (t.includes('search') || t.includes('find')) return '搜索文件'
+    return '操作文件'
   }
 
   // Shell / 终端
   if (s.includes('shell') || s.includes('terminal') || s.includes('bash') || s.includes('exec') || s.includes('command')) {
-    if (t.includes('run') || t.includes('exec') || t.includes('command') || t.includes('bash')) return '正在操作控制台'
-    return '正在操作控制台'
+    return '执行命令'
+  }
+
+  // 浏览器 / DevTools
+  if (s.includes('chrome') || s.includes('devtools') || s.includes('browser') || s.includes('puppeteer') || s.includes('playwright')) {
+    if (t.includes('navigate') || t.includes('goto') || t.includes('new_page')) return '打开浏览器'
+    if (t.includes('screenshot') || t.includes('capture')) return '截取截图'
+    if (t.includes('click')) return '点击页面'
+    if (t.includes('type') || t.includes('input') || t.includes('fill')) return '输入内容'
+    if (t.includes('scroll')) return '滚动页面'
+    if (t.includes('evaluate') || t.includes('script')) return '执行脚本'
+    if (t.includes('wait')) return '等待页面'
+    if (t.includes('content') || t.includes('html') || t.includes('text') || t.includes('get_page')) return '读取网页'
+    if (t.includes('element') || t.includes('find') || t.includes('query') || t.includes('select')) return '查找元素'
+    if (t.includes('tab') || t.includes('window') || t.includes('list_pages')) return '管理标签页'
+    if (t.includes('network') || t.includes('request')) return '查看请求'
+    if (t.includes('close')) return '关闭页面'
+    if (t.includes('select_page')) return '切换页面'
+    return '操作浏览器'
   }
 
   // 网络请求 / Fetch
   if (s.includes('fetch') || s.includes('http') || s.includes('request') || s.includes('curl')) {
-    return '正在访问网络'
+    return '访问网络'
   }
 
   // 内存 / 知识库
   if (s.includes('memory') || s.includes('knowledge') || s.includes('vector')) {
-    if (t.includes('search') || t.includes('query') || t.includes('find')) return '正在查询记忆库'
-    if (t.includes('store') || t.includes('save') || t.includes('add')) return '正在保存记忆'
-    return '正在访问记忆库'
-  }
-
-  // 数据库
-  if (s.includes('sqlite') || s.includes('database') || s.includes('db') || s.includes('sql') || s.includes('mysql') || s.includes('postgres')) {
-    if (t.includes('select') || t.includes('query') || t.includes('read')) return '正在查询数据库'
-    if (t.includes('insert') || t.includes('create') || t.includes('write')) return '正在写入数据库'
-    if (t.includes('update')) return '正在更新数据库'
-    if (t.includes('delete') || t.includes('drop')) return '正在删除数据'
-    return '正在操作数据库'
+    if (t.includes('search') || t.includes('query') || t.includes('find') || t.includes('open')) return '查询记忆'
+    if (t.includes('store') || t.includes('save') || t.includes('add') || t.includes('create')) return '保存记忆'
+    if (t.includes('delete')) return '删除记忆'
+    return '操作记忆'
   }
 
   // GitHub
   if (s.includes('github') || s.includes('git')) {
-    if (t.includes('search')) return '正在搜索代码仓库'
-    if (t.includes('commit') || t.includes('push')) return '正在提交代码'
-    if (t.includes('pull') || t.includes('pr')) return '正在处理 Pull Request'
-    if (t.includes('issue')) return '正在处理 Issue'
-    if (t.includes('file') || t.includes('content')) return '正在读取仓库文件'
-    return '正在操作 GitHub'
+    if (t.includes('search')) return '搜索仓库'
+    if (t.includes('commit') || t.includes('push')) return '提交代码'
+    if (t.includes('pull') || t.includes('pr')) return '处理 Pull Request'
+    if (t.includes('issue')) return '处理 Issue'
+    if (t.includes('file') || t.includes('content')) return '读取仓库文件'
+    return '操作 GitHub'
+  }
+
+  // 数据库
+  if (s.includes('sqlite') || s.includes('database') || s.includes('db') || s.includes('sql')) {
+    if (t.includes('select') || t.includes('query') || t.includes('read')) return '查询数据'
+    if (t.includes('insert') || t.includes('create') || t.includes('write')) return '写入数据'
+    if (t.includes('update')) return '更新数据'
+    if (t.includes('delete') || t.includes('drop')) return '删除数据'
+    return '操作数据库'
   }
 
   // 搜索
   if (s.includes('search') || s.includes('google') || s.includes('bing') || s.includes('brave')) {
-    return '正在搜索信息'
+    return '搜索信息'
   }
 
-  // 邮件
-  if (s.includes('email') || s.includes('mail') || s.includes('gmail')) {
-    if (t.includes('send')) return '正在发送邮件'
-    if (t.includes('read') || t.includes('get')) return '正在读取邮件'
-    return '正在处理邮件'
-  }
-
-  // 日历
-  if (s.includes('calendar') || s.includes('schedule')) {
-    return '正在操作日历'
-  }
-
-  // 默认：取 tool 名最后一段，转为可读格式
+  // 默认
   const readable = tool.replace(/[_-]/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase()
-  return `正在使用 ${readable}`
+  return `执行 ${readable}`
 }
 
 function applyMcpEventToMessage(message: any, eventData: any) {
@@ -2908,13 +3243,21 @@ function applyMcpEventToMessage(message: any, eventData: any) {
     error: eventData?.error ? String(eventData.error) : undefined
   }
 
+  let filePath = ''
+  const input = eventData?.input
+  if (input && typeof input === 'object') {
+    filePath = String(input.path || input.destination || input.source || input.filePath || input.dir || '')
+  }
+
+  const pathSuffix = filePath ? ` [${filePath}]` : ''
+
   if (status === 'error') {
     const errText = String(eventData?.error || '未知错误')
-    pushExecutionDetailToMessage(message, 'mcp', `${label} 调用失败：${errText}`, eventData?.time)
+    pushExecutionDetailToMessage(message, 'mcp', `${label}：${errText}${pathSuffix}`, eventData?.time)
   } else if (status === 'success') {
-    pushExecutionDetailToMessage(message, 'mcp', `${label} 调用完成`, eventData?.time)
+    pushExecutionDetailToMessage(message, 'mcp', `${label}${pathSuffix}`, eventData?.time)
   } else {
-    pushExecutionDetailToMessage(message, 'mcp', `${label} 调用中`, eventData?.time)
+    pushExecutionDetailToMessage(message, 'mcp', `${label}${pathSuffix}`, eventData?.time)
   }
 }
 
@@ -3011,6 +3354,46 @@ function isGroupRunning(group: any): boolean {
 function isStepSuccess(item: any): boolean {
   const text = String(item.text || '').toLowerCase()
   return text.includes('成功') || text.includes('完成') || text.includes('done') || text.includes('success')
+}
+
+function isStepError(item: any): boolean {
+  const text = String(item.text || '').toLowerCase()
+  return text.includes('失败') || text.includes('error') || text.includes('fail') || text.includes('错误')
+}
+
+function getNodeStatusClass(item: any): string {
+  if (isStepSuccess(item)) return 'ai-trace-node--done'
+  if (isStepError(item)) return 'ai-trace-node--error'
+  const text = String(item.text || '').toLowerCase()
+  if (text.includes('调用中') || text.includes('running') || text.includes('进行')) return 'ai-trace-node--start'
+  return ''
+}
+
+function getToolIconComponent(item: { stage: string; text: string }): any {
+  const text = String(item.text || '').toLowerCase()
+  if (text.includes('浏览') || text.includes('网页') || text.includes('页面') || text.includes('浏览器') || text.includes('截图') || text.includes('点击') || text.includes('导航')) return Monitor
+  if (text.includes('文件') || text.includes('写入') || text.includes('读取') || text.includes('目录') || text.includes('保存') || text.includes('文件夹')) return Folder
+  if (text.includes('控制台') || text.includes('shell') || text.includes('终端') || text.includes('命令') || text.includes('执行') || text.includes('运行')) return Cpu
+  if (text.includes('网络') || text.includes('访问') || text.includes('fetch') || text.includes('请求')) return Connection
+  if (text.includes('记忆') || text.includes('知识') || text.includes('memory')) return DataBoard
+  if (text.includes('搜索') || text.includes('查询')) return Search
+  if (text.includes('数据库') || text.includes('sql')) return DataBoard
+  if (text.includes('git') || text.includes('github') || text.includes('仓库')) return Share
+  if (text.includes('邮件') || text.includes('email')) return ChatDotSquare
+  if (text.includes('日历') || text.includes('schedule')) return Calendar
+  return Tools
+}
+
+function getToolIconClass(item: { stage: string; text: string }): string {
+  const text = String(item.text || '').toLowerCase()
+  if (text.includes('浏览') || text.includes('网页') || text.includes('页面') || text.includes('浏览器') || text.includes('截图') || text.includes('点击') || text.includes('导航')) return 'ai-trace-tool-icon--browser'
+  if (text.includes('文件') || text.includes('写入') || text.includes('读取') || text.includes('目录') || text.includes('保存')) return 'ai-trace-tool-icon--file'
+  if (text.includes('控制台') || text.includes('shell') || text.includes('终端') || text.includes('命令') || text.includes('执行') || text.includes('运行')) return 'ai-trace-tool-icon--shell'
+  if (text.includes('网络') || text.includes('访问') || text.includes('fetch') || text.includes('请求')) return 'ai-trace-tool-icon--fetch'
+  if (text.includes('记忆') || text.includes('知识') || text.includes('memory')) return 'ai-trace-tool-icon--memory'
+  if (text.includes('git') || text.includes('github')) return 'ai-trace-tool-icon--github'
+  if (text.includes('搜索') || text.includes('查询')) return 'ai-trace-tool-icon--search'
+  return 'ai-trace-tool-icon--default'
 }
 
 function traceRunningCalls(message: any): string[] {
@@ -3114,6 +3497,13 @@ function formatTraceTime(time: string): string {
   const timestamp = Date.parse(time)
   if (Number.isNaN(timestamp)) return ''
   return new Date(timestamp).toLocaleTimeString('zh-CN', { hour12: false })
+}
+
+function renderTraceNodeLabel(text: string): string {
+  if (!text) return ''
+  let html = escapeHtml(text)
+  html = html.replace(/\/(Users|home|private\/tmp)\/[^\s<）)\]>]+/g, '<span class="file-path-link" data-file-path="$&">$&</span>')
+  return html
 }
 
 function formatTraceStage(stage: string): string {
@@ -3266,6 +3656,8 @@ function renderMessageText(text: string): string {
     tableHtml += '</tbody></table></div>'
     return tableHtml
   })
+
+  html = html.replace(/\/(Users|home|private\/tmp)\/[^\s<）)\]>]+/g, '<span class="file-path-link" data-file-path="$&">$&</span>')
 
   html = html.replace(/\n/g, "<br/>")
 
@@ -3486,7 +3878,12 @@ function openMcpUrl(url: string) {
 function loadRemoteControlConfig() {
   try {
     fetch(buildApiUrl('/api/remote-control/config'))
-      .then(res => res.json())
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const ct = res.headers.get('content-type') || ''
+        if (!ct.includes('application/json')) throw new Error(`Unexpected content-type: ${ct}`)
+        return res.json()
+      })
       .then(data => {
         if (data.enabled !== undefined) {
           remoteControlConfig.enabled = Boolean(data.enabled)
@@ -3528,10 +3925,153 @@ function loadRemoteControlConfig() {
   } catch (error) {
     console.error('加载远程控制配置失败:', error)
   }
+
+  fetchWechatStatus()
 }
 
 const telegramTestMessage = ref('')
 const sendingToTelegram = ref(false)
+
+// 个人微信状态
+const wechatTestMessage = ref('')
+const wechatSending = ref(false)
+const wechatLoginLoading = ref(false)
+const wechatQrCodeUrl = ref('')
+const wechatLoginSession = ref('')
+const wechatLoginStatus = ref<'idle' | 'waiting' | 'success'>('idle')
+const wechatAccounts = ref<Array<{ wxid: string; nickname: string; loggedInAt: number }>>([])
+const wechatMessages = ref<Array<{ sender: string; senderName: string; text: string; timestamp: number; msgType?: string }>>([])
+const wechatPanelOpen = ref(true)
+let wechatPollingTimer: ReturnType<typeof setInterval> | null = null
+
+function formatWechatTime(ts: number): string {
+  if (!ts) return ''
+  const d = new Date(ts)
+  return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+}
+
+function clearWechatMessages() {
+  wechatMessages.value = []
+}
+
+function pushWechatMessage(msg: { sender: string; text: string; timestamp: number; msgType?: string }) {
+  wechatMessages.value.push({
+    ...msg,
+    senderName: msg.sender.includes('@im.wechat') ? msg.sender.split('@')[0] : msg.sender.slice(0, 8),
+    text: msg.text,
+  })
+  if (wechatMessages.value.length > 50) {
+    wechatMessages.value = wechatMessages.value.slice(-50)
+  }
+  wechatPanelOpen.value = true
+}
+
+async function fetchWechatStatus() {
+  try {
+    const res = await fetch(buildApiUrl('/api/plugins/wechat-bot/status'))
+    const data = await res.json()
+    if (data.ok && data.accounts) {
+      wechatAccounts.value = data.accounts
+    }
+  } catch {}
+}
+
+async function startWechatLogin() {
+  wechatLoginLoading.value = true
+  wechatQrCodeUrl.value = ''
+  wechatLoginStatus.value = 'idle'
+  try {
+    const res = await fetch(buildApiUrl('/api/plugins/wechat-bot/login'), { method: 'POST' })
+    const data = await res.json()
+    if (data.ok && data.qrcodeUrl) {
+      wechatQrCodeUrl.value = data.qrcodeUrl
+      wechatLoginSession.value = data.session
+      wechatLoginStatus.value = 'waiting'
+      startWechatLoginPolling(data.session)
+    } else {
+      ElMessage.error(data.error || '获取二维码失败')
+    }
+  } catch (err: any) {
+    ElMessage.error('登录请求失败')
+  } finally {
+    wechatLoginLoading.value = false
+  }
+}
+
+function startWechatLoginPolling(session: string) {
+  stopWechatLoginPolling()
+  wechatPollingTimer = setInterval(async () => {
+    try {
+      const res = await fetch(buildApiUrl(`/api/plugins/wechat-bot/check-login?session=${session}`))
+      const data = await res.json()
+      if (data.ok && data.status === 'success') {
+        wechatLoginStatus.value = 'success'
+        stopWechatLoginPolling()
+        await fetchWechatStatus()
+        setTimeout(() => {
+          wechatQrCodeUrl.value = ''
+          wechatLoginSession.value = ''
+        }, 1500)
+      }
+    } catch {}
+  }, 2000)
+}
+
+function stopWechatLoginPolling() {
+  if (wechatPollingTimer) {
+    clearInterval(wechatPollingTimer)
+    wechatPollingTimer = null
+  }
+}
+
+function cancelWechatLogin() {
+  stopWechatLoginPolling()
+  wechatQrCodeUrl.value = ''
+  wechatLoginSession.value = ''
+  wechatLoginStatus.value = 'idle'
+}
+
+async function sendTestToWechat() {
+  if (!wechatTestMessage.value.trim()) return
+  wechatSending.value = true
+  try {
+    const res = await fetch(buildApiUrl('/api/plugins/wechat-bot/send'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content: wechatTestMessage.value })
+    })
+    const data = await res.json()
+    if (data.ok) {
+      ElMessage.success('发送成功')
+      wechatTestMessage.value = ''
+    } else {
+      ElMessage.error(data.error || '发送失败')
+    }
+  } catch {
+    ElMessage.error('发送失败')
+  } finally {
+    wechatSending.value = false
+  }
+}
+
+async function logoutWechatAccount(wxid: string) {
+  try {
+    const res = await fetch(buildApiUrl('/api/plugins/wechat-bot/logout'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ wxid })
+    })
+    const data = await res.json()
+    if (data.ok) {
+      ElMessage.success('已登出')
+      await fetchWechatStatus()
+    } else {
+      ElMessage.error(data.error || '登出失败')
+    }
+  } catch {
+    ElMessage.error('登出失败')
+  }
+}
 
 async function sendTestToTelegram() {
   if (!telegramTestMessage.value.trim()) return
@@ -3670,6 +4210,7 @@ function newChat() {
   conversations.value.unshift({
     id: newId,
     title: "新对话",
+    agentId: selectedAgentId.value,
     messages: [
       {
         role: "assistant",
@@ -3812,18 +4353,20 @@ function pushMessage(role: string, text: string, meta?: any, options: any = {}) 
 }
 
 function serializeConversationsForSave() {
-  return conversations.value.map((conv) => ({
-    id: conv.id,
-    title: conv.title,
-    messages: conv.messages.map((msg) => ({
-      role: msg.role,
-      text: msg.text,
-      agentName: msg.agentName,
-      meta: msg.meta,
-      error: Boolean(msg.error),
-      typing: Boolean(msg.typing)
+  return conversations.value
+    .filter(conv => !conv.id.startsWith('remote-'))  // remote 对话不持久化，避免覆盖历史
+    .map((conv) => ({
+      id: conv.id,
+      title: conv.title,
+      messages: conv.messages.map((msg) => ({
+        role: msg.role,
+        text: msg.text,
+        agentName: msg.agentName,
+        meta: msg.meta,
+        error: Boolean(msg.error),
+        typing: Boolean(msg.typing)
+      }))
     }))
-  }))
 }
 
 async function saveChatHistoryNow() {
@@ -3861,7 +4404,7 @@ async function loadChatHistory() {
     const storedConversations = response?.data?.conversations
 
     if (Array.isArray(storedConversations) && storedConversations.length > 0) {
-      conversations.value = storedConversations.map((conversation: any) => ({
+      conversations.value = storedConversations.filter((c: any) => !String(c?.id || '').startsWith('remote-')).map((conversation: any) => ({
         ...conversation,
         messages: Array.isArray(conversation?.messages)
           ? conversation.messages.map((message: any) => {
@@ -4061,23 +4604,25 @@ function buildApiUrl(path: string): string {
 }
 
 function getBackendCandidates(): string[] {
-  const port = config.value?.settings?.backendPort || 17871
-  const candidates = new Set<string>()
+  const port = config.value?.settings?.backendPort || 17870
+  const candidates: string[] = []
 
-  // 开发环境（Vite 代理）优先
-  candidates.add('')
-
-  if (typeof window !== 'undefined' && window.location?.origin?.startsWith('http')) {
-    candidates.add(window.location.origin)
-  }
-
-  const ports = [port, 17871, 17872]
+  // 已知后端端口，绝对地址优先（打包和开发环境都有效）
+  const ports = Array.from(new Set([port, 17870, 17871, 17872]))
   for (const p of ports) {
-    candidates.add(`http://127.0.0.1:${p}`)
-    candidates.add(`http://localhost:${p}`)
+    candidates.push(`http://127.0.0.1:${p}`)
+    candidates.push(`http://localhost:${p}`)
   }
 
-  return Array.from(candidates)
+  // 开发环境 Vite 代理（仅当 origin 端口是已知 dev server 端口时才加入）
+  if (typeof window !== 'undefined' && window.location?.origin?.startsWith('http')) {
+    const originPort = parseInt(window.location.port)
+    if ([4173, 5173].includes(originPort)) {
+      candidates.unshift(window.location.origin)
+    }
+  }
+
+  return candidates
 }
 
 async function detectBackend(): Promise<boolean> {
@@ -5185,12 +5730,63 @@ function syncSelectedChatModelWithConfig() {
   selectedChatModel.value = activeModel?.id || models[0].id
 }
 
+async function checkBackendAlive(): Promise<boolean> {
+  try {
+    const res = await fetch('http://127.0.0.1:17870/api/health')
+    if (!res.ok) return false
+    const data = await res.json()
+    return data?.ok === true
+  } catch {
+    return false
+  }
+}
+
+async function spawnBackendIfNeeded() {
+  const Neutralino = (window as any).Neutralino
+  if (!Neutralino) return  // 开发环境，后端已由 npm run dev 启动
+
+  try {
+    if (await checkBackendAlive()) return
+
+    // 必须先 init 才能使用 Neutralino API
+    await new Promise<void>((resolve) => {
+      Neutralino.init()
+      window.addEventListener('ready', () => resolve(), { once: true })
+      // 最多等 2 秒
+      setTimeout(resolve, 2000)
+    })
+
+    // NL_PATH 由 Neutralino 运行时注入，指向 app 所在目录（与主程序同级）
+    const nlPath: string = (window as any).NL_PATH || ''
+    const serverBin = nlPath ? `${nlPath}/crabclaw-server` : './crabclaw-server'
+
+    console.log('[Backend] NL_PATH:', nlPath, '-> binary:', serverBin)
+    const result = await Neutralino.os.execCommand(
+      `chmod +x "${serverBin}" 2>/dev/null; nohup "${serverBin}" > /tmp/crabclaw-server.log 2>&1 &`
+    ).catch((e: any) => { console.warn('[Backend] execCommand failed:', e); return null })
+    console.log('[Backend] execCommand result:', result)
+
+    // 等待后端启动（最多 10 秒）
+    for (let i = 0; i < 20; i++) {
+      await new Promise(r => setTimeout(r, 500))
+      if (await checkBackendAlive()) {
+        console.log('[Backend] Server ready after', (i + 1) * 500, 'ms')
+        break
+      }
+    }
+  } catch (e) {
+    console.warn('[Backend] spawnBackendIfNeeded failed:', e)
+  }
+}
+
 onMounted(async () => {
   isInitializing.value = true
+  initProgress.value = 5
+
+  await spawnBackendIfNeeded()
   initProgress.value = 10
 
   await Promise.all([
-    loadRemoteControlConfig(),
     loadScheduledTasks(),
     loadChatHistory(),
     loadChatStorageConfig(),
@@ -5201,14 +5797,79 @@ onMounted(async () => {
   await loadCustomAskAiList()
   initProgress.value = 80
 
-  void bootstrap()
+  await bootstrap()
+  loadRemoteControlConfig()
   initProgress.value = 90
 
   chatWs.connect(`ws://${window.location.hostname}:17870/ws`)
 
+  // remote_message: 仅用于微信消息面板展示原始消息，不再触发对话
   chatWs.on('remote_message', (payload: any) => {
-    const msg = payload as { platform: string; text: string; sender: string; timestamp: number }
-    pushMessage('user', `[${msg.platform.toUpperCase()}] ${msg.sender}: ${msg.text}`)
+    const msg = payload as { platform: string; text: string; sender: string; timestamp: number; msgType?: string }
+    if (msg.platform === 'wechat') {
+      pushWechatMessage({
+        sender: msg.sender,
+        text: msg.text,
+        timestamp: msg.timestamp || Date.now(),
+        msgType: msg.msgType,
+      })
+    }
+  })
+
+  // remote_agent_reply: 远程控制消息，作为内置Bot的子对话
+  chatWs.on('remote_agent_reply', (payload: any) => {
+    const ev = payload as {
+      agentId: string
+      agentName: string
+      platform: string
+      role: 'user' | 'assistant'
+      text: string
+      sender: string
+      timestamp: number
+    }
+    const agentName = ev.agentName || 'CraBot'
+    const platform = ev.platform.toLowerCase()
+    const platformLabel = ev.platform.toUpperCase()
+    
+    // 使用平台作为对话标识，每个平台一个对话
+    const convId = `remote-${platform}`
+
+    // 平台名称中文映射
+    const platformNames: Record<string, string> = {
+      'wechat': '微信',
+      'telegram': 'Telegram',
+      'qq': 'QQ',
+      'feishu': '飞书',
+      'discord': 'Discord',
+      'slack': 'Slack',
+      'teams': 'Teams',
+      'whatsapp': 'WhatsApp'
+    }
+    const platformCNName = platformNames[platform] || platformLabel
+
+    // 找或创建该平台的专属对话（作为内置Bot的子对话）
+    let conv = conversations.value.find(c => c.id === convId)
+    if (!conv) {
+      conv = {
+        id: convId,
+        title: `${platformCNName}Bot`,
+        agentId: 'builtin-bot',
+        messages: [{ role: 'assistant', text: `🤖 ${agentName} 已就绪，等待来自 ${platformCNName} 的任务…`, agentName }]
+      }
+      conversations.value.unshift(conv)
+    }
+
+    const targetConv = conv!
+    targetConv.messages.push({
+      role: ev.role,
+      text: ev.text,
+      agentName: ev.role === 'assistant' ? agentName : ev.sender,
+    })
+    if (targetConv.messages.length > 200) targetConv.messages = targetConv.messages.slice(-200)
+
+
+
+    scheduleSaveChatHistory()
   })
 
   backendPollTimer = setInterval(() => {
@@ -5482,6 +6143,302 @@ function deleteModel(modelId: string) {
 </script>
 
 <style scoped>
+/* 三列布局 */
+.three-column-layout {
+  display: flex;
+  height: 100vh;
+  background: #f0f4fa;
+}
+
+/* 第一列：导航侧边栏 */
+.nav-sidebar {
+  width: 200px;
+  background: #ffffff;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid #e8e8e8;
+  transition: width 0.3s ease;
+  flex-shrink: 0;
+}
+
+.nav-sidebar.collapsed {
+  width: 60px;
+}
+
+.nav-sidebar:not(.collapsed) {
+  width: 200px;
+}
+
+.nav-sidebar .sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px;
+  border-bottom: 1px solid #e2e8f0;
+  min-height: 56px;
+}
+
+.nav-sidebar.collapsed .sidebar-header {
+  justify-content: center;
+  padding: 12px 8px;
+}
+
+.nav-sidebar .logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.nav-sidebar.collapsed .logo {
+  justify-content: center;
+}
+
+.nav-sidebar .logo-icon {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  background: linear-gradient(135deg, #4a90d9, #357abd);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.nav-sidebar .logo-text h1 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.nav-sidebar .sidebar-nav {
+  flex: 1;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.nav-sidebar .nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: #475569;
+  transition: all 0.2s;
+  overflow: hidden;
+}
+
+.nav-sidebar.collapsed .nav-item {
+  justify-content: center;
+  padding: 10px;
+}
+
+.nav-sidebar.collapsed .nav-item span {
+  display: none;
+}
+
+.nav-sidebar .nav-item:hover {
+  background: #f1f5f9;
+}
+
+.nav-sidebar .nav-item.active {
+  background: #e8f0fe;
+  color: #4a90d9;
+}
+
+/* 第二列：代理侧边栏 */
+.agent-sidebar {
+  width: 240px;
+  background: #ffffff;
+  border-right: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+}
+
+.agent-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.agent-sidebar-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.agent-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.agent-item {
+  margin-bottom: 4px;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.agent-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.agent-header:hover {
+  background: #f8fafc;
+}
+
+.agent-item.active .agent-header {
+  background: #e8f0fe;
+}
+
+.agent-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #4a90d9, #357abd);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.agent-name {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 500;
+  color: #334155;
+}
+
+.agent-expand-icon {
+  font-size: 14px;
+  color: #94a3b8;
+  transition: transform 0.2s;
+}
+
+.agent-item.expanded .agent-expand-icon {
+  transform: rotate(90deg);
+}
+
+.agent-history {
+  background: #fafafa;
+  padding: 4px 0;
+}
+
+.agent-history-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px 8px 40px;
+  cursor: pointer;
+  font-size: 12px;
+  color: #64748b;
+  transition: background 0.2s;
+}
+
+.agent-history-item:hover {
+  background: #f1f5f9;
+}
+
+.agent-history-item.active {
+  background: #e8f0fe;
+  color: #4a90d9;
+}
+
+.agent-history-item.remote-control {
+  background: linear-gradient(90deg, rgba(100, 116, 139, 0.05) 0%, transparent 100%);
+  border-left: 2px solid #64748b;
+}
+
+.agent-history-item .context-menu-trigger {
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.agent-history-item:hover .context-menu-trigger {
+  opacity: 1;
+}
+
+.remote-icon {
+  font-size: 14px;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.conversation-context-menu {
+  position: fixed;
+  background: #ffffff;
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  padding: 4px;
+  z-index: 9999;
+  min-width: 140px;
+}
+
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #334155;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+.context-menu-item:hover {
+  background: #f1f5f9;
+}
+
+.context-menu-item.danger {
+  color: #ef4444;
+}
+
+.context-menu-item.danger:hover {
+  background: #fef2f2;
+}
+
+.agent-history-item .history-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-history-empty {
+  padding: 12px 12px 12px 40px;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+/* 第三列：主内容 */
+.main-content {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
 .mcp-config-editor {
   padding: 10px 0;
 }
@@ -5838,33 +6795,53 @@ function deleteModel(modelId: string) {
 
 .confirm-card {
   margin-top: 8px;
-  padding: 10px 12px;
-  border: 1px solid var(--el-border-color);
-  border-radius: 10px;
-  background: var(--el-bg-color-page);
+  margin-left: 18px;
+  margin-right: 18px;
+  padding: 14px 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #fffbeb, #fff7ed);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
 }
 
 .confirm-title {
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  font-weight: 600;
+  color: #92400e;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.confirm-title::before {
+  content: '⚠️';
+  font-size: 14px;
 }
 
 .confirm-tool {
-  margin-top: 4px;
+  margin-top: 6px;
   font-size: 13px;
   font-weight: 600;
-  color: var(--el-text-color-primary);
+  color: #1e293b;
+  background: rgba(255,255,255,0.7);
+  display: inline-flex;
+  padding: 3px 10px;
+  border-radius: 6px;
 }
 
 .confirm-args {
-  margin-top: 6px;
+  margin-top: 8px;
   font-size: 12px;
-  color: var(--el-text-color-regular);
+  color: #64748b;
   word-break: break-all;
+  background: rgba(255,255,255,0.5);
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid #fef3c7;
 }
 
 .confirm-actions {
-  margin-top: 10px;
+  margin-top: 12px;
   display: flex;
   gap: 8px;
 }
@@ -6212,6 +7189,27 @@ function deleteModel(modelId: string) {
 
 .office-entry-btn {
   border-radius: 10px;
+}
+
+.monitor-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 12px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 10px;
+  background: var(--el-bg-color);
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+  line-height: 1;
+}
+.monitor-toggle-btn:hover {
+  border-color: var(--el-color-primary);
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
 }
 
 .office-dialog-header {

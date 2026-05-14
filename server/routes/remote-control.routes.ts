@@ -7,12 +7,55 @@ import { logger } from '../services/logger.service'
 import { wsService } from '../services/websocket.service'
 import { unifiedMessageService } from '../services/unified-message.service'
 import { getConfigDatabase, type RemoteControlConfig as DBRRemoteControlConfig } from '../services/config-database.service'
+import { remoteAgentRegistry } from '../agents/remote.agent'
 
 const configDb = getConfigDatabase()
 
 export type RemoteControlConfig = DBRRemoteControlConfig
 
 let remoteConfig: RemoteControlConfig = configDb.getRemoteControlConfig()
+
+// ── Telegram CraBot 接入 ────────────────────────────────────────────────────
+// 注册 Telegram 回复函数：用配置的 chatId 或消息来源 chatId 发送消息
+const telegramAgent = remoteAgentRegistry.get('telegram')
+
+telegramAgent.registerReplier(async (text: string, sender: string) => {
+  const token = remoteConfig.telegram?.botToken
+  if (!token) return
+  // sender 格式为 "chatId:username"（见下方 broadcastToClients 改造）
+  const chatId = sender.split(':')[0] || remoteConfig.telegram?.chatId || ''
+  if (!chatId) return
+  await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown' })
+  }).catch((e: any) => logger.error('[CraBot] Telegram 回复失败', e))
+})
+
+// Telegram sendChatAction(typing) 每 4s 刷新（API 5s 过期），任务完成后 stop() 清除定时器
+telegramAgent.registerTypingIndicator((sender: string) => {
+  const token = remoteConfig.telegram?.botToken
+  const chatId = sender.split(':')[0] || remoteConfig.telegram?.chatId || ''
+  if (!token || !chatId) return () => {}
+
+  const sendTyping = () => {
+    fetch(`https://api.telegram.org/bot${token}/sendChatAction`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, action: 'typing' })
+    }).catch(() => {})
+  }
+
+  sendTyping()  // 立即发一次
+  const timer = setInterval(sendTyping, 4000)
+  logger.info(`[CraBot] Telegram typing 开始: chatId=${chatId}`)
+
+  return () => {
+    clearInterval(timer)
+    logger.info(`[CraBot] Telegram typing 停止: chatId=${chatId}`)
+  }
+})
+// ───────────────────────────────────────────────────────────────────────────
 
 unifiedMessageService.updateConfig({
   telegram: remoteConfig.telegram,
@@ -88,12 +131,22 @@ function broadcastToClients(message: {
   text: string
   sender: string
   timestamp: number
+  chatId?: string  // Telegram chatId，供 CraBot 回复时定向发送
 }) {
-  wsService.broadcastAll({
-    type: 'remote_message',
-    payload: message
-  })
+  wsService.broadcastAll({ type: 'remote_message', payload: message })
   logger.info('[RemoteControl] Message broadcasted', { platform: message.platform, sender: message.sender })
+
+  // 同步转给 CraBot RemoteAgent 处理
+  if (message.text) {
+    // sender 格式: "chatId:username"，让 replier 能取到 chatId
+    const agentSender = message.chatId ? `${message.chatId}:${message.sender}` : message.sender
+    remoteAgentRegistry.get(message.platform as any).receive({
+      platform: message.platform as any,
+      text: message.text,
+      sender: agentSender,
+      timestamp: message.timestamp,
+    }).catch((e: any) => logger.error('[CraBot] 转发 RemoteAgent 失败', e))
+  }
 }
 
 async function fetchTelegramUpdates(offset?: number): Promise<void> {
@@ -139,6 +192,7 @@ async function fetchTelegramUpdates(offset?: number): Promise<void> {
             platform: 'telegram',
             text: command,
             sender: `@${username}`,
+            chatId,
             timestamp: Date.now()
           })
         }
@@ -205,6 +259,7 @@ async function handleTelegramWebhook(body: unknown): Promise<Response> {
           platform: 'telegram',
           text: command,
           sender: `@${username}`,
+          chatId,
           timestamp: Date.now()
         })
       }

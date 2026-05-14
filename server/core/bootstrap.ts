@@ -9,6 +9,8 @@ import { disconnectAllMcp } from '../services/mcp.service'
 import { skillRegistry } from '../skills/skill-registry'
 import { taskScheduler } from '../services/task-scheduler.service'
 import { PATHS } from '../shared/constants'
+import { initPlugins } from '../plugins/plugin-loader'
+import path from 'node:path'
 
 const TASK_TIMERS = new Map<string, ReturnType<typeof setInterval>>()
 
@@ -36,11 +38,16 @@ export async function bootstrap() {
     const loadedCount = await skillRegistry.loadFromDirectory(skillsDir)
     logger.info('Local skills loaded', { count: loadedCount })
 
-    // 3. 初始化 MCP 连接（如果有配置）
+    // 3. 加载插件
+    logger.debug('Loading plugins...')
+    const pluginsDir = path.join(process.cwd(), 'server', 'plugins')
+    await initPlugins(pluginsDir, logger)
+
+    // 4. 初始化 MCP 连接（如果有配置）
     logger.debug('Initializing MCP connections...')
     // MCP 连接会在首次调用时自动建立
 
-    // 4. 应用任务调度
+    // 5. 应用任务调度
     logger.debug('Applying task schedules...')
     applyTaskSchedules(config)
 

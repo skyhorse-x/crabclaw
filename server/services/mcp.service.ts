@@ -5,8 +5,10 @@
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
-import { readFile } from "node:fs/promises"
+import { readFile, access, mkdir } from "node:fs/promises"
 import path from "node:path"
+import os from "node:os"
+import { PATHS } from '../shared/constants'
 import { logger } from '../services/logger.service'
 import type { McpServerConfig, McpTool, McpClient as McpClientType } from '../shared/types'
 
@@ -55,6 +57,40 @@ async function loadMcpConfigFile(): Promise<{ mcpServers: Record<string, McpServ
 }
 
 /**
+ * 为 filesystem MCP 动态注入用户可访问的路径
+ * 自动检测当前用户 HOME 下的常用目录是否存在并加入 allowed paths
+ */
+async function buildFilesystemArgs(baseArgs: string[]): Promise<string[]> {
+  // 确保 workspace 目录存在
+  await mkdir(PATHS.WORKSPACE_DIR, { recursive: true })
+
+  const home = os.homedir()
+  const candidates = [
+    PATHS.WORKSPACE_DIR,        // 用户创建项目的专属目录
+    home,
+    path.join(home, 'Desktop'),
+    path.join(home, 'Documents'),
+    path.join(home, 'Downloads'),
+    '/tmp'
+  ]
+
+  const existing: string[] = []
+  for (const dir of candidates) {
+    try {
+      await access(dir)
+      existing.push(dir)
+    } catch {
+      // 目录不存在则跳过
+    }
+  }
+
+  // 过滤掉 baseArgs 中已包含的路径，避免重复
+  const toAdd = existing.filter(p => !baseArgs.includes(p))
+  logger.debug('[MCP] filesystem allowed paths', { paths: [...baseArgs, ...toAdd] })
+  return [...baseArgs, ...toAdd]
+}
+
+/**
  * 连接 MCP 服务器
  */
 async function connectMcpServer(serverId: string, config: McpServerConfig): Promise<McpClientType | null> {
@@ -65,10 +101,14 @@ async function connectMcpServer(serverId: string, config: McpServerConfig): Prom
 
   try {
     const mergedEnv = { ...process.env, ...config.env }
-    
+
+    const resolvedArgs = serverId === 'filesystem'
+      ? await buildFilesystemArgs(Array.isArray(config.args) ? [...config.args] : [])
+      : (Array.isArray(config.args) ? config.args : [])
+
     const transport = new StdioClientTransport({
       command: config.command,
-      args: config.args,
+      args: resolvedArgs,
       env: mergedEnv as Record<string, string>
     })
 

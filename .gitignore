@@ -1,3 +1,36 @@
 node_modules
 node_modules/
 resources/
+
+# 临时端口文件
+server/.port
+server/.frontend-port
+
+# 环境变量
+.env
+.env.local
+.env.development
+.env.development.local
+
+# 日志文件
+*.log
+logs/
+server/logs/
+
+# 数据库
+*.db
+*.db-shm
+*.db-wal
+data.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+workspace
+dist

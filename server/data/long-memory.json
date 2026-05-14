@@ -1,14 +1,14 @@
 [
   {
-    "id": "lmem-6d8bf3a8-2545-46c5-a2db-d9d8b1052eb7",
-    "content": "{\"location\":\"百度中搜索新浪，在新\"}",
+    "id": "lmem-1a11bdff-db6d-42ed-a00b-268957a365f1",
+    "content": "{\"location\":\"做什么\",\"name\":\"什么ai助手\"}",
     "type": "long",
-    "createdAt": 1778664921105,
-    "lastAccessedAt": 1778664921105,
+    "createdAt": 1778747559356,
+    "lastAccessedAt": 1778747559356,
     "accessCount": 0,
     "metadata": {
       "type": "user_profile",
-      "updatedAt": 1778664921105
+      "updatedAt": 1778747559356
     }
   }
 ]

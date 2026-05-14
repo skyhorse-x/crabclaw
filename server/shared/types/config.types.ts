@@ -19,6 +19,7 @@ export interface ModelConfig {
   apiBaseUrl: string
   isBuiltIn: boolean
   isActive: boolean
+  maxTokens?: number
   createdAt: string
   updatedAt: string
 }

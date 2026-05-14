@@ -1,0 +1,9 @@
+{
+  "id": "wechat-bot",
+  "name": "微信机器人",
+  "version": "1.0.0",
+  "description": "基于腾讯iLink协议的个人微信机器人，支持扫码登录、消息收发",
+  "author": "crabclaw",
+  "homepage": "",
+  "main": "index.ts"
+}

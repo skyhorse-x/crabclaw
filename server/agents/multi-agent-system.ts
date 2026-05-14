@@ -3,7 +3,146 @@
  * @description 基于角色分工的群体智能系统，实现自我规划、执行、审查和学习的完整闭环
  */
 
+import { randomUUID } from 'crypto'
+
+const uuid = () => randomUUID()
+
 // ==================== 类型定义 ====================
+
+export interface TaskDefinition {
+  id?: string
+  goal: string
+  description?: string
+  constraints?: TaskConstraints
+  metadata?: Record<string, any>
+}
+
+export interface TaskConstraints {
+  maxSteps?: number
+  timeout?: number
+  allowedDomains?: string[]
+  [key: string]: any
+}
+
+export interface ITool {
+  name: string
+  description: string
+  execute: (args: any) => Promise<any>
+}
+
+export interface ActionResult {
+  success: boolean
+  data?: any
+  error?: string
+  recovery?: RecoveryStrategy
+}
+
+export interface RecoveryStrategy {
+  type: 'retry' | 'skip' | 'abort' | 'fallback'
+  maxRetries?: number
+  delay?: number
+  fallbackAction?: string
+}
+
+export interface HistoryStats {
+  totalActions: number
+  successfulActions: number
+  failedActions: number
+  averageDuration: number
+  totalDuration: number
+}
+
+export interface TaskPlan {
+  steps: PlanStep[]
+  totalSteps: number
+  estimatedTime: number
+  riskLevel: 'low' | 'medium' | 'high'
+}
+
+export interface PlanStep {
+  id: string
+  description: string
+  actionType: string
+  expectedOutput?: string
+  dependencies?: string[]
+  preconditions?: string[]
+  postconditions?: string[]
+}
+
+export interface TaskResult {
+  taskId: string
+  success: boolean
+  error?: string
+  steps?: number
+  duration?: number
+}
+
+export interface ILLMService {
+  generate: (prompt: string, options?: any) => Promise<any>
+  chat: (prompt: string, options?: any) => Promise<string>
+}
+
+export interface IMemoryService {
+  save: (data: any) => Promise<void>
+  searchSimilar: (query: any) => Promise<any[]>
+  retrieve: (key: string) => Promise<any>
+}
+
+export class ActionHistory {
+  private actions: { action: Action; result?: ActionResult; timestamp: number }[] = []
+
+  add(action: Action, result?: ActionResult): void {
+    this.actions.push({ action, result, timestamp: Date.now() })
+  }
+
+  getActions(): Action[] {
+    return this.actions.map(a => a.action)
+  }
+
+  getResults(): ActionResult[] {
+    return this.actions.filter(a => a.result).map(a => a.result!)
+  }
+
+  getStats(): HistoryStats {
+    const total = this.actions.length
+    const successful = this.actions.filter(a => a.result?.success).length
+    const failed = total - successful
+    const durations = this.actions.map((a, i) => {
+      const next = this.actions[i + 1]
+      return next ? next.timestamp - a.timestamp : 0
+    })
+    const totalDuration = durations.reduce((a, b) => a + b, 0)
+
+    return {
+      totalActions: total,
+      successfulActions: successful,
+      failedActions: failed,
+      averageDuration: total > 0 ? totalDuration / total : 0,
+      totalDuration
+    }
+  }
+
+  getDuration(): number {
+    if (this.actions.length === 0) return 0
+    return this.actions[this.actions.length - 1].timestamp - this.actions[0].timestamp
+  }
+}
+
+export class EnvironmentState {
+  private state: Record<string, any> = {}
+
+  setState(key: string, value: any): void {
+    this.state[key] = value
+  }
+
+  getState(): Record<string, any> {
+    return { ...this.state }
+  }
+
+  get(key: string): any {
+    return this.state[key]
+  }
+}
 
 /**
  * Agent 角色枚举
@@ -48,6 +187,18 @@ export enum ActionType {
   LOOP = 'loop'
 }
 
+export interface BridgeService {
+  mouse: {
+    click: (x: number, y: number) => Promise<ActionResult>
+  }
+  keyboard: {
+    type: (text: string) => Promise<ActionResult>
+  }
+  browser: {
+    navigate: (url: string) => Promise<ActionResult>
+  }
+}
+
 /**
  * Agent 上下文
  */
@@ -59,6 +210,7 @@ export class AgentContext {
   history: ActionHistory
   environment: EnvironmentState
   sharedMemory: Map<string, any>
+  bridge?: BridgeService
   
   constructor(taskId: string, task: TaskDefinition) {
     this.taskId = taskId
@@ -97,8 +249,8 @@ export class AgentContext {
 export abstract class BaseAgent {
   readonly id: string
   readonly role: AgentRole
-  protected llm: ILLMService
-  protected memory: IMemoryService
+  protected llm?: ILLMService
+  protected memory?: IMemoryService
   
   constructor(id: string, role: AgentRole) {
     this.id = id
@@ -109,19 +261,10 @@ export abstract class BaseAgent {
    * 思考过程（模板方法）
    */
   async think(context: AgentContext): Promise<Thought> {
-    const startTime = Date.now()
-    
     try {
-      // 1. 感知环境
       const perception = await this.perceive(context)
-      
-      // 2. 分析情况
       const analysis = await this.analyze(perception, context)
-      
-      // 3. 生成决策
       const decision = await this.decide(analysis, context)
-      
-      // 4. 评估置信度
       const confidence = await this.evaluateConfidence(decision, context)
       
       return {
@@ -131,7 +274,8 @@ export abstract class BaseAgent {
         reasoning: analysis.reasoning
       }
     } catch (error) {
-      throw new Error(`Agent ${this.id} 思考失败：${error.message}`)
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      throw new Error(`Agent ${this.id} 思考失败：${errorMessage}`)
     }
   }
   
@@ -151,10 +295,11 @@ export abstract class BaseAgent {
       
       return result
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
       return {
         success: false,
-        error: error.message,
-        recovery: await this.getRecoveryStrategy(error, context)
+        error: errorMessage,
+        recovery: await this.getRecoveryStrategy()
       }
     }
   }
@@ -212,7 +357,7 @@ export abstract class BaseAgent {
   /**
    * 验证结果
    */
-  protected async verifyResult(result: ActionResult, context: AgentContext): Promise<void> {
+  protected async verifyResult(result: ActionResult, _context: AgentContext): Promise<void> {
     if (!result.success) {
       throw new Error(`动作执行失败：${result.error}`)
     }
@@ -221,7 +366,7 @@ export abstract class BaseAgent {
   /**
    * 获取恢复策略
    */
-  protected async getRecoveryStrategy(error: Error, context: AgentContext): Promise<RecoveryStrategy> {
+  protected async getRecoveryStrategy(): Promise<RecoveryStrategy> {
     return {
       type: 'retry',
       maxRetries: 3,
@@ -233,24 +378,28 @@ export abstract class BaseAgent {
    * 记录成功
    */
   protected async recordSuccess(result: ActionResult, context: AgentContext): Promise<void> {
-    await this.memory.save({
-      type: 'success',
-      taskId: context.taskId,
-      data: result,
-      timestamp: Date.now()
-    })
+    if (this.memory) {
+      await this.memory.save({
+        type: 'success',
+        taskId: context.taskId,
+        data: result,
+        timestamp: Date.now()
+      })
+    }
   }
   
   /**
    * 记录失败
    */
   protected async recordFailure(result: ActionResult, context: AgentContext): Promise<void> {
-    await this.memory.save({
-      type: 'failure',
-      taskId: context.taskId,
-      data: result,
-      timestamp: Date.now()
-    })
+    if (this.memory) {
+      await this.memory.save({
+        type: 'failure',
+        taskId: context.taskId,
+        data: result,
+        timestamp: Date.now()
+      })
+    }
   }
 }
 
@@ -272,7 +421,24 @@ export class PlannerAgent extends BaseAgent {
     }
   }
   
-  protected async analyze(perception: any, context: AgentContext): Promise<any> {
+  protected async analyze(perception: any, _context: AgentContext): Promise<any> {
+    const defaultSteps = [
+      { description: '分析任务目标', actionType: 'analyze', expectedOutput: '任务分析结果' },
+      { description: '执行主要操作', actionType: 'execute', expectedOutput: '操作结果' },
+      { description: '验证结果', actionType: 'verify', expectedOutput: '验证报告' }
+    ]
+    
+    return {
+      taskType: this.extractTaskType(perception.task),
+      complexity: this.calculateComplexity(perception.task),
+      steps: this.llm ? await this.generateStepsWithLLM(perception) : defaultSteps,
+      risks: [],
+      reasoning: '任务分析完成'
+    }
+  }
+  
+  private async generateStepsWithLLM(perception: any): Promise<any[]> {
+    if (!this.llm) return []
     const prompt = `
       任务分析：
       - 目标：${perception.task.goal}
@@ -280,25 +446,13 @@ export class PlannerAgent extends BaseAgent {
       - 可用工具：${perception.availableTools.join(', ')}
       - 当前环境：${JSON.stringify(perception.environment)}
       
-      请分析：
-      1. 任务类型是什么？
-      2. 关键步骤有哪些？
-      3. 潜在风险是什么？
-      4. 预计需要多少步？
+      请分析并生成执行步骤。
     `
-    
     const analysis = await this.llm.generate(prompt)
-    
-    return {
-      taskType: this.extractTaskType(perception.task),
-      complexity: this.calculateComplexity(perception.task),
-      steps: analysis.steps,
-      risks: analysis.risks,
-      reasoning: analysis.content
-    }
+    return analysis.steps || []
   }
   
-  protected async decide(analysis: any, context: AgentContext): Promise<any> {
+  protected async decide(analysis: any, _context: AgentContext): Promise<any> {
     const plan: TaskPlan = {
       steps: analysis.steps.map((step: any, index: number) => ({
         id: `step_${index}`,
@@ -308,22 +462,25 @@ export class PlannerAgent extends BaseAgent {
         dependencies: step.dependencies || []
       })),
       totalSteps: analysis.steps.length,
-      estimatedTime: analysis.steps.length * 5000, // 每步 5 秒估算
+      estimatedTime: analysis.steps.length * 5000,
       riskLevel: analysis.risks.length > 0 ? 'medium' : 'low'
     }
     
     return plan
   }
   
-  protected async evaluateConfidence(decision: any, context: AgentContext): Promise<number> {
-    // 基于历史成功率评估置信度
-    const similarTasks = await this.memory.searchSimilar(context.task)
-    const successRate = similarTasks.filter(t => t.success).length / similarTasks.length
-    
-    return 0.5 + successRate * 0.5 // 基础 0.5 + 历史成功率权重
+  protected async evaluateConfidence(_decision: any, _context: AgentContext): Promise<number> {
+    if (this.memory) {
+      const similarTasks = await this.memory.searchSimilar({})
+      const successRate = similarTasks.length > 0 
+        ? similarTasks.filter((t: any) => t.success).length / similarTasks.length
+        : 0
+      return 0.5 + successRate * 0.5
+    }
+    return 0.7
   }
   
-  protected async prepareAction(thought: Thought, context: AgentContext): Promise<Action> {
+  protected async prepareAction(thought: Thought, _context: AgentContext): Promise<Action> {
     return {
       id: uuid(),
       type: ActionType.NAVIGATE,
@@ -333,8 +490,7 @@ export class PlannerAgent extends BaseAgent {
     }
   }
   
-  protected async executeAction(action: Action, context: AgentContext): Promise<ActionResult> {
-    // 规划者不直接执行，返回计划
+  protected async executeAction(action: Action, _context: AgentContext): Promise<ActionResult> {
     return {
       success: true,
       data: action.payload
@@ -382,7 +538,7 @@ export class ExecutorAgent extends BaseAgent {
     }
   }
   
-  protected async analyze(perception: any, context: AgentContext): Promise<any> {
+  protected async analyze(perception: any, _context: AgentContext): Promise<any> {
     const step = perception.currentStep
     
     return {
@@ -393,16 +549,15 @@ export class ExecutorAgent extends BaseAgent {
     }
   }
   
-  protected async decide(analysis: any, context: AgentContext): Promise<any> {
+  protected async decide(analysis: any, _context: AgentContext): Promise<any> {
     return {
       action: analysis.stepType,
-      parameters: this.extractParameters(analysis, context),
+      parameters: analysis,
       sequence: this.buildActionSequence(analysis)
     }
   }
   
-  protected async evaluateConfidence(decision: any, context: AgentContext): Promise<number> {
-    // 基于工具可用性评估
+  protected async evaluateConfidence(_decision: any, context: AgentContext): Promise<number> {
     const availableTools = context.tools.map(t => t.name)
     const requiredTools = this.getRequiredTools(context.sharedMemory.get('current_step'))
     
@@ -410,7 +565,7 @@ export class ExecutorAgent extends BaseAgent {
     return hasAllTools ? 0.9 : 0.5
   }
   
-  protected async prepareAction(thought: Thought, context: AgentContext): Promise<Action> {
+  protected async prepareAction(thought: Thought, _context: AgentContext): Promise<Action> {
     return {
       id: uuid(),
       type: this.mapToActionType(thought.content.action),
@@ -421,7 +576,13 @@ export class ExecutorAgent extends BaseAgent {
   }
   
   protected async executeAction(action: Action, context: AgentContext): Promise<ActionResult> {
-    // 使用 Bridge 服务执行实际动作
+    if (!context.bridge) {
+      return {
+        success: false,
+        error: 'Bridge service not available'
+      }
+    }
+    
     const bridge = context.bridge
     
     switch (action.type) {
@@ -461,8 +622,7 @@ export class ExecutorAgent extends BaseAgent {
     return mapping[type] || ActionType.WAIT
   }
   
-  private buildActionSequence(analysis: any): Action[] {
-    // 构建动作序列
+  private buildActionSequence(_analysis: any): Action[] {
     return []
   }
 }
@@ -483,32 +643,38 @@ export class ReviewerAgent extends BaseAgent {
     }
   }
   
-  protected async analyze(perception: any, context: AgentContext): Promise<any> {
+  protected async analyze(perception: any, _context: AgentContext): Promise<any> {
+    const quality = this.calculateQuality(perception.results)
+    const deviation = perception.plan ? this.calculateDeviation(perception.plan, perception.executedSteps) : 0
+    const llmResult = this.llm ? await this.generateReviewWithLLM(perception) : { risks: [], suggestions: [] }
+    
+    return {
+      quality,
+      deviation,
+      risks: llmResult.risks,
+      suggestions: llmResult.suggestions
+    }
+  }
+  
+  private async generateReviewWithLLM(perception: any): Promise<{ risks: any[], suggestions: any[] }> {
+    if (!this.llm) return { risks: [], suggestions: [] }
     const prompt = `
       审查任务执行：
       - 计划步骤数：${perception.plan.totalSteps}
       - 已执行步骤：${perception.executedSteps.length}
-      - 成功次数：${perception.results.filter(r => r.success).length}
-      - 失败次数：${perception.results.filter(r => !r.success).length}
+      - 成功次数：${perception.results.filter((r: any) => r.success).length}
+      - 失败次数：${perception.results.filter((r: any) => !r.success).length}
       
-      请评估：
-      1. 执行质量如何？
-      2. 是否偏离原计划？
-      3. 存在哪些风险？
-      4. 是否需要调整策略？
+      请评估并返回风险和建议。
     `
-    
     const review = await this.llm.generate(prompt)
-    
     return {
-      quality: this.calculateQuality(perception.results),
-      deviation: this.calculateDeviation(perception.plan, perception.executedSteps),
-      risks: review.risks,
-      suggestions: review.suggestions
+      risks: review.risks || [],
+      suggestions: review.suggestions || []
     }
   }
   
-  protected async decide(analysis: any, context: AgentContext): Promise<any> {
+  protected async decide(analysis: any, _context: AgentContext): Promise<any> {
     return {
       passed: analysis.quality >= 0.7 && analysis.deviation < 0.3,
       quality: analysis.quality,
@@ -517,13 +683,12 @@ export class ReviewerAgent extends BaseAgent {
     }
   }
   
-  protected async evaluateConfidence(decision: any, context: AgentContext): Promise<number> {
-    // 基于数据完整性评估
+  protected async evaluateConfidence(_decision: any, context: AgentContext): Promise<number> {
     const hasEnoughData = context.history.getActions().length > 0
     return hasEnoughData ? 0.8 : 0.6
   }
   
-  protected async prepareAction(thought: Thought, context: AgentContext): Promise<Action> {
+  protected async prepareAction(thought: Thought, _context: AgentContext): Promise<Action> {
     return {
       id: uuid(),
       type: ActionType.CONDITIONAL,
@@ -533,8 +698,7 @@ export class ReviewerAgent extends BaseAgent {
     }
   }
   
-  protected async executeAction(action: Action, context: AgentContext): Promise<ActionResult> {
-    // 审查者不执行实际动作，只返回审查结果
+  protected async executeAction(action: Action, _context: AgentContext): Promise<ActionResult> {
     return {
       success: action.payload.passed,
       data: action.payload
@@ -558,6 +722,64 @@ export class ReviewerAgent extends BaseAgent {
   }
 }
 
+/**
+ * 协调者 Agent
+ */
+export class CoordinatorAgent extends BaseAgent {
+  constructor(id: string) {
+    super(id, AgentRole.COORDINATOR)
+  }
+  
+  protected async perceive(_context: AgentContext): Promise<any> {
+    return {
+      task: {},
+      history: [],
+      currentState: {}
+    }
+  }
+  
+  protected async analyze(perception: any, _context: AgentContext): Promise<any> {
+    return {
+      taskProgress: perception.history.length,
+      state: perception.currentState,
+      reasoning: 'Coordinator analysis'
+    }
+  }
+  
+  protected async decide(_analysis: any, _context: AgentContext): Promise<any> {
+    return {
+      continue: true,
+      nextAgent: AgentRole.EXECUTOR,
+      reasoning: 'Continue execution'
+    }
+  }
+  
+  protected async evaluateConfidence(_decision: any, _context: AgentContext): Promise<number> {
+    return 0.8
+  }
+  
+  protected async prepareAction(thought: Thought, _context: AgentContext): Promise<Action> {
+    return {
+      id: uuid(),
+      type: ActionType.WAIT,
+      payload: thought.content,
+      timestamp: Date.now(),
+      agentId: this.id
+    }
+  }
+  
+  protected async executeAction(action: Action, _context: AgentContext): Promise<ActionResult> {
+    return {
+      success: true,
+      data: action.payload
+    }
+  }
+  
+  protected getThoughtType(): Thought['type'] {
+    return 'action'
+  }
+}
+
 // ==================== 协作编排器 ====================
 
 /**
@@ -565,11 +787,8 @@ export class ReviewerAgent extends BaseAgent {
  */
 export class AgentOrchestrator {
   private agents: Map<AgentRole, BaseAgent> = new Map()
-  private coordinator: CoordinatorAgent
   
-  constructor() {
-    this.coordinator = new CoordinatorAgent('coordinator_001')
-  }
+  constructor() {}
   
   /**
    * 注册 Agent
@@ -591,28 +810,23 @@ export class AgentOrchestrator {
       
       // 2. 审查计划
       const reviewer = this.agents.get(AgentRole.REVIEWER)!
-      const planReview = await reviewer.think({ ...context, plan })
+      context.sharedMemory.set('current_plan', plan.content)
+      const planReview = await reviewer.think(context)
       
       if (!planReview.content.passed) {
-        // 计划未通过，重新规划
         context.sharedMemory.set('plan_rejected', true)
         return this.collaborate(task)
       }
       
-      // 3. 存储计划
-      context.sharedMemory.set('current_plan', plan.content)
-      
-      // 4. 执行阶段
+      // 3. 执行阶段
       const executor = this.agents.get(AgentRole.EXECUTOR)!
       
       for (const step of plan.content.steps) {
         context.sharedMemory.set('current_step', step)
         
-        // 执行步骤
         const result = await executor.act(await executor.think(context), context)
         context.recordAction({ id: uuid(), type: ActionType.WAIT, payload: {}, timestamp: Date.now(), agentId: executor.id }, result)
         
-        // 实时审查
         if (result.success) {
           const stepReview = await reviewer.think(context)
           if (!stepReview.content.passed) {
@@ -621,7 +835,7 @@ export class AgentOrchestrator {
         }
       }
       
-      // 5. 学习总结
+      // 4. 学习总结
       const learner = this.agents.get(AgentRole.LEARNER)
       if (learner) {
         await learner.learn({ success: true }, context)
@@ -634,16 +848,17 @@ export class AgentOrchestrator {
         duration: context.history.getDuration()
       }
     } catch (error) {
-      // 失败时触发学习
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      
       const learner = this.agents.get(AgentRole.LEARNER)
       if (learner) {
-        await learner.learn({ success: false, error: error.message }, context)
+        await learner.learn({ success: false, error: errorMessage }, context)
       }
       
       return {
         taskId: context.taskId,
         success: false,
-        error: error.message,
+        error: errorMessage,
         steps: context.history.getActions().length
       }
     }

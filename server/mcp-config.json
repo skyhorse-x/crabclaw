@@ -4,7 +4,9 @@
       "command": "npx",
       "args": [
         "-y",
-        "@modelcontextprotocol/server-filesystem"
+        "@modelcontextprotocol/server-filesystem",
+        "/Users/472733389qq.com/Desktop",
+        "/Users/472733389qq.com/Desktop/project/crabclaw"
       ],
       "env": {}
     },

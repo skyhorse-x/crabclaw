@@ -7,6 +7,8 @@ import { logger } from '../services/logger.service'
 import { createHttpServer } from './http'
 import { bootstrap, gracefulShutdown } from './bootstrap'
 import { handleApiRequest } from '../api/routes'
+import fs from 'fs'
+import path from 'path'
 
 const isDev = process.env.NODE_ENV !== 'production'
 
@@ -15,11 +17,8 @@ const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization'
 }
 
-if (isDev) {
-  CORS_HEADERS['Access-Control-Allow-Origin'] = '*'
-} else {
-  CORS_HEADERS['Access-Control-Allow-Origin'] = process.env.ALLOWED_ORIGIN || 'http://localhost:5173'
-}
+// 始终允许所有来源，打包后 Neutralino/Electron 从随机端口访问需要通配
+CORS_HEADERS['Access-Control-Allow-Origin'] = '*'
 
 function withCors(response: Response): Response {
   const headers = new Headers(response.headers)
@@ -133,7 +132,12 @@ export async function startServer() {
     logger.info('Server started successfully', {
       url: `http://localhost:${config.settings.backendPort}`
     })
-    console.log(`Desktop Agent Studio running at http://localhost:${config.settings.backendPort}`) // 保留这个用于启动提示
+    console.log(`Desktop Agent Studio running at http://localhost:${config.settings.backendPort}`)
+
+    // 写入端口文件供 dev.mjs 脚本使用
+    const portFile = path.join(process.cwd(), 'server', '.port')
+    fs.writeFileSync(portFile, String(config.settings.backendPort), 'utf-8')
+    console.log(`[dev] Port file written: ${portFile}`)
   } catch (error) {
     serverStarted = false
     logger.error('Failed to start server', error)

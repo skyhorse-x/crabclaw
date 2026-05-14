@@ -213,6 +213,7 @@ export function useWebSocket() {
       model?: string
       taskId?: string
       selectedSkillId?: string
+      selectedSkillIds?: string[]
       executionMode?: string
       promptInstruction?: string
       allowedMcpServers?: string[]

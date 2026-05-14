@@ -15,6 +15,8 @@ import { handleAgentRoute } from '../routes/agent.routes'
 import { handlePipelineRoute } from '../routes/pipeline.routes'
 import { handleRemoteControlRoute } from '../routes/remote-control.routes'
 import { handleScheduledTasksRoute } from '../routes/scheduled-tasks.routes'
+import { handleFileEditorRoute } from '../routes/file-editor.routes'
+import { getPluginRouteHandlers } from '../plugins/plugin-loader'
 
 /**
  * 路由处理器类型
@@ -23,7 +25,6 @@ export type RouteHandler = (pathname: string, request: Request) => Promise<Respo
 
 /**
  * 按前缀分组的路由处理器
- * 避免遍历所有处理器，提升性能
  */
 const prefixRouteMap: Map<string, RouteHandler> = new Map([
   ['/health', handleHealthCheck],
@@ -41,7 +42,8 @@ const prefixRouteMap: Map<string, RouteHandler> = new Map([
   ['/api/agents', handleAgentRoute],
   ['/api/pipelines', handlePipelineRoute],
   ['/api/remote-control', handleRemoteControlRoute],
-  ['/api/scheduled-tasks', handleScheduledTasksRoute]
+  ['/api/scheduled-tasks', handleScheduledTasksRoute],
+  ['/api/file', handleFileEditorRoute]
 ])
 
 /**
@@ -57,5 +59,16 @@ export async function handleApiRequest(pathname: string, request: Request): Prom
       }
     }
   }
+
+  const pluginHandlers = getPluginRouteHandlers()
+  for (const [prefix, handler] of pluginHandlers) {
+    if (pathname.startsWith(prefix)) {
+      const response = await handler(pathname, request)
+      if (response) {
+        return response
+      }
+    }
+  }
+
   return null
 }
