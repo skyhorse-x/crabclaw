@@ -5451,7 +5451,7 @@ async function addCustomAskAi() {
       ElMessage.error(String(data?.error || '创建失败'))
       return
     }
-    await loadCustomAskAiList()
+    await Promise.all([loadCustomAskAiList(), loadAgentList()])
     selectedCustomAskAiId.value = String(data?.id || selectedCustomAskAiId.value)
     ElMessage.success(t('customAiAdded'))
   } catch (error) {
@@ -5470,7 +5470,7 @@ async function removeCustomAskAi(id: string) {
       ElMessage.error(String(data?.error || '删除失败'))
       return
     }
-    await loadCustomAskAiList()
+    await Promise.all([loadCustomAskAiList(), loadAgentList()])
     ElMessage.success(t('customAiRemoved'))
   } catch (error) {
     console.error('删除代理失败:', error)
@@ -5800,7 +5800,7 @@ onMounted(async () => {
   ])
   initProgress.value = 60
 
-  await loadCustomAskAiList()
+  await Promise.all([loadCustomAskAiList(), loadAgentList()])
   initProgress.value = 80
 
   await bootstrap()
