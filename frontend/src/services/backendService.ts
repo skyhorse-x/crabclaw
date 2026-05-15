@@ -1,82 +1,71 @@
-// 仅在打包后（非 dev 模式）通过 Neutralino.os.spawnProcess 启动后端二进制
+// 只在打包模式下通过 Neutralino 启动后端二进制
+// 开发模式（npm run dev / neu run）后端已由 dev 脚本启动，本模块不执行任何操作
 
-async function getAppDirectory(): Promise<string> {
-  const Neutralino = (window as any).Neutralino
-  if (Neutralino?.filesystem) {
-    try {
-      const execPath = await Neutralino.filesystem.getCurrentDir()
-      return execPath
-    } catch {}
-  }
-  return ''
-}
+const HEALTH_CHECK_PORTS = [17870, 17871]
 
-function getPlatformBinary(): string {
-  const ua = navigator.userAgent.toLowerCase()
-  const isWin = ua.includes('win')
-  const isMac = ua.includes('mac')
-  const arch = (navigator as any).userAgentData?.architecture || ''
-  const isArm = arch === 'arm' || ua.includes('arm')
-
-  if (isWin) return 'crabclaw-server.exe'
-  if (isMac) return isArm ? 'crabclaw-server' : 'crabclaw-server'
-  return 'crabclaw-server'
-}
-
-async function sleep(ms: number) {
-  return new Promise(r => setTimeout(r, ms))
-}
-
-export async function startBackend(): Promise<string> {
-  const Neutralino = (window as any).Neutralino
-  console.log('[Backend] Neutralino available:', !!Neutralino)
-  console.log('[Backend] Neutralino.os available:', !!Neutralino?.os)
-  console.log('[Backend] Neutralino.filesystem available:', !!Neutralino?.filesystem)
-
-  if (!Neutralino?.os || !Neutralino?.filesystem) {
-    console.warn('[Backend] Neutralino APIs not available, using default port')
-    return 'http://localhost:17870'
-  }
-
-  const appDir = await getAppDirectory()
-  console.log('[Backend] App directory:', appDir)
-
-  // 清理旧的 .port 文件
+async function tryHealthCheck(port: number): Promise<boolean> {
   try {
-    await Neutralino.filesystem.removeFile(`${appDir}/server/.port`)
-    console.log('[Backend] Removed old .port file')
-  } catch (e) {
-    console.log('[Backend] No old .port file to remove')
+    const res = await fetch(`http://127.0.0.1:${port}/api/health`)
+    if (!res.ok) return false
+    const data = await res.json()
+    return data?.ok === true
+  } catch {
+    return false
+  }
+}
+
+function getNeutralino(): any {
+  return (window as any).Neutralino
+}
+
+function getNlOs(): string {
+  return String((window as any).NL_OS || '').toLowerCase()
+}
+
+export async function ensureBackendRunning(): Promise<void> {
+  // 1. 检查后端是否已经在运行（开发模式 / 用户手动启动）
+  for (const port of HEALTH_CHECK_PORTS) {
+    if (await tryHealthCheck(port)) {
+      console.log(`[Backend] Already running on port ${port}`)
+      return
+    }
+  }
+  console.log('[Backend] No running backend found')
+
+  // 2. 没有 Neutralino → 浏览器开发模式，后端由 dev 脚本启动
+  const Neutralino = getNeutralino()
+  if (!Neutralino?.os) {
+    console.warn('[Backend] Neutralino not available — browser dev mode, skipping spawn')
+    return
   }
 
-  const binary = getPlatformBinary()
-  const binaryPath = `${appDir}/${binary}`
-  console.log('[Backend] Binary path:', binaryPath)
+  // 3. 打包模式：通过 Neutralino 启动二进制
+  // NL_CWD 是 Neutralino 进程的工作目录，与 crabclaw-server 同级
+  const nlCwd: string = (window as any).NL_CWD || ''
+  const nlOs = getNlOs()
+  const binaryName = nlOs === 'windows' ? 'crabclaw-server.exe' : 'crabclaw-server'
+  const binaryPath = nlCwd ? `${nlCwd}/${binaryName}` : binaryName
+
+  console.log('[Backend] Spawning binary:', binaryPath)
 
   try {
-    console.log('[Backend] Spawning process...')
     await Neutralino.os.spawnProcess(binaryPath)
-    console.log('[Backend] Process spawned successfully')
+    console.log('[Backend] Process spawned')
   } catch (e: any) {
     console.error('[Backend] Failed to spawn:', e?.message || e)
-    return 'http://localhost:17870'
+    return
   }
 
-  // 等待后端写入 .port 文件，最多 15 秒
-  for (let i = 0; i < 50; i++) {
-    await sleep(300)
-    try {
-      const content = await Neutralino.filesystem.readFile(`${appDir}/server/.port`)
-      const port = content.trim()
-      if (port && !isNaN(Number(port))) {
-        console.log('[Backend] Started on port:', port)
-        return `http://localhost:${port}`
+  // 4. 等待后端就绪（最多 15 秒）
+  for (let i = 0; i < 30; i++) {
+    await new Promise(r => setTimeout(r, 500))
+    for (const port of HEALTH_CHECK_PORTS) {
+      if (await tryHealthCheck(port)) {
+        console.log(`[Backend] Ready on port ${port} after ${(i + 1) * 500}ms`)
+        return
       }
-    } catch (e) {
-      if (i % 10 === 0) console.log('[Backend] Waiting for .port file...', i)
     }
   }
 
-  console.error('[Backend] Timed out waiting for .port file')
-  return 'http://localhost:17870'
+  console.warn('[Backend] Timed out waiting for backend to become ready')
 }

@@ -8,11 +8,13 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { readFile, access, mkdir } from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
-import { PATHS } from '../shared/constants'
+import { PATHS, HTTP } from '../shared/constants'
 import { logger } from '../services/logger.service'
 import type { McpServerConfig, McpTool, McpClient as McpClientType } from '../shared/types'
 
-const MCP_CONFIG_PATH = path.join(process.cwd(), "server", "mcp-config.json")
+const MCP_CONFIG_PATH = PATHS.MCP_CONFIG_PATH
+const MCP_CONNECT_TIMEOUT_MS = 30000
+const MCP_LIST_TOOLS_TIMEOUT_MS = 15000
 const mcpClients = new Map<string, McpClientType>()
 
 function hasChromeIsolationArgs(args: string[] = []): boolean {
@@ -71,7 +73,7 @@ async function buildFilesystemArgs(baseArgs: string[]): Promise<string[]> {
     path.join(home, 'Desktop'),
     path.join(home, 'Documents'),
     path.join(home, 'Downloads'),
-    '/tmp'
+    os.tmpdir()                 // 跨平台临时目录（macOS/Linux:/tmp, Windows:%TEMP%）
   ]
 
   const existing: string[] = []
@@ -91,6 +93,24 @@ async function buildFilesystemArgs(baseArgs: string[]): Promise<string[]> {
 }
 
 /**
+ * 带超时的 Promise.race 辅助函数
+ */
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, context: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const result = await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`MCP 操作超时: ${context} (>${timeoutMs}ms)`)), timeoutMs)
+      })
+    ])
+    return result
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+/**
  * 连接 MCP 服务器
  */
 async function connectMcpServer(serverId: string, config: McpServerConfig): Promise<McpClientType | null> {
@@ -99,12 +119,19 @@ async function connectMcpServer(serverId: string, config: McpServerConfig): Prom
     return mcpClients.get(serverId)!
   }
 
+  const connectedAt = Date.now()
+
   try {
     const mergedEnv = { ...process.env, ...config.env }
 
     const resolvedArgs = serverId === 'filesystem'
       ? await buildFilesystemArgs(Array.isArray(config.args) ? [...config.args] : [])
       : (Array.isArray(config.args) ? config.args : [])
+
+    logger.debug(`[MCP] Connecting to ${serverId}`, {
+      command: config.command,
+      argsCount: resolvedArgs.length
+    })
 
     const transport = new StdioClientTransport({
       command: config.command,
@@ -119,9 +146,42 @@ async function connectMcpServer(serverId: string, config: McpServerConfig): Prom
       capabilities: {}
     })
 
-    await client.connect(transport)
+    await withTimeout(
+      client.connect(transport),
+      MCP_CONNECT_TIMEOUT_MS,
+      `${serverId} connect`
+    )
 
-    const toolsResult = await client.listTools()
+    // 防止子进程退出后写入 stdin 产生 EPIPE 未处理错误导致进程崩溃
+    const childProcess = (transport as any)._process
+    if (childProcess) {
+      childProcess.stdin?.on('error', (err: any) => {
+        if (err?.code === 'EPIPE') return
+        logger.warn(`[MCP] stdin error for ${serverId}:`, err?.message)
+      })
+      childProcess.stdout?.on('error', (err: any) => {
+        if (err?.code === 'EPIPE') return
+        logger.warn(`[MCP] stdout error for ${serverId}:`, err?.message)
+      })
+      childProcess.stderr?.on('error', (err: any) => {
+        if (err?.code === 'EPIPE') return
+        logger.warn(`[MCP] stderr error for ${serverId}:`, err?.message)
+      })
+      childProcess.on('error', (err: any) => {
+        if (err?.code === 'EPIPE') return
+        logger.warn(`[MCP] process error for ${serverId}:`, err?.message)
+      })
+      childProcess.on('exit', (code: number | null) => {
+        logger.warn(`[MCP] Process ${serverId} exited with code ${code}`)
+        mcpClients.delete(serverId)
+      })
+    }
+
+    const toolsResult = await withTimeout(
+      client.listTools(),
+      MCP_LIST_TOOLS_TIMEOUT_MS,
+      `${serverId} listTools`
+    )
     const tools = toolsResult.tools || []
 
     const mcpClient: McpClientType = {
@@ -133,12 +193,15 @@ async function connectMcpServer(serverId: string, config: McpServerConfig): Prom
 
     mcpClients.set(serverId, mcpClient)
     logger.info(`[MCP] Connected to ${serverId}`, { 
-      tools: tools.map(t => t.name).join(", ") 
+      tools: tools.map(t => t.name).join(", "),
+      elapsedMs: Date.now() - connectedAt
     })
     
     return mcpClient
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error)
+    const elapsedMs = Date.now() - connectedAt
+    
     if (
       serverId === 'chrome-devtools' &&
       !hasChromeIsolationArgs(Array.isArray(config.args) ? config.args : []) &&
@@ -148,7 +211,11 @@ async function connectMcpServer(serverId: string, config: McpServerConfig): Prom
       return connectMcpServer(serverId, withChromeIsolation(config))
     }
 
-    logger.error(`[MCP] Failed to connect ${serverId}`, error)
+    logger.error(`[MCP] Failed to connect ${serverId}`, {
+      error: errorMessage,
+      elapsedMs,
+      command: config.command
+    })
     return null
   }
 }
@@ -159,9 +226,12 @@ async function connectMcpServer(serverId: string, config: McpServerConfig): Prom
 async function ensureMcpConnection(serverId: string): Promise<McpClientType | null> {
   const existing = mcpClients.get(serverId)
   if (existing?.connected) {
-    // 测试连接是否仍然有效
     try {
-      await existing.client.listTools()
+      await withTimeout(
+        existing.client.listTools(),
+        MCP_LIST_TOOLS_TIMEOUT_MS,
+        `${serverId} healthCheck`
+      )
       return existing
     } catch {
       logger.warn(`[MCP] Connection to ${serverId} lost, reconnecting...`)
@@ -255,12 +325,16 @@ export class McpService {
         delete finalArgs.mode
       }
 
-      const result = await mcpClient.client.callTool({
-        name: selectedToolName,
-        arguments: finalArgs
-      })
+      const rawResult = await withTimeout(
+        mcpClient.client.callTool({
+          name: selectedToolName,
+          arguments: finalArgs
+        }),
+        HTTP.MCP_TIMEOUT_MS,
+        `${serverId}/${selectedToolName} callTool`
+      ) as any
 
-      const content = result.content || []
+      const content = rawResult.content || []
       let output = ""
       
       for (const item of content) {
@@ -269,29 +343,7 @@ export class McpService {
         }
       }
 
-      // 格式化输出文本
-      if (output && typeof output === 'string') {
-        // 识别 vm_stat 输出并格式化
-        if (output.includes('Mach Virtual Memory Statistics')) {
-          const lines = output.split('\n').filter(line => line.trim())
-          output = lines.map(line => {
-            if (line.includes(':')) {
-              const [key, value] = line.split(':').map(s => s.trim())
-              return `${key}:\n  ${value}`
-            }
-            return line
-          }).join('\n\n')
-        } else {
-          // 通用格式化：将冒号分隔的内容格式化为多行
-          output = output.replace(/:\s*/g, ':\n  ')
-          // 将逗号分隔的内容格式化为多行
-          output = output.replace(/,\s*/g, ',\n  ')
-          // 移除多余的空行
-          output = output.replace(/\n\s*\n/g, '\n')
-        }
-      }
-
-      return { ok: true, result: output || result }
+      return { ok: true, result: output || rawResult }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
       logger.error(`[MCP] Tool call failed ${serverId}/${toolName}`, error)
@@ -341,15 +393,27 @@ export class McpService {
   async disconnectAll(): Promise<void> {
     logger.info('[MCP] Disconnecting all servers...')
     
+    const closePromises: Promise<void>[] = []
     for (const [serverId, mcpClient] of mcpClients) {
-      try {
-        await mcpClient.client.close()
-        logger.info(`[MCP] Disconnected ${serverId}`)
-      } catch (error) {
-        logger.error(`[MCP] Error disconnecting ${serverId}`, error)
-      }
+      closePromises.push(
+        (async () => {
+          try {
+            await withTimeout(
+              mcpClient.client.close(),
+              5000,
+              `${serverId} close`
+            )
+            logger.info(`[MCP] Disconnected ${serverId}`)
+          } catch (error) {
+            logger.warn(`[MCP] Error disconnecting ${serverId}`, {
+              error: error instanceof Error ? error.message : String(error)
+            })
+          }
+        })()
+      )
     }
     
+    await Promise.allSettled(closePromises)
     mcpClients.clear()
     logger.info('[MCP] All connections closed')
   }

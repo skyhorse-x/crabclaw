@@ -5,11 +5,11 @@ import { randomUUID } from 'crypto'
 import { logger } from './logger.service'
 
 try {
-  const wsLib = require('ws')
-  const { abortHandshake } = wsLib
+  const wsModule = await import('ws')
+  const abortHandshake = (wsModule as any).abortHandshake
   if (abortHandshake) {
     const originalAbortHandshake = abortHandshake
-    wsLib.abortHandshake = function(...args: any[]) {
+    ;(wsModule as any).abortHandshake = function(...args: any[]) {
       try {
         return originalAbortHandshake.apply(this, args)
       } catch (err: any) {

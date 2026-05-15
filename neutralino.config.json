@@ -24,7 +24,7 @@
       "projectPath": ".",
       "devCommand": "node scripts/dev.mjs",
       "devUrl": "http://localhost:5173",
-      "buildCommand": "bun build ./server/index.ts --compile  --outfile /dist/crabclaw/crabclaw-server",
+      "buildCommand": "npm run frontend:build",
       "patchFile": "/frontend/index.html",
       "waitTimeout": 30000
     }

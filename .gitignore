@@ -1,13 +1,15 @@
 node_modules
 node_modules/
 resources/
+dist/
 
 # 临时端口文件
 server/.port
 server/.frontend-port
 
-# 环境变量
+# 环境变量（所有目录下的 .env 文件）
 .env
+server/.env
 .env.local
 .env.development
 .env.development.local
@@ -21,7 +23,15 @@ server/logs/
 *.db
 *.db-shm
 *.db-wal
-data.db
+server/data.db
+server/data.db-shm
+server/data.db-wal
+
+# 过期的 PID 文件和无关数据文件
+*.pid
+php-server.pid
+stock_news.txt
+us_news.txt
 
 # IDE
 .vscode/
@@ -32,5 +42,9 @@ data.db
 
 # macOS
 .DS_Store
+
+# 工作目录
 workspace
-dist
+
+# 包管理器锁文件（统一使用 bun）
+package-lock.json

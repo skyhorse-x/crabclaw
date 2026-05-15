@@ -172,26 +172,25 @@ class BuiltinToolsService {
   }
 
   private async getMemoryInfo(): Promise<string> {
+    const totalMem = Math.round(os.totalmem() / 1024 / 1024 / 1024)
+    const freeMem = Math.round(os.freemem() / 1024 / 1024 / 1024)
+    const usedMem = totalMem - freeMem
+    const base = `Total: ${totalMem}GB, Used: ${usedMem}GB, Free: ${freeMem}GB`
+
     const platform = os.platform()
     try {
-      if (platform === 'win32') {
-        const { stdout } = await execAsync('systeminfo | findstr /C:"Physical Memory" /C:"Available Memory"')
-        return stdout.trim()
-      } else if (platform === 'darwin') {
+      if (platform === 'darwin') {
         const { stdout } = await execAsync('vm_stat')
-        const totalMem = Math.round(os.totalmem() / 1024 / 1024 / 1024)
-        const freeMem = Math.round(os.freemem() / 1024 / 1024 / 1024)
-        const usedMem = totalMem - freeMem
-        return `Total: ${totalMem}GB, Used: ${usedMem}GB, Free: ${freeMem}GB\n${stdout}`
-      } else {
+        return `${base}\n${stdout}`
+      } else if (platform === 'linux') {
         const { stdout } = await execAsync('free -m')
         return stdout
+      } else {
+        // Windows: os 模块已能提供足够信息，无需依赖 wmic/systeminfo
+        return base
       }
     } catch {
-      const totalMem = Math.round(os.totalmem() / 1024 / 1024 / 1024)
-      const freeMem = Math.round(os.freemem() / 1024 / 1024 / 1024)
-      const usedMem = totalMem - freeMem
-      return `Total: ${totalMem}GB, Used: ${usedMem}GB, Free: ${freeMem}GB (fallback)`
+      return `${base} (fallback)`
     }
   }
 
@@ -199,7 +198,10 @@ class BuiltinToolsService {
     const platform = os.platform()
     try {
       if (platform === 'win32') {
-        const { stdout } = await execAsync('wmic logicaldisk get size,freespace,caption')
+        // wmic 在 Windows 11 21H2+ 已弃用，改用 PowerShell
+        const { stdout } = await execAsync(
+          'powershell -NoProfile -Command "Get-PSDrive -PSProvider FileSystem | Select-Object Name,Used,Free | Format-Table -AutoSize"'
+        )
         return stdout
       } else {
         const { stdout } = await execAsync('df -h .')

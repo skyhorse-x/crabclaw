@@ -3,9 +3,9 @@
     "backendPort": 17870,
     "theme": "light",
     "language": "zh-CN",
-    "activeModelId": "model-1774600213090",
-    "userDataDir": "/Users/472733389qq.com/Desktop/project/crabclaw/server",
-    "skillsDir": "/Users/472733389qq.com/Desktop/学习项目/crabclaw/server/data/skills"
+    "activeModelId": "model-1778661568804",
+    "userDataDir": "/Users/472733389qq.com/Desktop/project/crabclaw/dist/crabclaw/server",
+    "skillsDir": "/Users/472733389qq.com/Desktop/project/crabclaw/server/data/skills"
   },
   "models": [
     {
@@ -57,6 +57,31 @@
       "isActive": true,
       "createdAt": "2026-05-13T08:39:28.804Z",
       "updatedAt": "2026-05-13T08:42:57.639Z"
+    },
+    {
+      "id": "model-1778824337503",
+      "name": "GLM4.6v",
+      "provider": "zhipu",
+      "apiKeyEncrypted": "5385ffff2bee7b6a6151bbe1836fe811:b4de4c0e94769dcc86f41ae4b7a925b4b56158ddff29f61fd5b02417b383fdf24640cbd638481126d21e083359d623e23de8a571409f91ae2e7b4566cfdc958a",
+      "modelName": "glm-4.6v",
+      "apiBaseUrl": "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+      "isBuiltIn": false,
+      "isActive": true,
+      "createdAt": "2026-05-15T05:52:17.503Z",
+      "updatedAt": "2026-05-15T05:52:17.503Z"
+    },
+    {
+      "id": "model-1778827621165",
+      "name": "qwen2.5",
+      "provider": "custom",
+      "customProviderName": "阿里巴巴",
+      "apiKeyEncrypted": "e465abf7c61adc4201f3e20ca4f13865:260ae527150a078ebdaab903fe3637de0cbcc44da2a542e3c024bafaa3c41098c4414c97cb7c2d4ebed6db07321b0d7b",
+      "modelName": "qwen2.5:0.5b",
+      "apiBaseUrl": "http://103.127.124.38:99/ollama.php",
+      "isBuiltIn": false,
+      "isActive": true,
+      "createdAt": "2026-05-15T06:47:01.165Z",
+      "updatedAt": "2026-05-15T07:12:18.934Z"
     }
   ],
   "skills": [

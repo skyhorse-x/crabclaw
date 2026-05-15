@@ -13,6 +13,21 @@
       </div>
     </div>
 
+    <!-- 后端离线提示 -->
+    <div v-if="!backendOnline && !isInitializing" class="backend-offline-banner">
+      <el-alert
+        title="后端服务未连接"
+        type="error"
+        :description="'请确认后端服务已启动，或点击重新连接'"
+        show-icon
+        :closable="false"
+      >
+        <template #default>
+          <el-button size="small" @click="retryBackendConnection">重新连接</el-button>
+        </template>
+      </el-alert>
+    </div>
+
     <!-- 三列布局 -->
     <div class="three-column-layout">
       <!-- 第一列：一级导航 -->
@@ -75,7 +90,7 @@
                 <el-icon v-if="conv.id.startsWith('remote-')" class="remote-icon"><Cellphone /></el-icon>
                 <el-icon v-else><ChatLineRound /></el-icon>
                 <span class="history-title">{{ conv.title }}</span>
-                <el-button class="context-menu-trigger" :icon="More" size="mini" @click.stop="showConversationMenu($event, conv)"></el-button>
+                <el-icon class="context-menu-trigger" @click.stop="showConversationMenu($event, conv)"><More /></el-icon>
               </div>
               <div v-if="getAgentConversations(agent.id).length === 0" class="agent-history-empty">
                 {{ t('noConversation') }}
@@ -2899,7 +2914,13 @@ const modelSelectorVisible = ref(false)
 
 function selectChatModel(modelId: string) {
   selectedChatModel.value = modelId
+  config.value.settings.activeModelId = modelId
   modelSelectorVisible.value = false
+  // 静默同步到后端
+  request("/api/config", {
+    method: "PUT",
+    body: JSON.stringify(config.value)
+  }).catch(() => {})
 }
 
 function openModelFromSelector() {
@@ -4354,10 +4375,10 @@ function pushMessage(role: string, text: string, meta?: any, options: any = {}) 
 
 function serializeConversationsForSave() {
   return conversations.value
-    .filter(conv => !conv.id.startsWith('remote-'))  // remote 对话不持久化，避免覆盖历史
     .map((conv) => ({
       id: conv.id,
       title: conv.title,
+      agentId: conv.agentId,
       messages: conv.messages.map((msg) => ({
         role: msg.role,
         text: msg.text,
@@ -4404,7 +4425,7 @@ async function loadChatHistory() {
     const storedConversations = response?.data?.conversations
 
     if (Array.isArray(storedConversations) && storedConversations.length > 0) {
-      conversations.value = storedConversations.filter((c: any) => !String(c?.id || '').startsWith('remote-')).map((conversation: any) => ({
+      conversations.value = storedConversations.map((conversation: any) => ({
         ...conversation,
         messages: Array.isArray(conversation?.messages)
           ? conversation.messages.map((message: any) => {
@@ -4671,6 +4692,13 @@ async function bootstrap() {
 
 async function checkBackend() {
   backendOnline.value = await detectBackend()
+}
+
+async function retryBackendConnection() {
+  backendOnline.value = await detectBackend()
+  if (backendOnline.value) {
+    await loadConfig()
+  }
 }
 
 async function loadConfig() {
@@ -5743,37 +5771,15 @@ async function checkBackendAlive(): Promise<boolean> {
 
 async function spawnBackendIfNeeded() {
   const Neutralino = (window as any).Neutralino
-  if (!Neutralino) return  // 开发环境，后端已由 npm run dev 启动
+  if (!Neutralino) return
 
   try {
     if (await checkBackendAlive()) return
 
-    // 必须先 init 才能使用 Neutralino API
-    await new Promise<void>((resolve) => {
-      Neutralino.init()
-      window.addEventListener('ready', () => resolve(), { once: true })
-      // 最多等 2 秒
-      setTimeout(resolve, 2000)
-    })
+    await Neutralino.init()
 
-    // NL_PATH 由 Neutralino 运行时注入，指向 app 所在目录（与主程序同级）
-    const nlPath: string = (window as any).NL_PATH || ''
-    const serverBin = nlPath ? `${nlPath}/crabclaw-server` : './crabclaw-server'
-
-    console.log('[Backend] NL_PATH:', nlPath, '-> binary:', serverBin)
-    const result = await Neutralino.os.execCommand(
-      `chmod +x "${serverBin}" 2>/dev/null; nohup "${serverBin}" > /tmp/crabclaw-server.log 2>&1 &`
-    ).catch((e: any) => { console.warn('[Backend] execCommand failed:', e); return null })
-    console.log('[Backend] execCommand result:', result)
-
-    // 等待后端启动（最多 10 秒）
-    for (let i = 0; i < 20; i++) {
-      await new Promise(r => setTimeout(r, 500))
-      if (await checkBackendAlive()) {
-        console.log('[Backend] Server ready after', (i + 1) * 500, 'ms')
-        break
-      }
-    }
+    const { ensureBackendRunning } = await import('./services/backendService')
+    await ensureBackendRunning()
   } catch (e) {
     console.warn('[Backend] spawnBackendIfNeeded failed:', e)
   }
@@ -5872,8 +5878,13 @@ onMounted(async () => {
     scheduleSaveChatHistory()
   })
 
-  backendPollTimer = setInterval(() => {
-    void checkBackend()
+  backendPollTimer = setInterval(async () => {
+    const wasOnline = backendOnline.value
+    await checkBackend()
+    if (!wasOnline && backendOnline.value) {
+      console.log('[App] Backend reconnected, reloading config')
+      await loadConfig()
+    }
     void loadState()
   }, 5000) as unknown as ReturnType<typeof setInterval> | null
   window.addEventListener('pointerdown', handleGlobalPointerDown)
@@ -6143,6 +6154,18 @@ function deleteModel(modelId: string) {
 </script>
 
 <style scoped>
+/* 后端离线提示 */
+.backend-offline-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 9999;
+}
+.backend-offline-banner .el-alert {
+  border-radius: 0;
+}
+
 /* 三列布局 */
 .three-column-layout {
   display: flex;
@@ -6198,7 +6221,6 @@ function deleteModel(modelId: string) {
   width: 32px;
   height: 32px;
   flex-shrink: 0;
-  background: linear-gradient(135deg, #4a90d9, #357abd);
   border-radius: 8px;
   display: flex;
   align-items: center;
@@ -6248,8 +6270,7 @@ function deleteModel(modelId: string) {
 }
 
 .nav-sidebar .nav-item.active {
-  background: #e8f0fe;
-  color: #4a90d9;
+  color: #475569;
 }
 
 /* 第二列：代理侧边栏 */
@@ -6301,7 +6322,7 @@ function deleteModel(modelId: string) {
 }
 
 .agent-item.active .agent-header {
-  background: #e8f0fe;
+  background: #f1f5f9;
 }
 
 .agent-icon {
@@ -6355,8 +6376,8 @@ function deleteModel(modelId: string) {
 }
 
 .agent-history-item.active {
-  background: #e8f0fe;
-  color: #4a90d9;
+  background: #f1f5f9;
+  color: #475569;
 }
 
 .agent-history-item.remote-control {
@@ -6368,6 +6389,9 @@ function deleteModel(modelId: string) {
   margin-left: auto;
   opacity: 0;
   transition: opacity 0.2s;
+  font-size: 16px;
+  color: #94a3b8;
+  cursor: pointer;
 }
 
 .agent-history-item:hover .context-menu-trigger {

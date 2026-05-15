@@ -3,10 +3,29 @@
  */
 
 import * as path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const CWD = process.cwd()
-const PROJECT_ROOT = path.basename(CWD) === 'server' ? path.dirname(CWD) : CWD
-const SERVER_ROOT = path.join(PROJECT_ROOT, 'server')
+// 路径解析：兼容源码模式和 Bun 编译二进制模式
+// Bun 编译模式下 import.meta.url 解析到 /$bunfs/ 虚拟文件系统，需回退到 process.execPath
+function resolveRoots(): { SERVER_ROOT: string; PROJECT_ROOT: string } {
+  const metaUrl = import.meta.url
+  // Bun 编译模式下 import.meta.url 包含 /$bunfs/ (虚拟文件系统)
+  const isBunCompiled = metaUrl.includes('/$bunfs/')
+  if (!isBunCompiled) {
+    // 源码模式：本文件在 server/shared/constants.ts，向上两级是项目根目录
+    const __filename = fileURLToPath(metaUrl)
+    const __dirname = path.dirname(__filename)
+    const SERVER_ROOT = path.resolve(__dirname, '..')
+    return { SERVER_ROOT, PROJECT_ROOT: path.resolve(SERVER_ROOT, '..') }
+  }
+  // 编译二进制模式：二进制在 dist/crabclaw/crabclaw-server
+  // process.execPath 指向实际的二进制文件，向上两级是项目根目录
+  const execDir = path.dirname(process.execPath)
+  const PROJECT_ROOT = path.resolve(execDir, '..', '..')
+  return { SERVER_ROOT: path.join(PROJECT_ROOT, 'server'), PROJECT_ROOT }
+}
+
+const { SERVER_ROOT, PROJECT_ROOT } = resolveRoots()
 
 /**
  * 路径配置

@@ -1,7 +1,7 @@
 import { readFile, writeFile, stat } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
-import { execSync } from 'node:child_process'
+import open from 'open'
 import { logger } from '../services/logger.service'
 
 const ALLOWED_ROOTS = [
@@ -108,14 +108,7 @@ export async function handleFileEditorRoute(pathname: string, request: Request):
         })
       }
       const resolved = path.resolve(dirPath)
-      const platform = os.platform()
-      if (platform === 'darwin') {
-        execSync(`open "${resolved}"`, { timeout: 5000 })
-      } else if (platform === 'win32') {
-        execSync(`explorer "${resolved}"`, { timeout: 5000 })
-      } else {
-        execSync(`xdg-open "${resolved}"`, { timeout: 5000 })
-      }
+      await open(resolved)
       return new Response(JSON.stringify({ ok: true, message: '已打开目录' }), {
         status: 200, headers: { 'content-type': 'application/json' }
       })

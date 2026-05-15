@@ -215,14 +215,29 @@ export class ConfigValidator {
         userDataDir: config.settings.userDataDir ? String(config.settings.userDataDir) : undefined,
         skillsDir: config.settings.skillsDir ? String(config.settings.skillsDir) : PATHS.SKILLS_DIR
       },
-      models: Array.isArray(config.models) 
-        ? config.models.map((model: any, i: number) => this.validateModel(model, i))
+      models: Array.isArray(config.models)
+        ? config.models.reduce((acc: ModelConfig[], model: any, i: number) => {
+            try { acc.push(this.validateModel(model, i)) } catch (e) {
+              logger.warn(`跳过无效模型 #${i}`, { error: (e as Error).message, model })
+            }
+            return acc
+          }, [])
         : DEFAULT_CONFIG.models,
-      skills: Array.isArray(config.skills) 
-        ? config.skills.map((skill: any, i: number) => this.validateSkill(skill, i))
+      skills: Array.isArray(config.skills)
+        ? config.skills.reduce((acc: SkillConfig[], skill: any, i: number) => {
+            try { acc.push(this.validateSkill(skill, i)) } catch (e) {
+              logger.warn(`跳过无效技能 #${i}`, { error: (e as Error).message, skillId: skill?.id })
+            }
+            return acc
+          }, [])
         : [],
       tasks: Array.isArray(config.tasks)
-        ? config.tasks.map((task: any, i: number) => this.validateTask(task, i))
+        ? config.tasks.reduce((acc: TaskConfig[], task: any, i: number) => {
+            try { acc.push(this.validateTask(task, i)) } catch (e) {
+              logger.warn(`跳过无效任务 #${i}`, { error: (e as Error).message, taskId: task?.id })
+            }
+            return acc
+          }, [])
         : []
     }
 
@@ -239,6 +254,8 @@ export class ConfigService {
   private cache: AppConfig | null = null
   private cacheTimestamp: number = 0
   private readonly CACHE_TTL = 5000 // 5 秒缓存
+  private saveLock = false
+  private saveQueue: Array<{ config: AppConfig; resolve: (value: AppConfig) => void; reject: (error: unknown) => void }> = []
 
   constructor(options: {
     configPath?: string
@@ -326,9 +343,31 @@ export class ConfigService {
   }
 
   /**
-   * 保存配置
+   * 保存配置（带互斥锁，防止并发写入丢失数据）
    */
   async saveConfig(config: AppConfig): Promise<AppConfig> {
+    if (this.saveLock) {
+      return new Promise((resolve, reject) => {
+        this.saveQueue.push({ config, resolve, reject })
+      })
+    }
+
+    this.saveLock = true
+    try {
+      return await this.doSaveConfig(config)
+    } finally {
+      this.saveLock = false
+      this.processSaveQueue()
+    }
+  }
+
+  private processSaveQueue(): void {
+    if (this.saveQueue.length === 0) return
+    const next = this.saveQueue.shift()!
+    this.saveConfig(next.config).then(next.resolve).catch(next.reject)
+  }
+
+  private async doSaveConfig(config: AppConfig): Promise<AppConfig> {
     logger.info('Saving config')
     
     try {

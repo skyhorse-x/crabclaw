@@ -109,7 +109,11 @@ export class ActionService {
 
       const timer = setTimeout(() => {
         timedOut = true
-        child.kill('SIGTERM')
+        if (process.platform === 'win32') {
+          child.kill()
+        } else {
+          child.kill('SIGTERM')
+        }
         logger.error('[Shell] Command timeout', { command, timeout })
         resolve({ ok: false, error: `Command timeout after ${timeout}ms` })
       }, timeout)

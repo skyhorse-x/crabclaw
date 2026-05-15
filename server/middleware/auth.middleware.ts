@@ -3,6 +3,7 @@
  * 提供 API 请求的身份验证和授权
  */
 
+import { createHash } from 'crypto'
 import { logger } from '../services/logger.service'
 import { getEncryptionService } from '../services/encryption.service'
 
@@ -233,8 +234,7 @@ export class AuthService {
    * 哈希 Token ID
    */
   private hashTokenId(data: string): string {
-    const crypto = require('crypto')
-    return crypto.createHash('sha256').update(data).digest('hex')
+    return createHash('sha256').update(data).digest('hex')
   }
 
   /**

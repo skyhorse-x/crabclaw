@@ -12,7 +12,7 @@ import path from 'node:path'
 import { PATHS } from '../shared/constants'
 
 const MCP_CONFIG_PATH = PATHS.MCP_CONFIG_PATH
-const PACKAGE_JSON_PATH = path.join(process.cwd(), 'package.json')
+const PACKAGE_JSON_PATH = path.join(path.dirname(path.dirname(PATHS.MCP_CONFIG_PATH)), 'package.json')
 
 const PACKAGE_ID_TO_CONFIG_KEY: Record<string, string> = {
   '@modelcontextprotocol/server-filesystem': 'filesystem',

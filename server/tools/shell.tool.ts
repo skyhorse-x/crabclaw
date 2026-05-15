@@ -44,8 +44,9 @@ export class ShellTool implements ITool {
     return new Promise((resolve) => {
       logger.debug('[ShellTool] Executing command', { command, cwd, timeout })
 
+      const shell = process.platform === 'win32' ? 'powershell.exe' : '/bin/sh'
       const child = spawn(command, {
-        shell: true,
+        shell,
         stdio: ['pipe', 'pipe', 'pipe'],
         cwd,
         env: process.env
@@ -57,7 +58,11 @@ export class ShellTool implements ITool {
 
       const timer = setTimeout(() => {
         timedOut = true
-        child.kill('SIGTERM')
+        if (process.platform === 'win32') {
+          child.kill()
+        } else {
+          child.kill('SIGTERM')
+        }
         logger.error('[ShellTool] Command timeout', { command, timeout })
         
         resolve({

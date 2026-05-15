@@ -770,6 +770,18 @@ class McpManager {
         version: "1.0.0"
       })
       await client.connect(transport)
+
+      // 防止子进程退出后写入 stdin 产生 EPIPE 未处理错误
+      const childProcess = (transport as any)._process
+      if (childProcess) {
+        childProcess.stdin?.on('error', (err: any) => {
+          if (err?.code === 'EPIPE') return
+        })
+        childProcess.on('exit', () => {
+          this.clients.delete(serverName)
+        })
+      }
+
       this.clients.set(serverName, client)
       logProgress("MCP", `已连接服务器：${serverName}`)
     } catch (error) {

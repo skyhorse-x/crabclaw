@@ -13,42 +13,42 @@
           :class="msg.role"
         >
           <div class="message-content">
-            <div class="message-text" v-html="formatMessage(msg.text)"></div>
-            <div v-if="msg.stages && msg.stages.length > 0" class="stages-progress">
-              <div v-for="(stage, i) in msg.stages" :key="i" class="stage-item">
-                <span class="stage-dot"></span>
-                <span class="stage-text" v-html="formatStage(stage)"></span>
-              </div>
+            <!-- 正在处理占位 -->
+            <div v-if="msg.thinking && !msg.text" class="thinking-tip">
+              <span class="icon-spin"></span> 正在思考...
             </div>
-            <div v-if="msg.reasoning" class="reasoning-card">
-              <div class="reasoning-header">
-                <span class="reasoning-icon"></span>
-                <span>推理过程</span>
-                <span class="confidence-badge">{{ Math.round(msg.reasoning.confidence * 100) }}%</span>
-              </div>
-              <div class="reasoning-text">{{ msg.reasoning.text }}</div>
-            </div>
+            <div v-else class="message-text" v-html="formatMessage(msg.text)"></div>
             <div v-if="msg.mcpCalls && msg.mcpCalls.length > 0" class="chat-mcp-timeline">
-              <div class="chat-mcp-timeline-title">
-                <span class="chat-mcp-timeline-dot"></span>
-                工具调用
-              </div>
               <div v-for="(call, i) in msg.mcpCalls" :key="i" class="chat-mcp-item" :class="'chat-mcp-item--' + call.status">
-                <div class="chat-mcp-item-line"></div>
-                <div class="chat-mcp-item-content">
-                  <div class="chat-mcp-item-header">
-                    <span class="chat-mcp-item-server">{{ call.server }}</span>
-                    <span class="chat-mcp-item-tool">/{{ call.tool }}</span>
-                    <span class="chat-mcp-item-badge" :class="'chat-mcp-item-badge--' + call.status">
-                      {{ call.status === 'success' ? '成功' : call.status === 'error' ? '失败' : '进行中' }}
-                    </span>
+                <!-- 状态图标 -->
+                <div class="mcp-status-col">
+                  <span v-if="call.status === 'success'" class="icon-ok">✓</span>
+                  <span v-else-if="call.status === 'error'" class="icon-err">✗</span>
+                  <span v-else class="icon-spin"></span>
+                </div>
+                <div class="mcp-body">
+                  <!-- 一级：动作描述 -->
+                  <div class="mcp-action">{{ toolAction(call.server, call.tool, call.input, call.status) }}</div>
+                  <!-- 二级：工具名 -->
+                  <div class="mcp-tool-row">
+                    <span class="mcp-tool-label">调用工具：</span>
+                    <span class="mcp-tool-name">{{ toolShortName(call.server, call.tool) }}</span>
                   </div>
-                  <div v-if="call.duration" class="chat-mcp-item-duration">{{ call.duration }}ms</div>
-                  <div v-if="call.result" class="chat-mcp-item-result" v-html="formatResult(call.result)"></div>
+                  <!-- 三级：执行细节 -->
+                  <div v-if="toolDetails(call.server, call.tool, call.input, call.error).length" class="mcp-detail-block">
+                    <div class="mcp-detail-title">执行细节：</div>
+                    <div v-for="(d, di) in toolDetails(call.server, call.tool, call.input, call.error)" :key="di" class="mcp-detail-row">
+                      <span class="mcp-detail-key">{{ d.key }}：</span>
+                      <span class="mcp-detail-val" :class="d.type === 'error' ? 'mcp-detail-err' : ''">{{ d.val }}</span>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
-            <div v-if="msg.error" class="error-card" :class="msg.error.severity">
+            <div v-if="msg.error && msg.error.code === 'REQUEST_ABORTED'" class="paused-tip">
+              ⏸ 已暂停执行
+            </div>
+            <div v-else-if="msg.error" class="error-card" :class="msg.error.severity">
               <div class="error-header">
                 <span class="error-icon"></span>
                 <span class="error-code">{{ msg.error.code }}</span>
@@ -114,6 +114,7 @@ interface Message {
     server: string
     tool: string
     status: 'start' | 'success' | 'error'
+    error?: string
     duration?: number
     input?: Record<string, unknown>
     result?: unknown
@@ -123,7 +124,7 @@ interface Message {
   error?: ErrorDetail
   learning?: LearningFeedback
   usage?: { promptTokens: number; completionTokens: number; totalTokens: number }
-  stages?: string[]
+  thinking?: boolean
 }
 
 interface Conversation {
@@ -161,6 +162,25 @@ onMounted(() => {
 
 function handleChunk(chunk: ChatChunk) {
   switch (chunk.type) {
+    case 'plan':
+      if (Array.isArray(chunk.plan)) {
+        const steps = chunk.plan.map((s: any, i: number) =>
+          `[plan] ${s.title || s.description || `步骤 ${i + 1}`}`
+        )
+        if (!aiMessage) {
+          aiMessage = { role: 'assistant', text: '' }
+          currentConversation.value.messages.push(aiMessage)
+        }
+        if (!aiMessage.stages) aiMessage.stages = []
+        for (const step of steps) {
+          if (!aiMessage.stages.includes(step)) {
+            aiMessage.stages.push(step)
+          }
+        }
+        aiMessage.text = aiMessage.stages.join('\n')
+      }
+      break
+
     case 'reasoning':
       if (aiMessage && chunk.reasoning) {
         aiMessage.reasoning = chunk.reasoning
@@ -170,7 +190,14 @@ function handleChunk(chunk: ChatChunk) {
     case 'mcp':
       if (aiMessage && chunk.mcp) {
         if (!aiMessage.mcpCalls) aiMessage.mcpCalls = []
-        aiMessage.mcpCalls.push(chunk.mcp)
+        const existing = aiMessage.mcpCalls.find(
+          c => c.server === chunk.mcp!.server && c.tool === chunk.mcp!.tool && c.status === 'start'
+        )
+        if (existing && chunk.mcp.status !== 'start') {
+          Object.assign(existing, chunk.mcp)
+        } else {
+          aiMessage.mcpCalls.push(chunk.mcp)
+        }
       }
       break
 
@@ -202,8 +229,10 @@ function handleChunk(chunk: ChatChunk) {
 
     case 'detail':
       if (aiMessage && chunk.detail) {
+        // tool/mcp/result 类型的 detail 由 mcp 列表展示，不堆到 stages
+        if (['tool', 'mcp', 'result'].includes(chunk.detail.stage)) break
         if (!aiMessage.stages) aiMessage.stages = []
-        const stageText = `[${chunk.detail.stage}] ${chunk.detail.text}`
+        const stageText = chunk.detail.text
         if (!aiMessage.stages.includes(stageText)) {
           aiMessage.stages.push(stageText)
         }
@@ -237,21 +266,113 @@ function formatStage(text: string): string {
   return escapeHtml(text).replace(/\n/g, '<br>')
 }
 
-function formatResult(result: unknown): string {
-  if (typeof result === 'string') {
-    let text = escapeHtml(result)
-    text = text.replace(/\/(Users|home|private\/tmp)\/[^\s<）)\]>]+/g, '<span class="file-path-link" data-file-path="$&">$&</span>')
-    if (text.length > 200) {
-      return text.slice(0, 200) + '...'
-    }
-    return text
+// 工具短名（二级：调用工具）
+function toolShortName(server: string, tool: string): string {
+  const map: Record<string, string> = {
+    'shell': 'shell', 'filesystem': 'filesystem',
+    'chrome-devtools': 'browser', 'fetch': 'fetch', 'memory': 'memory',
   }
-  const json = JSON.stringify(result)
-  if (json.length > 200) {
-    return escapeHtml(json.slice(0, 200)) + '...'
-  }
-  return escapeHtml(json)
+  return map[server] || server
 }
+
+// 一级：动作描述，区分进行中/完成/失败
+function toolAction(server: string, tool: string, input?: Record<string, unknown>, status?: string): string {
+  const ing = status === 'success' ? false : status === 'error' ? false : true
+  const ok  = status === 'success'
+  const err = status === 'error'
+
+  const url = String(input?.url || '')
+  const domain = url.replace(/^https?:\/\//, '').split('/')[0]
+  const file = String(input?.path || input?.file || '').split('/').pop() || ''
+  const cmd  = String(input?.command || input?.cmd || '').slice(0, 30)
+
+  const defs: Record<string, [string, string, string]> = {
+    'new_page':        [`正在打开 ${domain || '页面'}`,  `已打开 ${domain || '页面'}`,   `未能打开 ${domain || '页面'}`],
+    'navigate_page':   [`正在访问 ${domain || '页面'}`,  `已访问 ${domain || '页面'}`,   `未能访问 ${domain || '页面'}`],
+    'click':           [`正在点击元素`,                  `已点击元素`,                   `未能点击元素`],
+    'fill':            [`正在输入内容`,                  `已输入内容`,                   `未能输入内容`],
+    'type_text':       [`正在输入文字`,                  `已输入文字`,                   `未能输入文字`],
+    'press_key':       [`正在按键`,                      `已按键`,                       `未能按键`],
+    'evaluate_script': [`正在执行脚本`,                  `已执行脚本`,                   `脚本执行失败`],
+    'shell_execute':   [`正在执行命令`,                  `已执行命令`,                   `命令执行失败`],
+    'run_process':     [`正在执行命令`,                  `已执行命令`,                   `命令执行失败`],
+    'read_file':       [`正在读取文件 ${file}`,          `已读取文件 ${file}`,           `未能读取文件 ${file}`],
+    'write_file':      [`正在写入文件 ${file}`,          `已写入文件 ${file}`,           `未能写入文件 ${file}`],
+    'create_directory':[`正在创建目录 ${file}`,          `已创建目录 ${file}`,           `未能创建目录 ${file}`],
+    'delete_file':     [`正在删除文件 ${file}`,          `已删除文件 ${file}`,           `未能删除文件 ${file}`],
+    'fetch_readable':  [`正在获取网页 ${domain}`,        `已获取网页 ${domain}`,         `未能获取网页 ${domain}`],
+    'http_request':    [`正在发送请求`,                  `已发送请求`,                   `请求失败`],
+  }
+
+  const entry = defs[tool]
+  if (entry) return err ? entry[2] : ok ? entry[1] : entry[0]
+  if (ing) return `正在执行 ${tool}`
+  if (ok)  return `已执行 ${tool}`
+  return `未能执行 ${tool}`
+}
+
+// 三级：执行细节字段列表
+function toolDetails(
+  server: string, tool: string,
+  input?: Record<string, unknown>,
+  error?: string
+): Array<{ key: string; val: string; type?: string }> {
+  const rows: Array<{ key: string; val: string; type?: string }> = []
+  if (!input) {
+    if (error) rows.push({ key: '错误信息', val: error, type: 'error' })
+    return rows
+  }
+
+  const str = (v: unknown) => String(v || '').trim()
+  const url  = str(input.url)
+  const path = str(input.path || input.file || '')
+  const dir  = path.includes('/') ? path.split('/').slice(0, -1).join('/') : ''
+  const file = path.split('/').pop() || ''
+  const cmd  = str(input.command || input.cmd)
+  const sel  = str(input.selector || input.uid || input.element)
+  const val  = str(input.value || input.text)
+  const key  = str(input.key)
+  const fn   = str(input.function || input.script)
+  const query = str(input.query || input.q)
+
+  // browser
+  if (server === 'chrome-devtools') {
+    if (url)   rows.push({ key: '目标链接', val: url })
+    if (sel)   rows.push({ key: '目标元素', val: sel.slice(0, 60) })
+    if (val)   rows.push({ key: '输入内容', val: val.slice(0, 60) })
+    if (key)   rows.push({ key: '按键',     val: key })
+    if (fn)    rows.push({ key: '操作命令', val: fn.slice(0, 80) })
+    if (query) rows.push({ key: '搜索内容', val: query })
+  }
+
+  // shell
+  if (server === 'shell') {
+    if (cmd) rows.push({ key: '操作命令', val: cmd })
+  }
+
+  // filesystem
+  if (server === 'filesystem') {
+    if (cmd)  rows.push({ key: '操作命令', val: cmd })
+    if (file) rows.push({ key: '目标文件', val: file })
+    if (dir)  rows.push({ key: '所在目录', val: dir })
+  }
+
+  // fetch
+  if (server === 'fetch') {
+    if (url) rows.push({ key: '目标链接', val: url })
+  }
+
+  // 通用 fallback
+  if (rows.length === 0) {
+    if (url)  rows.push({ key: '目标链接', val: url })
+    if (cmd)  rows.push({ key: '操作命令', val: cmd })
+    if (path) rows.push({ key: '目标文件', val: path })
+  }
+
+  if (error) rows.push({ key: '错误信息', val: error, type: 'error' })
+  return rows
+}
+
 
 function escapeHtml(text: string): string {
   return text
@@ -430,153 +551,134 @@ function scrollToBottom() {
   font-size: 14px;
 }
 
-/* ===== MCP 调用时间线 ===== */
+/* ===== MCP 三级步骤 ===== */
 .chat-mcp-timeline {
-  margin-top: 12px;
-  padding: 0;
-}
-
-.chat-mcp-timeline-title {
+  margin-top: 10px;
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 8px;
-  font-size: 12px;
-  font-weight: 600;
-  color: #6366f1;
-  margin-bottom: 10px;
-  letter-spacing: 0.3px;
-  text-transform: uppercase;
-}
-
-.chat-mcp-timeline-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
-  flex-shrink: 0;
 }
 
 .chat-mcp-item {
-  position: relative;
-  padding-left: 16px;
-  margin-bottom: 8px;
-}
-
-.chat-mcp-item:last-child { margin-bottom: 0; }
-
-.chat-mcp-item::before {
-  content: '';
-  position: absolute;
-  left: 2px;
-  top: 4px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #cbd5e1;
-  border: 2px solid #f1f5f9;
-  z-index: 1;
-}
-
-.chat-mcp-item--success::before {
-  background: #10b981;
-  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.15);
-}
-
-.chat-mcp-item--error::before {
-  background: #ef4444;
-  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15);
-}
-
-.chat-mcp-item--start::before {
-  background: #f59e0b;
-  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2);
-  animation: chat-mcp-pulse 1.4s ease-in-out infinite;
-}
-
-@keyframes chat-mcp-pulse {
-  0%, 100% { box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2); }
-  50% { box-shadow: 0 0 0 6px rgba(245, 158, 11, 0.08); }
-}
-
-.chat-mcp-item::after {
-  content: '';
-  position: absolute;
-  left: 5px;
-  top: 16px;
-  bottom: -8px;
-  width: 1px;
-  background: #e2e8f0;
-}
-
-.chat-mcp-item:last-child::after { display: none; }
-
-.chat-mcp-item-line { display: none; }
-
-.chat-mcp-item-content {
-  background: #ffffff;
-  border: 1px solid #f1f5f9;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
   border-radius: 8px;
   padding: 10px 12px;
-  transition: all 0.2s ease;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+  transition: border-color 0.2s;
 }
 
-.chat-mcp-item-content:hover {
-  border-color: #e2e8f0;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+.chat-mcp-item--success { border-left: 3px solid #10b981; }
+.chat-mcp-item--error   { border-left: 3px solid #ef4444; background: #fff8f8; }
+.chat-mcp-item--start   { border-left: 3px solid #6366f1; }
+
+.mcp-status-col {
+  flex-shrink: 0;
+  margin-top: 1px;
+  width: 16px;
+  text-align: center;
 }
 
-.chat-mcp-item-header {
+.icon-ok {
+  color: #10b981;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.icon-err {
+  color: #ef4444;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.icon-spin {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid #d1d5db;
+  border-top-color: #6366f1;
+  border-radius: 50%;
+  animation: mcp-spin 0.8s linear infinite;
+  vertical-align: middle;
+}
+
+@keyframes mcp-spin { to { transform: rotate(360deg); } }
+
+.mcp-body {
+  flex: 1;
+  min-width: 0;
   display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
+  flex-direction: column;
+  gap: 4px;
 }
 
-.chat-mcp-item-server {
+.paused-tip {
+  margin-top: 8px;
+  font-size: 13px;
+  color: #6b7280;
+}
+
+/* 一级：动作 */
+.mcp-action {
+  font-size: 13px;
   font-weight: 600;
   color: #1f2937;
-  font-size: 12px;
+  line-height: 1.4;
 }
+.chat-mcp-item--error .mcp-action { color: #dc2626; }
 
-.chat-mcp-item-tool {
+/* 二级：工具名 */
+.mcp-tool-row {
+  font-size: 12px;
   color: #6b7280;
-  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
+.mcp-tool-label { color: #9ca3af; }
+.mcp-tool-name  { font-weight: 500; color: #6366f1; }
 
-.chat-mcp-item-badge {
-  margin-left: auto;
-  font-size: 10px;
-  font-weight: 600;
-  padding: 1px 8px;
-  border-radius: 10px;
-  letter-spacing: 0.2px;
-  flex-shrink: 0;
-}
-
-.chat-mcp-item-badge--success { background: #d1fae5; color: #059669; }
-.chat-mcp-item-badge--error { background: #fee2e2; color: #dc2626; }
-.chat-mcp-item-badge--start { background: #fef3c7; color: #d97706; }
-
-.chat-mcp-item-duration {
-  font-size: 11px;
-  color: #94a3b8;
-  margin-top: 4px;
-}
-
-.chat-mcp-item-result {
-  margin-top: 6px;
-  font-size: 11px;
-  color: #64748b;
-  background: #f8fafc;
-  padding: 5px 8px;
+/* 三级：执行细节 */
+.mcp-detail-block {
+  margin-top: 2px;
+  background: #f1f5f9;
   border-radius: 6px;
-  border-left: 2px solid #e2e8f0;
-  word-break: break-word;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  padding: 6px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.mcp-detail-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #94a3b8;
+  margin-bottom: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.mcp-detail-row {
+  display: flex;
+  gap: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.mcp-detail-key {
+  flex-shrink: 0;
+  color: #64748b;
+  font-weight: 500;
+}
+.mcp-detail-val {
+  color: #374151;
+  word-break: break-all;
+  font-family: 'SF Mono', 'Consolas', monospace;
+  font-size: 11.5px;
+}
+.mcp-detail-err {
+  color: #dc2626;
+  font-family: inherit;
+  font-size: 12px;
 }
 
 .error-card {

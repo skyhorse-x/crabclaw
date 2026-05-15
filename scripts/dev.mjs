@@ -32,8 +32,14 @@ async function waitFile(filePath, timeoutMs = 15000) {
 function run(cmd, args, cwd, label) {
   const proc = spawn(cmd, args, {
     cwd,
-    stdio: 'inherit',
+    stdio: ['inherit', 'inherit', 'pipe'],
     shell: process.platform === 'win32',
+  })
+  proc.stderr?.on('data', (data) => {
+    const text = data.toString()
+    // 过滤 MCP SDK 的 EPIPE 噪音
+    if (text.includes('EPIPE') || text.includes('write EPIPE') || text.includes('Error: write EPIPE')) return
+    process.stderr.write(text)
   })
   proc.on('error', err => {
     console.error(`[${label}] Failed to start:`, err.message)

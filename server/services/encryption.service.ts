@@ -3,7 +3,7 @@
  * 提供敏感信息加密和解密功能
  */
 
-import { createCipheriv, createDecipheriv, randomBytes, scrypt, scryptSync } from 'crypto'
+import { createCipheriv, createDecipheriv, randomBytes, scryptSync as cryptoScryptSync } from 'crypto'
 import { logger } from './logger.service'
 
 export interface EncryptionConfig {
@@ -178,8 +178,7 @@ export class EncryptionService {
 
 // 同步版本的 scrypt（用于 Node.js 环境）
 function scryptSync(password: string, salt: Buffer, keylen: number): Buffer {
-  const crypto = require('crypto')
-  return crypto.scryptSync(password, salt, keylen)
+  return cryptoScryptSync(password, salt, keylen)
 }
 
 // 创建单例

@@ -98,8 +98,7 @@ const sharedWs = shallowRef<WebSocket | null>(null)
 const sharedIsConnected = ref(false)
 const sharedIsConnecting = ref(false)
 const sharedReconnectAttempts = ref(0)
-const maxReconnectAttempts = 5
-const reconnectDelay = 3000
+const maxReconnectDelay = 30000
 
 const sharedMessageHandlers = new Map<string, (payload: unknown) => void>()
 const sharedChunkHandlers: ((chunk: ChatChunk) => void)[] = []
@@ -121,14 +120,19 @@ function handleMessage(message: WSMessage) {
   if (handler) handler(message.payload)
 }
 
+function getReconnectDelay(attempt: number): number {
+  return Math.min(1000 * Math.pow(2, attempt - 1), maxReconnectDelay)
+}
+
 function scheduleReconnect() {
-  if (sharedReconnectAttempts.value >= maxReconnectAttempts) return
   if (reconnectTimer) clearTimeout(reconnectTimer)
+  const delay = getReconnectDelay(sharedReconnectAttempts.value + 1)
+  console.log(`[WebSocket] Reconnecting in ${delay}ms (attempt ${sharedReconnectAttempts.value + 1})`)
   reconnectTimer = setTimeout(() => {
     sharedReconnectAttempts.value++
-    console.log(`[WebSocket] Reconnecting... (${sharedReconnectAttempts.value}/${maxReconnectAttempts})`)
+    console.log(`[WebSocket] Reconnecting... (attempt ${sharedReconnectAttempts.value})`)
     connect(sharedUrl)
-  }, reconnectDelay)
+  }, delay)
 }
 
 function connect(wsUrl: string) {
@@ -178,7 +182,7 @@ function disconnect() {
     clearTimeout(reconnectTimer)
     reconnectTimer = null
   }
-  sharedReconnectAttempts.value = maxReconnectAttempts
+  sharedReconnectAttempts.value = 999
   if (sharedWs.value) {
     sharedWs.value.close()
     sharedWs.value = null

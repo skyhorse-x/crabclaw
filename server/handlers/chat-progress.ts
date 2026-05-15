@@ -7,6 +7,7 @@ export function buildToolProgressMessage(server: string, tool: string, input: Re
     'read_file': { verb: '读取文件', field: 'path', suffix: (v) => v.split('/').pop() || v },
     'write_file': { verb: '写入文件', field: 'path', suffix: (v) => v.split('/').pop() || v },
     'create_directory': { verb: '创建目录', field: 'path', suffix: (v) => v.split('/').pop() || v },
+    'new_page': { verb: '打开网页', field: 'url', suffix: (v) => v.slice(0, 50) },
     'navigate_page': { verb: '访问网页', field: 'url', suffix: (v) => v.slice(0, 50) },
     'list_pages': { verb: '获取页面列表', field: '' },
     'take_snapshot': { verb: '截取页面快照', field: '' },

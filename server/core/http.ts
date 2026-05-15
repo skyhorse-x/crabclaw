@@ -45,7 +45,19 @@ export function createHttpServer(
     }
   })
 
-  server.listen(port, () => {
+  server.on('error', (err: any) => {
+    if (err?.code === 'EADDRINUSE') {
+      logger.error(`Port ${port} is already in use. Cannot start server.`, {
+        errCode: 'EADDRINUSE',
+        port,
+        error: err.message
+      })
+      process.exit(1)
+    }
+    logger.error('HTTP server error', err)
+  })
+
+  server.on('listening', () => {
     logger.info('HTTP server created', { port, url: `http://localhost:${port}`, hostname: 'localhost' })
 
     if (!wsInitialized) {
@@ -55,6 +67,8 @@ export function createHttpServer(
       logger.info('WebSocket service initialized on path: /ws')
     }
   })
+
+  server.listen(port)
 
   return {
     url: `http://localhost:${port}`,
