@@ -3,8 +3,6 @@ import { appendFileSync, existsSync, readFileSync } from "fs"
 import * as fs from "fs/promises"
 import * as os from "os"
 import * as path from "path"
-import { execFile } from "child_process"
-import { promisify } from "util"
 import open from "open"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
@@ -89,15 +87,6 @@ interface BrowserState {
   url?: string
 }
 
-interface McpToolResult {
-  content?: string
-  text?: string
-  toolResult?: {
-    content?: string
-  }
-  structuredContent?: Record<string, unknown>
-}
-
 function loadLocalEnvFile() {
   const envPath = path.resolve(process.cwd(), ".env")
   if (!existsSync(envPath)) return
@@ -126,7 +115,6 @@ const PREOPEN_WAIT_MS = Number(process.env.PREOPEN_WAIT_MS || 1500)
 const MIN_CLICK_CONFIDENCE = Number(process.env.MIN_CLICK_CONFIDENCE || 0.78)
 const MAX_AI_RETRIES = Number(process.env.MAX_AI_RETRIES || 2)
 const CLICK_STABLE_DELTA = Number(process.env.CLICK_STABLE_DELTA || 20)
-const CLICK_REQUIRED_STABLE_COUNT = Number(process.env.CLICK_REQUIRED_STABLE_COUNT || 1)
 const STRICT_CLICK_CONFIRM = process.env.STRICT_CLICK_CONFIRM === "true"
 const CAPTURE_APP_ONLY = process.env.CAPTURE_APP_ONLY !== "false"
 const ENABLE_IMAGE_INPUT = process.env.ARK_ENABLE_IMAGE !== "false"
@@ -152,7 +140,6 @@ const SUPPORTED_ACTIONS = new Set([
   "noop"
 ])
 
-const execFileAsync = promisify(execFile)
 const NORMALIZED_ARK_API_KEY = String(ARK_API_KEY || "").replace(/^Bearer\s+/i, "").trim()
 
 const MCP_SERVER_CONFIG: Record<string, McpServerConfig> = {
@@ -192,14 +179,6 @@ function logProgress(stage: string, message: string): void {
   }
 }
 
-function logDetail(stage: string, payload: unknown): void {
-  const ts = new Date().toISOString()
-  try {
-    appendFileSync(LOG_FILE, `${JSON.stringify({ ts, stage, payload })}\n`, "utf8")
-  } catch (_error) {
-    // Ignore log file write errors to avoid blocking runtime.
-  }
-}
 
 function maskApiKey(key: string): string {
   const k = String(key || "").trim()
@@ -438,10 +417,6 @@ function normalizeKey(key: string): string {
   return alias[raw] || raw
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value))
-}
-
 function hasXY(action: Record<string, unknown>): boolean {
   return Number.isFinite(action?.x) && Number.isFinite(action?.y)
 }
@@ -489,13 +464,7 @@ function normalizeChecklist(checklist: unknown): ChecklistItem[] {
     .filter((item) => item.item)
 }
 
-function normalizeStringArray(items: unknown[], max = 8): string[] {
-  if (!Array.isArray(items)) return []
-  return items
-    .map((item) => trimText(String(item || ""), 160))
-    .filter(Boolean)
-    .slice(0, max)
-}
+
 
 function normalizeTaskProgress(taskProgress: unknown, fallbackChecklist: ChecklistItem[] = []): TaskProgressItem[] {
   if (Array.isArray(taskProgress) && taskProgress.length > 0) {
@@ -936,12 +905,37 @@ async function executeAction(action: Action, mcpManager: McpManager): Promise<un
   }
 }
 
+async function findAppPath(appName: string): Promise<string | null> {
+  const searchDirs = ["/Applications", path.join(os.homedir(), "/Applications"), "/System/Applications"]
+  for (const dir of searchDirs) {
+    try {
+      const files = await fs.readdir(dir)
+      const match = files.find(f => {
+        const name = f.replace(/\.app$/i, "")
+        return name.toLowerCase() === appName.toLowerCase()
+      })
+      if (match) return path.join(dir, match)
+    } catch { }
+  }
+  return null
+}
+
 async function openApp(appName: string): Promise<{ success: boolean; message: string }> {
   try {
     await open(appName, { wait: false })
     await sleep(PREOPEN_WAIT_MS)
     return { success: true, message: `已打开应用：${appName}` }
   } catch (error) {
+    const appPath = await findAppPath(appName)
+    if (appPath) {
+      try {
+        await open(appPath, { wait: false })
+        await sleep(PREOPEN_WAIT_MS)
+        return { success: true, message: `已打开应用：${appPath}` }
+      } catch (e) {
+        return { success: false, message: `打开应用失败：${String(e instanceof Error ? e.message : e)}` }
+      }
+    }
     return { success: false, message: `打开应用失败：${String(error instanceof Error ? error.message : error)}` }
   }
 }
@@ -1145,7 +1139,7 @@ async function main(): Promise<void> {
       ]
 
       if (screenshot && ENABLE_IMAGE_INPUT) {
-        messages[0].content.push({
+        (messages[0].content as any[]).push({
           type: "image_url",
           image_url: {
             url: screenshot

@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
-import { writeFile } from "node:fs/promises"
+import { readdir, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import open from "open"
@@ -69,12 +69,36 @@ async function writeClipboard(text) {
   await execFileAsync("sh", ["-lc", `cat ${JSON.stringify(tmpFile)} | xclip -selection clipboard`])
 }
 
+async function findAppPath(appName) {
+  const searchDirs = ["/Applications", path.join(os.homedir(), "/Applications"), "/System/Applications"]
+  for (const dir of searchDirs) {
+    try {
+      const files = await readdir(dir)
+      const match = files.find(f => {
+        const name = f.replace(/\.app$/i, "")
+        return name.toLowerCase() === appName.toLowerCase()
+      })
+      if (match) return path.join(dir, match)
+    } catch { }
+  }
+  return null
+}
+
 async function openApp(appName) {
   const target = String(appName || "").trim()
   if (!target) return { ok: false, error: "missing app name" }
 
   if (process.platform === "darwin") {
-    await execFileAsync("open", ["-a", target])
+    try {
+      await execFileAsync("open", ["-a", target])
+    } catch (e) {
+      const appPath = await findAppPath(target)
+      if (appPath) {
+        await execFileAsync("open", [appPath])
+      } else {
+        throw e
+      }
+    }
   } else if (process.platform === "win32") {
     await execFileAsync("cmd", ["/c", "start", "", target])
   } else {

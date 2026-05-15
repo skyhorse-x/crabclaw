@@ -2040,7 +2040,7 @@ export async function* handleChatStream(
     return { stepId, title }
   }
 
-  const callModel = async (...args: Parameters<typeof requestModelReply>) => {
+  const callModel = async (...args: Parameters<typeof requestModelReply>): Promise<LlmResponse> => {
     const result = await callModel(...args)
     if (result.usage) {
       if (!accumulatedUsage) {

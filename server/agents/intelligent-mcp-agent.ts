@@ -4,7 +4,7 @@
  */
 
 import { BaseAgent, AgentContext, AgentResult } from './base.agent'
-import { mcpToolRegistry, type ToolSelectionResult, type McpToolDefinition } from '../services/mcp-tool-registry'
+import { mcpToolRegistry, type ToolSelectionResult } from '../services/mcp-tool-registry'
 import { llm } from '../llm'
 import { logger } from '../services/logger.service'
 

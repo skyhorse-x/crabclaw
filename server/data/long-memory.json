@@ -1,14 +1,14 @@
 [
   {
-    "id": "lmem-876d70d4-3c01-423b-bfad-028dbffb83a1",
-    "content": "{\"location\":\"哪里\",\"name\":\"什么ai助手\"}",
+    "id": "lmem-f1d1045c-94ff-413d-95e7-5c30751cdf7c",
+    "content": "{\"location\":\"哪里\",\"name\":\"爸爸\",\"gender\":\"男\"}",
     "type": "long",
-    "createdAt": 1778819959692,
-    "lastAccessedAt": 1778819959692,
+    "createdAt": 1778840174138,
+    "lastAccessedAt": 1778840174138,
     "accessCount": 0,
     "metadata": {
       "type": "user_profile",
-      "updatedAt": 1778819959692
+      "updatedAt": 1778840174137
     }
   }
 ]
