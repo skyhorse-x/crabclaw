@@ -13,7 +13,7 @@
 
 import { logger } from '../services/logger.service'
 import { wsService } from '../services/websocket.service'
-import { handleChatStream } from '../handlers/chat.handler'
+import { handleChatStream, ensureReadableText } from '../handlers/chat.handler'
 
 export const CRABOT_NAME = 'CraBot'
 
@@ -98,7 +98,7 @@ export class RemoteAgent {
     this.abortController = new AbortController()
     this.history.push({ role: 'user', text: msg.text })
     this.broadcastToFrontend('user', msg.text, msg.sender)
-    logger.info(`[CraBot] ${this.id} 开始处理任务: ${msg.text.slice(0, 60)}`)
+    logger.info(`[CraBot] ${this.id} 开始处理任务: ${msg.text.slice(0, 200)}`)
 
     // 启动"正在输入"提示
     const stopTyping = this.typingIndicator ? this.typingIndicator(msg.sender) : () => {}
@@ -132,13 +132,14 @@ export class RemoteAgent {
 
       // 任务完成后先停止 typing，再发送回复（顺序重要）
       stopTyping()
-      this.broadcastToFrontend('assistant', fullReply, msg.sender)
-      await this.sendReply(msg.sender, fullReply)
+      const cleanedReply = this.sanitizeRemoteText(fullReply, this.platform)
+      this.broadcastToFrontend('assistant', cleanedReply, msg.sender)
+      await this.sendReply(msg.sender, cleanedReply)
 
-      logger.info(`[CraBot] ${this.id} 任务完成，回复: ${fullReply.slice(0, 60)}`)
+      logger.info(`[CraBot] ${this.id} 任务完成，回复: ${cleanedReply.slice(0, 200)}`)
     } catch (err: any) {
       stopTyping()
-      const errMsg = `❌ 处理失败: ${err.message || String(err)}`
+      const errMsg = `❌ 处理失败: ${ensureReadableText(err.message || String(err))}`
       logger.error(`[CraBot] ${this.id} 处理异常: ${err.message}`)
       this.broadcastToFrontend('assistant', errMsg, msg.sender)
       await this.sendReply(msg.sender, errMsg)
@@ -161,6 +162,19 @@ export class RemoteAgent {
 
   getHistory(): HistoryEntry[] { return [...this.history] }
   isBusy(): boolean { return this.busy }
+
+  /**
+   * 清洗远控回复文本：
+   * 1. 提取 JSON 中的可读内容（避免 AI JSON 格式泄漏）
+   * 2. 转义 Telegram Markdown 特殊字符（_ * ` [ 等）
+   */
+  private sanitizeRemoteText(text: string, platform?: RemotePlatform): string {
+    const cleaned = ensureReadableText(String(text || '').trim())
+    if (!cleaned || platform !== 'telegram') return cleaned || text
+
+    // Telegram Markdown 特殊字符：_ * [ ] ( ) ~ ` > # + - = | { } . !
+    return cleaned.replace(/([_*[\]()~`>#+\-=|{}.!])/g, '\\$1')
+  }
 
   private async sendReply(sender: string, text: string): Promise<void> {
     if (!this.replier) {

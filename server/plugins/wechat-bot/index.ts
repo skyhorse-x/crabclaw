@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import QRCode from 'qrcode'
 import type { CrabclawPlugin, PluginContext } from '../plugin-types'
 import { remoteAgentRegistry } from '../../agents/remote.agent'
+import { ensureReadableText } from '../../handlers/chat.handler'
 
 const ILINK_BASE_URL = 'https://ilinkai.weixin.qq.com'
 const CHANNEL_VERSION = '1.0.0'
@@ -105,6 +106,14 @@ function buildTextMsg(toUserId: string, text: string, contextToken?: string) {
   return { msg, ...baseInfo() }
 }
 
+function sanitizeWechatOutboundText(text: string): string {
+  const raw = String(text || '').trim()
+  if (!raw) return raw
+
+  const cleaned = ensureReadableText(raw).trim()
+  return cleaned || raw
+}
+
 async function notifyStart(baseUrl: string, token: string): Promise<void> {
   try {
     await apiPost(baseUrl, 'ilink/bot/msg/notifystart', token, baseInfo(), 10000)
@@ -137,6 +146,23 @@ async function sendTypingStatus(
   } catch {
     return false
   }
+}
+
+interface WechatInboundMessage {
+  from_user_id?: string
+  from_wxid?: string
+  context_token?: string
+  timestamp?: number
+  msg_time?: number
+  content?: { text?: string }
+  item_list?: Array<{
+    type?: number
+    text_item?: { text?: string }
+    voice_item?: { text?: string }
+    file_item?: { file_name?: string }
+    image_item?: Record<string, unknown>
+  }>
+  text?: string
 }
 
 export default class WechatBotPlugin implements CrabclawPlugin {
@@ -175,7 +201,12 @@ export default class WechatBotPlugin implements CrabclawPlugin {
       const toUserId = sender || account.userId
       if (!toUserId) return
       const contextToken = account.contextTokens[toUserId] || undefined
-      const reqBody = buildTextMsg(toUserId, text, contextToken)
+      const outboundText = sanitizeWechatOutboundText(text)
+      if (outboundText !== text) {
+        ctx.logger.info(`[CraBot] 微信回复已清洗 JSON 外壳: ${text.slice(0, 120)} -> ${outboundText.slice(0, 120)}`)
+      }
+      const reqBody = buildTextMsg(toUserId, outboundText, contextToken)
+      ctx.logger.info(`[CraBot] 微信 sendmessage payload: to=${toUserId}, has_ctx=${!!contextToken}, text=${outboundText.slice(0, 120)}`)
       const resp = await apiPost(account.baseUrl, 'ilink/bot/sendmessage', account.token, reqBody)
       if (!resp.ok) ctx.logger.error(`[CraBot] 微信回复失败: HTTP ${resp.status}`)
     })
@@ -315,12 +346,14 @@ export default class WechatBotPlugin implements CrabclawPlugin {
         return this.jsonResponse({ ok: false, error: '还不知道发给谁，请先在手机微信上给 bot 发一条消息' }, 400)
       }
       const contextToken = targetAccount.contextTokens[toUserId] || undefined
-      const reqBody = buildTextMsg(toUserId, content, contextToken)
-      this.ctx.logger.info(`发送微信消息: to=${toUserId}, has_ctx=${!!contextToken}`)
+      const outboundText = sanitizeWechatOutboundText(content)
+      const reqBody = buildTextMsg(toUserId, outboundText, contextToken)
+      this.ctx.logger.info(`发送微信消息: to=${toUserId}, has_ctx=${!!contextToken}, text=${outboundText.slice(0, 120)}`)
 
       const resp = await apiPost(targetAccount.baseUrl, 'ilink/bot/sendmessage', targetAccount.token, reqBody)
       if (!resp.ok) {
         const errText = await resp.text().catch(() => '')
+        this.ctx.logger.error(`发送微信消息HTTP失败: status=${resp.status}, body=${errText.slice(0, 300)}`)
         return this.jsonResponse({ ok: false, error: `发送失败: HTTP ${resp.status}` }, 500)
       }
       const data = await resp.json()
@@ -328,6 +361,16 @@ export default class WechatBotPlugin implements CrabclawPlugin {
       if (data.ret === 0) {
         this.ctx.logger.info(`发送微信消息成功, to=${toUserId}`)
         return this.jsonResponse({ ok: true, msgId: (data as any).msg_id_str || (data as any).msg_id })
+      }
+
+      if (
+        data &&
+        typeof data === 'object' &&
+        !Array.isArray(data) &&
+        Object.keys(data).length === 0
+      ) {
+        this.ctx.logger.info(`发送微信消息成功(空响应体按 accepted 处理), to=${toUserId}`)
+        return this.jsonResponse({ ok: true, accepted: true })
       }
 
       if ((data as any).errcode === -14 || data.ret === -14) {
@@ -380,13 +423,12 @@ export default class WechatBotPlugin implements CrabclawPlugin {
           this.schedulePolling(account, 5000); return
         }
 
-        const contextToken = data.context_token || ''
-
         if (data.msgs && data.msgs.length > 0) {
           this.ctx.logger.info(`收到 ${data.msgs.length} 条微信消息`)
-          for (const msg of data.msgs) {
-            const sender = msg.from_wxid || msg.from_user_id || ''
-            if (sender) account.contextTokens[sender] = contextToken
+          for (const msg of data.msgs as WechatInboundMessage[]) {
+            const sender = msg.from_user_id || msg.from_wxid || ''
+            const contextToken = msg.context_token || data.context_token || ''
+            if (sender && contextToken) account.contextTokens[sender] = contextToken
 
             let text = ''; let msgType = 'text'
             if (msg.content?.text) { text = msg.content.text }
@@ -399,7 +441,7 @@ export default class WechatBotPlugin implements CrabclawPlugin {
               }
             } else if (msg.text) { text = msg.text }
 
-            this.ctx.logger.info(`微信消息内容: from=${sender}, type=${msgType}, text=${text.slice(0, 100)}`)
+            this.ctx.logger.info(`微信消息内容: from=${sender}, type=${msgType}, has_ctx=${!!contextToken}, text=${text.slice(0, 100)}`)
 
             if (text || msgType !== 'text') {
               const senderKey = sender || account.userId || account.wxid

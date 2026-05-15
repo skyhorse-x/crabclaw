@@ -1392,14 +1392,44 @@ function formatMcpToolHint(tool: { name?: string; inputSchema?: { required?: unk
   return `${name}(required: ${required.join(', ')})`
 }
 
+function tryBalanceJsonObject(text: string): string | null {
+  const raw = String(text || '').trim()
+  if (!raw || !raw.includes('{')) return null
+
+  let depth = 0
+  let inString = false
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i]
+    if (ch === '"' && (i === 0 || raw[i - 1] !== '\\')) {
+      inString = !inString
+      continue
+    }
+    if (inString) continue
+    if (ch === '{') depth++
+    else if (ch === '}') depth--
+  }
+
+  if (inString || depth <= 0) return null
+  return `${raw}${'}'.repeat(depth)}`
+}
+
 function parseAgentEnvelope(reply: string): AgentEnvelope | null {
   const text = String(reply || '').trim()
   if (!text) return null
 
   const candidates: string[] = [text]
+  const balancedText = tryBalanceJsonObject(text)
+  if (balancedText && !candidates.includes(balancedText)) {
+    candidates.unshift(balancedText)
+  }
   const fenced = text.match(/```json\s*([\s\S]*?)```/i)
   if (fenced?.[1]) {
-    candidates.unshift(String(fenced[1]).trim())
+    const fencedText = String(fenced[1]).trim()
+    candidates.unshift(fencedText)
+    const balancedFenced = tryBalanceJsonObject(fencedText)
+    if (balancedFenced && !candidates.includes(balancedFenced)) {
+      candidates.unshift(balancedFenced)
+    }
   }
 
   // 提取第一个完整的 JSON 对象（支持多 JSON 对象并列的情况）
@@ -1460,6 +1490,131 @@ function parseAgentEnvelope(reply: string): AgentEnvelope | null {
     reply: summarizeForLog(text, 900)
   })
   return null
+}
+
+/**
+ * 当 parseAgentEnvelope 失败时，尝试从 JSON 文本中提取可读内容。
+ * AI 可能返回了合法的 JSON 但不是标准 envelope 格式，直接展示原始 JSON 给用户不友好。
+ */
+export function ensureReadableText(text: string): string {
+  const raw = String(text || '').trim()
+  if (!raw) return raw
+
+  const parseCandidates = [raw]
+  const balancedRaw = tryBalanceJsonObject(raw)
+  if (balancedRaw && !parseCandidates.includes(balancedRaw)) {
+    parseCandidates.unshift(balancedRaw)
+  }
+  const fenced = raw.match(/```json\s*([\s\S]*?)```/i)
+  if (fenced?.[1]) {
+    const fencedText = String(fenced[1]).trim()
+    parseCandidates.unshift(fencedText)
+    const balancedFenced = tryBalanceJsonObject(fencedText)
+    if (balancedFenced && !parseCandidates.includes(balancedFenced)) {
+      parseCandidates.unshift(balancedFenced)
+    }
+  }
+
+  let searchPos = 0
+  while (searchPos < raw.length) {
+    const firstBrace = raw.indexOf('{', searchPos)
+    if (firstBrace < 0) break
+    let depth = 0
+    let inString = false
+    let endPos = -1
+    for (let i = firstBrace; i < raw.length; i++) {
+      const ch = raw[i]
+      if (ch === '"' && (i === 0 || raw[i - 1] !== '\\')) inString = !inString
+      if (!inString) {
+        if (ch === '{') depth++
+        else if (ch === '}') {
+          depth--
+          if (depth === 0) {
+            endPos = i
+            break
+          }
+        }
+      }
+    }
+    if (endPos < 0) {
+      searchPos = firstBrace + 1
+      continue
+    }
+
+    const candidate = raw.slice(firstBrace, endPos + 1)
+    if (!parseCandidates.includes(candidate)) {
+      parseCandidates.push(candidate)
+    }
+    searchPos = endPos + 1
+  }
+
+  const balancedCandidates = parseCandidates
+    .map((candidate) => tryBalanceJsonObject(candidate))
+    .filter((candidate): candidate is string => Boolean(candidate) && !parseCandidates.includes(candidate))
+  parseCandidates.unshift(...balancedCandidates)
+
+  for (const candidate of parseCandidates) {
+    let parsed: any
+    try {
+      parsed = JSON.parse(candidate)
+    } catch {
+      continue
+    }
+
+    if (typeof parsed === 'string') {
+      const unwrapped = String(parsed || '').trim()
+      if (unwrapped && unwrapped !== candidate) {
+        const sub = ensureReadableText(unwrapped)
+        if (sub) return sub
+      }
+      continue
+    }
+
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      continue
+    }
+
+    const readableFields = ['content', 'message', 'text', 'result', 'output', 'reply', 'data']
+    for (const field of readableFields) {
+      const val = parsed[field]
+      if (typeof val === 'string' && val.trim()) {
+        const trimmed = val.trim()
+        const sub = ensureReadableText(trimmed)
+        return sub || trimmed
+      }
+      if (val && typeof val === 'object' && !Array.isArray(val)) {
+        const sub = ensureReadableText(JSON.stringify(val))
+        if (sub) return sub
+      }
+    }
+  }
+
+  const quotedFieldPatterns = [
+    /"content"\s*:\s*"((?:\\.|[^"\\])*)"/,
+    /"result"\s*:\s*"((?:\\.|[^"\\])*)"/,
+    /"message"\s*:\s*"((?:\\.|[^"\\])*)"/,
+    /"text"\s*:\s*"((?:\\.|[^"\\])*)"/,
+  ]
+
+  for (const pattern of quotedFieldPatterns) {
+    const match = raw.match(pattern)
+    if (!match?.[1]) continue
+    try {
+      const extracted = JSON.parse(`"${match[1]}"`)
+      if (typeof extracted === 'string' && extracted.trim()) {
+        return extracted.trim()
+      }
+    } catch {
+      const fallback = match[1]
+        .replace(/\\"/g, '"')
+        .replace(/\\n/g, '\n')
+        .replace(/\\\\/g, '\\')
+        .trim()
+      if (fallback) return fallback
+    }
+  }
+
+  return raw
 }
 
 function resolveActionTarget(
@@ -2041,7 +2196,7 @@ export async function* handleChatStream(
   }
 
   const callModel = async (...args: Parameters<typeof requestModelReply>): Promise<LlmResponse> => {
-    const result = await callModel(...args)
+    const result = await requestModelReply(...args)
     if (result.usage) {
       if (!accumulatedUsage) {
         accumulatedUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 }
@@ -2185,7 +2340,7 @@ export async function* handleChatStream(
     if (agentEnvelope?.type === 'message' && agentEnvelope?.data?.content) {
       aiReplyText = String(agentEnvelope.data.content || '')
     } else if (!agentEnvelope && reply && reply.trim()) {
-      aiReplyText = reply.trim()
+      aiReplyText = ensureReadableText(reply.trim())
     }
 
     if (!agentEnvelope) {
@@ -2309,7 +2464,7 @@ export async function* handleChatStream(
           )
           const nextBatchEnvelope = parseAgentEnvelope(nextBatchResult.reply)
           if (!nextBatchEnvelope) {
-            yield* streamReplyChunks(lastToolResultText || '批量执行完成')
+            yield* streamReplyChunks(ensureReadableText(lastToolResultText) || '批量执行完成')
             yield { type: 'done', usage: accumulatedUsage }
             return
           }
@@ -2395,7 +2550,7 @@ export async function* handleChatStream(
             )
             const nextBuiltinEnvelope = parseAgentEnvelope(nextBuiltinReply.reply)
             if (!nextBuiltinEnvelope) {
-              yield* streamReplyChunks(lastToolResultText || '运行结束，已完成。')
+              yield* streamReplyChunks(ensureReadableText(lastToolResultText) || '运行结束，已完成。')
               yield { type: 'done', usage: accumulatedUsage }
               return
             }
@@ -2750,7 +2905,7 @@ export async function* handleChatStream(
               const nextReply5 = nextReplyResult5.reply
               const nextEnvelope = parseAgentEnvelope(nextReply5)
               if (!nextEnvelope) {
-                yield* streamReplyChunks(lastToolResultText)
+                yield* streamReplyChunks(ensureReadableText(lastToolResultText))
                 yield { type: 'done', usage: accumulatedUsage }
                 return
               }
@@ -2777,7 +2932,7 @@ export async function* handleChatStream(
             const nextReply6 = nextReplyResult6.reply
             const nextEnvelope = parseAgentEnvelope(nextReply6)
             if (!nextEnvelope) {
-              yield* streamReplyChunks(formatReplyForUser(message, lastToolResultText || `调用失败：${server}/${tool}`))
+              yield* streamReplyChunks(formatReplyForUser(message, ensureReadableText(lastToolResultText) || `调用失败：${server}/${tool}`))
               yield { type: 'done', usage: accumulatedUsage }
               return
             }
@@ -2801,7 +2956,7 @@ export async function* handleChatStream(
           const nextReply7 = nextReplyResult7.reply
           const nextEnvelope = parseAgentEnvelope(nextReply7)
           if (!nextEnvelope) {
-            yield* streamReplyChunks(formatReplyForUser(message, lastToolResultText || '运行结束，已完成。'))
+            yield* streamReplyChunks(formatReplyForUser(message, ensureReadableText(lastToolResultText) || '运行结束，已完成。'))
             yield { type: 'done', usage: accumulatedUsage }
             return
           }
@@ -2811,7 +2966,7 @@ export async function* handleChatStream(
           }
 
         if (agentEnvelope.type === 'message') {
-          const text = getAgentMessageText(agentEnvelope.data)
+          const text = ensureReadableText(getAgentMessageText(agentEnvelope.data))
           void logger.info('[AI] Agent message', {
             turn,
             text: summarizeForLog(text, 700)
@@ -2824,7 +2979,8 @@ export async function* handleChatStream(
         }
 
         if (agentEnvelope.type === 'done') {
-          const text = getAgentMessageText(agentEnvelope.data) || finalReplyText || lastToolResultText || '运行结束，已完成。'
+          const rawText = getAgentMessageText(agentEnvelope.data) || finalReplyText || lastToolResultText || '运行结束，已完成。'
+          const text = ensureReadableText(rawText)
           void logger.info('[AI] Agent done', {
             turn,
             text: summarizeForLog(text, 700)
@@ -2853,7 +3009,7 @@ export async function* handleChatStream(
       void logger.warn('[AI] Agent reached max turns', { maxTurns })
       yield buildDetail('agent', '达到最大自动执行轮次，已停止继续调用')
       if (lastToolResultText) {
-        yield* streamReplyChunks(formatReplyForUser(message, lastToolResultText))
+        yield* streamReplyChunks(formatReplyForUser(message, ensureReadableText(lastToolResultText)))
       }
       await storeConversationTurn(message, lastToolResultText || '', conversationHistory || [])
       await extractAndStoreUserInfo(message, lastToolResultText || '', conversationHistory || [])
