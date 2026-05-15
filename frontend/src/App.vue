@@ -2970,11 +2970,27 @@ watch(activeSettingTab, (newTab) => {
 })
 
 // 代理列表
-const agents = ref([
-  { id: 'builtin-bot', name: 'CraBot', avatar: '🤖', isBuiltIn: true },
-  { id: 'custom-ai-1', name: '自定义AI 1', avatar: 'A' },
-  { id: 'custom-ai-2', name: '自定义AI 2', avatar: 'C' }
+const agents = ref<{ id: string; name: string; avatar: string; isBuiltIn?: boolean }[]>([
+  { id: 'builtin-bot', name: 'CraBot', avatar: '🤖', isBuiltIn: true }
 ])
+
+async function loadAgentList() {
+  try {
+    const res = await fetch(buildApiUrl('/api/agents'))
+    const data = await res.json()
+    const remotes = Array.isArray(data) ? data : []
+    agents.value = [
+      { id: 'builtin-bot', name: 'CraBot', avatar: '🤖', isBuiltIn: true },
+      ...remotes.map((a: any) => ({
+        id: String(a.id),
+        name: String(a.name || a.id),
+        avatar: String(a.avatar || a.name?.[0] || 'A')
+      }))
+    ]
+  } catch {
+    // keep builtin-bot if fetch fails
+  }
+}
 
 // 对话右键菜单状态
 const conversationMenuVisible = ref(false)
@@ -3027,16 +3043,10 @@ async function clearConv() {
   }
 }
 
-async function deleteConv() {
+function deleteConv() {
   closeConversationMenu()
   if (!selectedConvForMenu.value) return
-  
-  await ElMessageBox.confirm('确定删除此对话吗？此操作不可恢复。', '确认删除', {
-    confirmButtonText: '确定',
-    cancelButtonText: '取消',
-    type: 'warning'
-  })
-  
+
   const index = conversations.value.findIndex(c => c.id === selectedConvForMenu.value?.id)
   if (index !== -1) {
     conversations.value.splice(index, 1)
@@ -4339,22 +4349,12 @@ async function copyConversationHistory() {
   ElMessage.success(t("historyCopied"))
 }
 
-async function deleteConversationHistory() {
+function deleteConversationHistory() {
   const conversationId = conversationContextMenu.conversationId
   closeConversationContextMenu()
 
   const targetIndex = conversations.value.findIndex((conv) => conv.id === conversationId)
   if (targetIndex < 0) return
-
-  try {
-    await ElMessageBox.confirm(t("historyDeleteConfirm"), t("historyDeleteTitle"), {
-      confirmButtonText: t("confirm"),
-      cancelButtonText: t("cancel"),
-      type: "warning"
-    })
-  } catch {
-    return
-  }
 
   conversations.value.splice(targetIndex, 1)
 

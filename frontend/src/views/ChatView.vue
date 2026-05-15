@@ -18,33 +18,32 @@
               <span class="icon-spin"></span> 正在思考...
             </div>
             <div v-else class="message-text" v-html="formatMessage(msg.text)"></div>
-            <div v-if="msg.mcpCalls && msg.mcpCalls.length > 0" class="chat-mcp-timeline">
-              <div v-for="(call, i) in msg.mcpCalls" :key="i" class="chat-mcp-item" :class="'chat-mcp-item--' + call.status">
-                <!-- 状态图标 -->
-                <div class="mcp-status-col">
-                  <span v-if="call.status === 'success'" class="icon-ok">✓</span>
-                  <span v-else-if="call.status === 'error'" class="icon-err">✗</span>
-                  <span v-else class="icon-spin"></span>
-                </div>
-                <div class="mcp-body">
-                  <!-- 一级：动作描述 -->
-                  <div class="mcp-action">{{ toolAction(call.server, call.tool, call.input, call.status) }}</div>
-                  <!-- 二级：工具名 -->
-                  <div class="mcp-tool-row">
-                    <span class="mcp-tool-label">调用工具：</span>
-                    <span class="mcp-tool-name">{{ toolShortName(call.server, call.tool) }}</span>
+            <details v-if="msg.mcpCalls && msg.mcpCalls.length > 0" class="chat-mcp-wrap">
+              <summary class="chat-mcp-summary">执行记录</summary>
+              <div class="chat-mcp-timeline">
+                <div v-for="(call, i) in msg.mcpCalls" :key="i" class="chat-mcp-item" :class="'chat-mcp-item--' + call.status">
+                  <div class="mcp-status-col">
+                    <span v-if="call.status === 'success'" class="icon-ok">✓</span>
+                    <span v-else-if="call.status === 'error'" class="icon-err">✗</span>
+                    <span v-else class="icon-spin"></span>
                   </div>
-                  <!-- 三级：执行细节 -->
-                  <div v-if="toolDetails(call.server, call.tool, call.input, call.error).length" class="mcp-detail-block">
-                    <div class="mcp-detail-title">执行细节：</div>
-                    <div v-for="(d, di) in toolDetails(call.server, call.tool, call.input, call.error)" :key="di" class="mcp-detail-row">
-                      <span class="mcp-detail-key">{{ d.key }}：</span>
-                      <span class="mcp-detail-val" :class="d.type === 'error' ? 'mcp-detail-err' : ''">{{ d.val }}</span>
+                  <div class="mcp-body">
+                    <div class="mcp-action">{{ toolAction(call.server, call.tool, call.input, call.status) }}</div>
+                    <div class="mcp-tool-row">
+                      <span class="mcp-tool-label">调用工具：</span>
+                      <span class="mcp-tool-name">{{ toolShortName(call.server, call.tool) }}</span>
+                    </div>
+                    <div v-if="toolDetails(call.server, call.tool, call.input, call.error).length" class="mcp-detail-block">
+                      <div class="mcp-detail-title">执行细节：</div>
+                      <div v-for="(d, di) in toolDetails(call.server, call.tool, call.input, call.error)" :key="di" class="mcp-detail-row">
+                        <span class="mcp-detail-key">{{ d.key }}：</span>
+                        <span class="mcp-detail-val" :class="d.type === 'error' ? 'mcp-detail-err' : ''">{{ d.val }}</span>
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
-            </div>
+            </details>
             <div v-if="msg.error && msg.error.code === 'REQUEST_ABORTED'" class="paused-tip">
               ⏸ 已暂停执行
             </div>
@@ -160,94 +159,73 @@ onMounted(() => {
   })
 })
 
+function ensureAiMessage() {
+  if (!aiMessage) {
+    aiMessage = { role: 'assistant', text: '', thinking: true }
+    currentConversation.value.messages.push(aiMessage)
+  }
+  return aiMessage
+}
+
 function handleChunk(chunk: ChatChunk) {
   switch (chunk.type) {
     case 'plan':
-      if (Array.isArray(chunk.plan)) {
-        const steps = chunk.plan.map((s: any, i: number) =>
-          `[plan] ${s.title || s.description || `步骤 ${i + 1}`}`
-        )
-        if (!aiMessage) {
-          aiMessage = { role: 'assistant', text: '' }
-          currentConversation.value.messages.push(aiMessage)
-        }
-        if (!aiMessage.stages) aiMessage.stages = []
-        for (const step of steps) {
-          if (!aiMessage.stages.includes(step)) {
-            aiMessage.stages.push(step)
-          }
-        }
-        aiMessage.text = aiMessage.stages.join('\n')
-      }
+    case 'task':
+    case 'step':
+    case 'detail':
+      // 这些内部进度事件只确保 aiMessage 存在，不写入正文
+      ensureAiMessage()
       break
 
     case 'reasoning':
-      if (aiMessage && chunk.reasoning) {
-        aiMessage.reasoning = chunk.reasoning
-      }
+      if (chunk.reasoning) ensureAiMessage().reasoning = chunk.reasoning
       break
 
     case 'mcp':
-      if (aiMessage && chunk.mcp) {
-        if (!aiMessage.mcpCalls) aiMessage.mcpCalls = []
-        const existing = aiMessage.mcpCalls.find(
+      if (chunk.mcp) {
+        const msg = ensureAiMessage()
+        if (!msg.mcpCalls) msg.mcpCalls = []
+        const existing = msg.mcpCalls.find(
           c => c.server === chunk.mcp!.server && c.tool === chunk.mcp!.tool && c.status === 'start'
         )
         if (existing && chunk.mcp.status !== 'start') {
           Object.assign(existing, chunk.mcp)
         } else {
-          aiMessage.mcpCalls.push(chunk.mcp)
+          msg.mcpCalls.push(chunk.mcp)
         }
       }
       break
 
     case 'error':
-      if (aiMessage && chunk.error) {
-        aiMessage.error = typeof chunk.error === 'string'
+      if (chunk.error) {
+        const msg = ensureAiMessage()
+        msg.thinking = false
+        msg.error = typeof chunk.error === 'string'
           ? { code: 'ERROR', message: chunk.error, severity: 'fatal', suggestion: '', retryable: false }
           : chunk.error
       }
       break
 
     case 'learning':
-      if (aiMessage && chunk.learning) {
-        aiMessage.learning = chunk.learning
-      }
+      if (chunk.learning) ensureAiMessage().learning = chunk.learning
       break
 
     case 'reply':
-      if (!aiMessage) {
-        aiMessage = { role: 'assistant', text: '' }
-        currentConversation.value.messages.push(aiMessage)
-      }
-      if (chunk.delta && chunk.reply) {
-        aiMessage.text += chunk.reply
-      } else if (chunk.reply) {
-        aiMessage.text = chunk.reply
-      }
-      break
-
-    case 'detail':
-      if (aiMessage && chunk.detail) {
-        // tool/mcp/result 类型的 detail 由 mcp 列表展示，不堆到 stages
-        if (['tool', 'mcp', 'result'].includes(chunk.detail.stage)) break
-        if (!aiMessage.stages) aiMessage.stages = []
-        const stageText = chunk.detail.text
-        if (!aiMessage.stages.includes(stageText)) {
-          aiMessage.stages.push(stageText)
+      if (chunk.reply) {
+        const msg = ensureAiMessage()
+        msg.thinking = false
+        if (chunk.delta) {
+          msg.text += chunk.reply
+        } else {
+          msg.text = chunk.reply
         }
-        aiMessage.text = aiMessage.stages.join('\n')
       }
       break
 
     case 'done':
       if (aiMessage) {
-        if (aiMessage.stages && aiMessage.stages.length > 0) {
-          aiMessage.text = aiMessage.stages[aiMessage.stages.length - 1] || '处理完成'
-        }
-        if (chunk.usage) {
-          aiMessage.usage = chunk.usage
-        }
+        aiMessage.thinking = false
+        if (chunk.usage) aiMessage.usage = chunk.usage
       }
       aiMessage = null
       break
@@ -257,13 +235,6 @@ function handleChunk(chunk: ChatChunk) {
 
 function formatMessage(text: string) {
   return text.replace(/\n/g, '<br>')
-}
-
-function formatStage(text: string): string {
-  if (text.length > 200) {
-    return escapeHtml(text.slice(0, 200)) + '...'
-  }
-  return escapeHtml(text).replace(/\n/g, '<br>')
 }
 
 // 工具短名（二级：调用工具）
@@ -483,37 +454,13 @@ function scrollToBottom() {
   text-align: right;
 }
 
-.stages-progress {
-  margin-top: 12px;
-  background: #f8fafc;
-  border-radius: 8px;
-  padding: 10px 12px;
-  border-left: 3px solid #3b82f6;
-}
-
-.stage-item {
+.thinking-tip {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 8px;
-  padding: 4px 0;
   font-size: 13px;
-  color: #475569;
-}
-
-.stage-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #3b82f6;
-  margin-top: 6px;
-  flex-shrink: 0;
-}
-
-.stage-text {
-  line-height: 1.4;
-  word-break: break-word;
-  max-width: 100%;
-  overflow: hidden;
+  color: #9ca3af;
+  padding: 4px 0;
 }
 
 .reasoning-card {
@@ -551,9 +498,34 @@ function scrollToBottom() {
   font-size: 14px;
 }
 
+/* ===== MCP 执行记录折叠 ===== */
+.chat-mcp-wrap {
+  margin-top: 8px;
+}
+
+.chat-mcp-wrap > summary {
+  display: inline-block;
+  cursor: pointer;
+  font-size: 11px;
+  color: #9ca3af;
+  background: #f3f4f6;
+  border-radius: 4px;
+  padding: 2px 8px;
+  user-select: none;
+  list-style: none;
+  outline: none;
+}
+
+.chat-mcp-wrap > summary::-webkit-details-marker {
+  display: none;
+}
+
+.chat-mcp-wrap[open] > summary {
+  margin-bottom: 8px;
+}
+
 /* ===== MCP 三级步骤 ===== */
 .chat-mcp-timeline {
-  margin-top: 10px;
   display: flex;
   flex-direction: column;
   gap: 8px;
