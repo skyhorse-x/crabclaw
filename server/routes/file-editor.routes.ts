@@ -2,7 +2,6 @@ import { readFile, writeFile, stat } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import open from 'open'
-import { logger } from '../services/logger.service'
 
 const ALLOWED_ROOTS = [
   process.cwd(),

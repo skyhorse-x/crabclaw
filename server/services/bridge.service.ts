@@ -41,12 +41,11 @@ export interface WindowInfo {
  * 支持桌面端和浏览器端两种模式
  */
 export class BridgeService {
-  private config: BridgeConfig
   private connected: boolean = false
   private desktopMode: boolean = false
 
   constructor(config: BridgeConfig) {
-    this.config = config
+    void (config)
     this.checkDesktopMode()
   }
 

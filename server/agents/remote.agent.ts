@@ -14,6 +14,7 @@
 import { logger } from '../services/logger.service'
 import { wsService } from '../services/websocket.service'
 import { handleChatStream, ensureReadableText } from '../handlers/chat.handler'
+import { remoteControlLogService } from '../services/remote-control-log.service'
 
 export const CRABOT_NAME = 'CraBot'
 
@@ -64,6 +65,8 @@ export class RemoteAgent {
   private typingIndicator: TypingIndicatorFn | null = null
   private busy = false
   private abortController: AbortController | null = null
+  private pendingQueue: RemoteMessage[] = []
+  private processing = false
 
   constructor(platform: RemotePlatform) {
     this.id = `remote-agent-${platform}`
@@ -88,20 +91,33 @@ export class RemoteAgent {
   async receive(msg: RemoteMessage): Promise<void> {
     if (!msg.text.trim()) return
 
-    if (this.busy) {
-      logger.warn(`[CraBot] ${this.id} 正忙，拒绝新消息: ${msg.text.slice(0, 40)}`)
-      await this.sendReply(msg.sender, '⏳ 上一个任务还在处理中，请稍候…')
+    this.pendingQueue.push(msg)
+    logger.info(`[CraBot] ${this.id} 消息已入队: ${msg.text.slice(0, 40)} (队列长度: ${this.pendingQueue.length})`)
+
+    if (!this.processing) {
+      await this.processNext()
+    }
+  }
+
+  private async processNext(): Promise<void> {
+    if (this.pendingQueue.length === 0) {
+      this.processing = false
       return
     }
+
+    this.processing = true
+    const msg = this.pendingQueue.shift()!
 
     this.busy = true
     this.abortController = new AbortController()
     this.history.push({ role: 'user', text: msg.text })
     this.broadcastToFrontend('user', msg.text, msg.sender)
-    logger.info(`[CraBot] ${this.id} 开始处理任务: ${msg.text.slice(0, 200)}`)
+    remoteControlLogService.info('message_processing', this.platform, `开始处理任务: ${msg.text.slice(0, 200)}`, undefined, msg.sender)
+    logger.info(`[CraBot] ${this.id} 开始处理任务: ${msg.text.slice(0, 200)} (队列剩余: ${this.pendingQueue.length})`)
 
     // 启动"正在输入"提示
     const stopTyping = this.typingIndicator ? this.typingIndicator(msg.sender) : () => {}
+    remoteControlLogService.info('typing_start', this.platform, '开始 typing 提示', undefined, msg.sender)
 
     let fullReply = ''
 
@@ -132,14 +148,18 @@ export class RemoteAgent {
 
       // 任务完成后先停止 typing，再发送回复（顺序重要）
       stopTyping()
+      remoteControlLogService.info('typing_stop', this.platform, '停止 typing 提示', undefined, msg.sender)
       const cleanedReply = this.sanitizeRemoteText(fullReply, this.platform)
       this.broadcastToFrontend('assistant', cleanedReply, msg.sender)
       await this.sendReply(msg.sender, cleanedReply)
 
+      remoteControlLogService.success('message_reply', this.platform, `回复完成: ${cleanedReply.slice(0, 200)}`, undefined, msg.sender)
       logger.info(`[CraBot] ${this.id} 任务完成，回复: ${cleanedReply.slice(0, 200)}`)
     } catch (err: any) {
       stopTyping()
+      remoteControlLogService.info('typing_stop', this.platform, '停止 typing 提示（异常）', undefined, msg.sender)
       const errMsg = `❌ 处理失败: ${ensureReadableText(err.message || String(err))}`
+      remoteControlLogService.error('agent_error', this.platform, `处理异常: ${err.message}`, undefined, msg.sender)
       logger.error(`[CraBot] ${this.id} 处理异常: ${err.message}`)
       this.broadcastToFrontend('assistant', errMsg, msg.sender)
       await this.sendReply(msg.sender, errMsg)
@@ -147,6 +167,8 @@ export class RemoteAgent {
     } finally {
       this.busy = false
       this.abortController = null
+      // 处理下一条排队消息
+      await this.processNext()
     }
   }
 

@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync } from 'node:fs'
 import path from 'node:path'
+import { PATHS } from '../shared/constants'
 
 export function getUnifiedDbPath(): string {
-  const cwd = process.cwd()
-  const serverDir = path.basename(cwd) === 'server' ? cwd : path.join(cwd, 'server')
+  const serverDir = path.dirname(PATHS.DATA_DIR)
 
   if (!existsSync(serverDir)) {
     mkdirSync(serverDir, { recursive: true })

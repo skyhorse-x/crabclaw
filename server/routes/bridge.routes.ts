@@ -7,7 +7,7 @@ import { readJsonBody } from '../shared/utils'
 import { logger } from '../services/logger.service'
 import { getBridgeService } from '../services/bridge.service'
 
-export async function handleBridgeRoute(pathname: string, request: Request) {
+export async function handleBridgeRoute(pathname: string, request: Request): Promise<Response | null> {
   const bridge = getBridgeService()
 
   // GET /api/bridge/ping

@@ -4,7 +4,7 @@
  */
 
 import { logger } from '../services/logger.service'
-import { createId } from '../shared/utils'
+import '../shared/utils'
 
 export enum ErrorSeverity {
   CRITICAL = 'critical',
@@ -416,7 +416,7 @@ export class ErrorRecoveryService {
     failureCount: number
     totalDuration: number
   }> {
-    const { stopOnError = false, maxConcurrency = 5, errorHandler } = options
+    const { stopOnError = false, maxConcurrency: _, errorHandler } = options
     const startTime = Date.now()
     const results: Array<{ id: string; success: boolean; result?: T; error?: string }> = []
     let successCount = 0
@@ -456,7 +456,7 @@ export class ErrorRecoveryService {
   /**
    * 获取错误统计
    */
-  getErrorStats(errorType?: string): {
+  getErrorStats(_errorType?: string): {
     totalRetries: number
     retryCountByType: Record<string, number>
     recentErrors: Array<{ type: string; message: string; timestamp: number }>

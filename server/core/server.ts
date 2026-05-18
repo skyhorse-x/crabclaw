@@ -7,10 +7,8 @@ import { logger } from '../services/logger.service'
 import { createHttpServer } from './http'
 import { bootstrap, gracefulShutdown } from './bootstrap'
 import { handleApiRequest } from '../api/routes'
+import { PATHS } from '../shared/constants'
 import fs from 'fs'
-import path from 'path'
-
-const isDev = process.env.NODE_ENV !== 'production'
 
 const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
@@ -96,6 +94,7 @@ async function handleRequest(request: Request): Promise<Response> {
  * 启动服务器
  */
 let serverStarted = false
+export let activeServer: { url: string; stop: () => void } | null = null
 
 export async function startServer() {
   if (serverStarted) {
@@ -111,33 +110,51 @@ export async function startServer() {
 
     // 创建 HTTP 服务器
     const server = createHttpServer(config.settings.backendPort, handleRequest)
+    activeServer = server
 
     // 优雅关闭
     if (typeof process !== 'undefined') {
       process.on('SIGINT', async () => {
         logger.info('Received SIGINT, shutting down gracefully...')
-        await gracefulShutdown()
+        try {
+          await gracefulShutdown()
+        } catch (err) {
+          logger.error('Graceful shutdown error', err)
+        }
         server.stop()
         process.exit(0)
       })
 
       process.on('SIGTERM', async () => {
         logger.info('Received SIGTERM, shutting down gracefully...')
-        await gracefulShutdown()
+        try {
+          await gracefulShutdown()
+        } catch (err) {
+          logger.error('Graceful shutdown error', err)
+        }
         server.stop()
         process.exit(0)
       })
     }
 
     logger.info('Server started successfully', {
-      url: `http://localhost:${config.settings.backendPort}`
+      url: server.url
     })
-    console.log(`Desktop Agent Studio running at http://localhost:${config.settings.backendPort}`)
+    const actualUrl = server.url
+    const actualPort = actualUrl.split(':')[2]
+    console.log(`Desktop Agent Studio running at ${actualUrl}`)
 
     // 写入端口文件供 dev.mjs 脚本使用
-    const portFile = path.join(process.cwd(), 'server', '.port')
-    fs.writeFileSync(portFile, String(config.settings.backendPort), 'utf-8')
-    console.log(`[dev] Port file written: ${portFile}`)
+    const portFile = PATHS.PORT_FILE
+    try {
+      fs.writeFileSync(portFile, actualPort, 'utf-8')
+      console.log(`[dev] Port file written: ${portFile}`)
+    } catch (err) {
+      logger.warn('Failed to write port file', err)
+    }
+
+    // 保持事件循环活跃（Bun 下 node:http 服务器可能不 keep-alive）
+    const keepAliveTimer = setInterval(() => {}, 30000)
   } catch (error) {
     serverStarted = false
     logger.error('Failed to start server', error)

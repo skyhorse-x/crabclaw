@@ -47,18 +47,19 @@ export function createHttpServer(
 
   server.on('error', (err: any) => {
     if (err?.code === 'EADDRINUSE') {
-      logger.error(`Port ${port} is already in use. Cannot start server.`, {
+      logger.error(`Port ${port} is already in use. Please stop the other process or change the port.`, {
         errCode: 'EADDRINUSE',
         port,
         error: err.message
       })
-      process.exit(1)
+    } else {
+      logger.error('HTTP server error', err)
     }
-    logger.error('HTTP server error', err)
   })
 
   server.on('listening', () => {
-    logger.info('HTTP server created', { port, url: `http://localhost:${port}`, hostname: 'localhost' })
+    const actualPort = server.address()?.port || port
+    logger.info('HTTP server created', { port: actualPort, url: `http://localhost:${actualPort}`, hostname: 'localhost' })
 
     if (!wsInitialized) {
       wsInitialized = true
@@ -68,10 +69,27 @@ export function createHttpServer(
     }
   })
 
-  server.listen(port)
+  // 尝试监听，如果端口被占用则尝试下一个端口
+  function tryListen(currentPort: number) {
+    server.once('error', (err: any) => {
+      if (err?.code === 'EADDRINUSE') {
+        logger.warn(`Port ${currentPort} in use, trying port ${currentPort + 1}`)
+        server.removeAllListeners('error')
+        tryListen(currentPort + 1)
+      }
+    })
+    server.listen(currentPort)
+  }
+  tryListen(port)
+
+  // 获取实际监听的端口
+  function getActualPort(): number {
+    const addr = server.address()
+    return addr ? (typeof addr === 'string' ? port : addr.port) : port
+  }
 
   return {
-    url: `http://localhost:${port}`,
+    url: `http://localhost:${getActualPort()}`,
     stop: () => {
       wsService.close()
       server.close()
@@ -79,10 +97,21 @@ export function createHttpServer(
   }
 }
 
+const MAX_BODY_SIZE = 10 * 1024 * 1024
+
 async function readBody(req: any): Promise<Buffer[]> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = []
-    req.on('data', (chunk: Buffer) => chunks.push(chunk))
+    let size = 0
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length
+      if (size > MAX_BODY_SIZE) {
+        req.destroy()
+        reject(new Error('Request body too large'))
+        return
+      }
+      chunks.push(chunk)
+    })
     req.on('end', () => resolve(chunks))
     req.on('error', reject)
   })

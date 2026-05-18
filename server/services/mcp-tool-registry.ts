@@ -137,7 +137,7 @@ export class McpToolRegistry {
    * 直接使用 MCP 返回的原始描述，不做任何硬编码分析
    * AI 应该自己理解工具描述来做出选择
    */
-  private analyzeTool(tool: any): { category: string; capabilities: string[]; tags: string[] } {
+  private analyzeTool(_tool: any): { category: string; capabilities: string[]; tags: string[] } {
     // 直接返回原始信息，不做关键词分析
     return {
       category: 'general',

@@ -9,7 +9,7 @@ import { experienceGraph } from '../learning/experience-graph'
 import { patternLibrary } from '../learning/pattern-library'
 import { strategyOptimizer } from '../learning/strategy-optimizer'
 
-export async function handleLearningStatus(req: Request, res: Response) {
+export async function handleLearningStatus(_req: Request, res: Response) {
   try {
     const status = await enhancedLearningService.getStatus()
     res.json({ success: true, data: status })
@@ -18,7 +18,7 @@ export async function handleLearningStatus(req: Request, res: Response) {
   }
 }
 
-export async function handleGetExperiences(req: Request, res: Response) {
+export async function handleGetExperiences(_req: Request, res: Response) {
   try {
     const experiences = await experienceGraph.getAll()
     res.json({
@@ -73,7 +73,7 @@ export async function handleSearchExperiences(req: Request, res: Response) {
   }
 }
 
-export async function handleGetPatterns(req: Request, res: Response) {
+export async function handleGetPatterns(_req: Request, res: Response) {
   try {
     const patterns = patternLibrary.getAllPatterns()
     res.json({
@@ -130,7 +130,7 @@ export async function handleMatchPatterns(req: Request, res: Response) {
   }
 }
 
-export async function handleGetStrategies(req: Request, res: Response) {
+export async function handleGetStrategies(_req: Request, res: Response) {
   try {
     const strategies = strategyOptimizer.getAllStrategies()
     const stats = strategyOptimizer.getStats()
@@ -172,7 +172,7 @@ export async function handleGetInsights(req: Request, res: Response) {
   }
 }
 
-export async function handleRunOptimization(req: Request, res: Response) {
+export async function handleRunOptimization(_req: Request, res: Response) {
   try {
     const report = await enhancedLearningService.runOptimization()
     res.json({
@@ -185,7 +185,7 @@ export async function handleRunOptimization(req: Request, res: Response) {
   }
 }
 
-export async function handleGetLearningStats(req: Request, res: Response) {
+export async function handleGetLearningStats(_req: Request, res: Response) {
   try {
     const expStats = await experienceGraph.getStats()
     const patternStats = patternLibrary.getStats()
@@ -272,5 +272,5 @@ export function handleLearningRoute(req: Request, res: Response) {
       break
   }
 
-  res.status(404).json({ success: false, error: 'Route not found' })
+  return res.status(404).json({ success: false, error: 'Route not found' })
 }

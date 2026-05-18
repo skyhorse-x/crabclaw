@@ -60,8 +60,8 @@ export class Logger {
     const logDir = path.dirname(this.logFilePath)
     try {
       await mkdir(logDir, { recursive: true })
-    } catch {
-      // 忽略目录创建错误
+    } catch (err) {
+      console.error(`[Logger] Failed to create log directory: ${logDir}`, err)
     }
   }
 

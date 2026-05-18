@@ -4,10 +4,10 @@
  */
 
 import { logger } from '../services/logger.service'
-import { deepReflector, DeepReflector } from './reflector'
-import { experienceGraph, ExperienceGraph } from './experience-graph'
-import { patternLibrary, PatternLibrary } from './pattern-library'
-import { strategyOptimizer, StrategyOptimizer } from './strategy-optimizer'
+import { deepReflector } from './reflector'
+import { experienceGraph } from './experience-graph'
+import { patternLibrary } from './pattern-library'
+import { strategyOptimizer } from './strategy-optimizer'
 import type {
   ExecutionRecord,
   LearningOutcome,
@@ -76,7 +76,7 @@ export class LearningController {
       deepReflection = await deepReflector.analyze(record)
     }
 
-    const expId = await experienceGraph.addFromReflection(deepReflection!)
+    await experienceGraph.addFromReflection(deepReflection!)
 
     let newPatterns: SuccessPattern[] = []
     let updatedPatterns: SuccessPattern[] = []
@@ -156,8 +156,8 @@ export class LearningController {
 
     const { optimized, suggestions } = await strategyOptimizer.autoOptimize()
 
-    const optimizedPatterns = await patternLibrary.pruneLowQualityPatterns()
-    const prunedExperiences = await experienceGraph.pruneOldExperiences(
+    await patternLibrary.pruneLowQualityPatterns()
+    await experienceGraph.pruneOldExperiences(
       this.config.retentionPeriod
     )
 

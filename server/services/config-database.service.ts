@@ -9,49 +9,58 @@ import { getUnifiedDbPath } from './unified-db-path'
 
 export interface RemoteControlConfig {
   enabled: boolean
+  proxyEnabled: boolean
   commandPrefix: string
   verifyCode: string
   telegram: {
     enabled: boolean
     botToken: string
     chatId: string
+    proxyEnabled: boolean
   }
   qq: {
     enabled: boolean
     botId: string
     webhook: string
+    proxyEnabled: boolean
   }
   wechat: {
     enabled: boolean
     webhook: string
+    proxyEnabled: boolean
   }
   feishu: {
     enabled: boolean
     appId: string
     appSecret: string
     webhook: string
+    proxyEnabled: boolean
   }
   discord: {
     enabled: boolean
     botToken: string
     channelId: string
+    proxyEnabled: boolean
   }
   slack: {
     enabled: boolean
     botToken: string
     channelId: string
+    proxyEnabled: boolean
   }
   teams: {
     enabled: boolean
     appId: string
     appSecret: string
     webhook: string
+    proxyEnabled: boolean
   }
   whatsapp: {
     enabled: boolean
     accountSid: string
     authToken: string
     fromNumber: string
+    proxyEnabled: boolean
   }
 }
 
@@ -95,34 +104,43 @@ export class ConfigDatabaseService {
       CREATE TABLE IF NOT EXISTS remote_control_config (
         id INTEGER PRIMARY KEY DEFAULT 1,
         enabled INTEGER DEFAULT 0,
+        proxy_enabled INTEGER DEFAULT 0,
         command_prefix TEXT DEFAULT '/agent',
         verify_code TEXT DEFAULT '',
         telegram_enabled INTEGER DEFAULT 0,
         telegram_bot_token TEXT DEFAULT '',
         telegram_chat_id TEXT DEFAULT '',
+        telegram_proxy_enabled INTEGER DEFAULT 0,
         qq_enabled INTEGER DEFAULT 0,
         qq_bot_id TEXT DEFAULT '',
         qq_webhook TEXT DEFAULT '',
+        qq_proxy_enabled INTEGER DEFAULT 0,
         wechat_enabled INTEGER DEFAULT 0,
         wechat_webhook TEXT DEFAULT '',
+        wechat_proxy_enabled INTEGER DEFAULT 0,
         feishu_enabled INTEGER DEFAULT 0,
         feishu_app_id TEXT DEFAULT '',
         feishu_app_secret TEXT DEFAULT '',
         feishu_webhook TEXT DEFAULT '',
+        feishu_proxy_enabled INTEGER DEFAULT 0,
         discord_enabled INTEGER DEFAULT 0,
         discord_bot_token TEXT DEFAULT '',
         discord_channel_id TEXT DEFAULT '',
+        discord_proxy_enabled INTEGER DEFAULT 0,
         slack_enabled INTEGER DEFAULT 0,
         slack_bot_token TEXT DEFAULT '',
         slack_channel_id TEXT DEFAULT '',
+        slack_proxy_enabled INTEGER DEFAULT 0,
         teams_enabled INTEGER DEFAULT 0,
         teams_app_id TEXT DEFAULT '',
         teams_app_secret TEXT DEFAULT '',
         teams_webhook TEXT DEFAULT '',
+        teams_proxy_enabled INTEGER DEFAULT 0,
         whatsapp_enabled INTEGER DEFAULT 0,
         whatsapp_account_sid TEXT DEFAULT '',
         whatsapp_auth_token TEXT DEFAULT '',
         whatsapp_from_number TEXT DEFAULT '',
+        whatsapp_proxy_enabled INTEGER DEFAULT 0,
         updated_at INTEGER NOT NULL
       )
     `)
@@ -130,6 +148,25 @@ export class ConfigDatabaseService {
     const existing = this.db.query('SELECT COUNT(*) as count FROM remote_control_config').get() as { count: number }
     if (existing.count === 0) {
       this.db.query('INSERT INTO remote_control_config (id, updated_at) VALUES (1, ?)').run(Date.now())
+    }
+
+    // 迁移：为已有数据库添加 proxy_enabled 列
+    try {
+      this.db.exec('ALTER TABLE remote_control_config ADD COLUMN proxy_enabled INTEGER DEFAULT 0')
+    } catch {
+      // 列已存在则忽略
+    }
+    const migrationColumns = [
+      'telegram_proxy_enabled', 'qq_proxy_enabled', 'wechat_proxy_enabled',
+      'feishu_proxy_enabled', 'discord_proxy_enabled', 'slack_proxy_enabled',
+      'teams_proxy_enabled', 'whatsapp_proxy_enabled'
+    ]
+    for (const col of migrationColumns) {
+      try {
+        this.db.exec(`ALTER TABLE remote_control_config ADD COLUMN ${col} INTEGER DEFAULT 0`)
+      } catch {
+        // 列已存在则忽略
+      }
     }
 
     this.db.exec(`
@@ -173,49 +210,58 @@ export class ConfigDatabaseService {
 
     return {
       enabled: Boolean(row.enabled),
+      proxyEnabled: Boolean(row.proxy_enabled),
       commandPrefix: row.command_prefix || '/agent',
       verifyCode: row.verify_code || '',
       telegram: {
         enabled: Boolean(row.telegram_enabled),
         botToken: row.telegram_bot_token || '',
-        chatId: row.telegram_chat_id || ''
+        chatId: row.telegram_chat_id || '',
+        proxyEnabled: Boolean(row.telegram_proxy_enabled)
       },
       qq: {
         enabled: Boolean(row.qq_enabled),
         botId: row.qq_bot_id || '',
-        webhook: row.qq_webhook || ''
+        webhook: row.qq_webhook || '',
+        proxyEnabled: Boolean(row.qq_proxy_enabled)
       },
       wechat: {
         enabled: Boolean(row.wechat_enabled),
-        webhook: row.wechat_webhook || ''
+        webhook: row.wechat_webhook || '',
+        proxyEnabled: Boolean(row.wechat_proxy_enabled)
       },
       feishu: {
         enabled: Boolean(row.feishu_enabled),
         appId: row.feishu_app_id || '',
         appSecret: row.feishu_app_secret || '',
-        webhook: row.feishu_webhook || ''
+        webhook: row.feishu_webhook || '',
+        proxyEnabled: Boolean(row.feishu_proxy_enabled)
       },
       discord: {
         enabled: Boolean(row.discord_enabled),
         botToken: row.discord_bot_token || '',
-        channelId: row.discord_channel_id || ''
+        channelId: row.discord_channel_id || '',
+        proxyEnabled: Boolean(row.discord_proxy_enabled)
       },
       slack: {
         enabled: Boolean(row.slack_enabled),
         botToken: row.slack_bot_token || '',
-        channelId: row.slack_channel_id || ''
+        channelId: row.slack_channel_id || '',
+        proxyEnabled: Boolean(row.slack_proxy_enabled)
       },
       teams: {
         enabled: Boolean(row.teams_enabled),
         appId: row.teams_app_id || '',
         appSecret: row.teams_app_secret || '',
-        webhook: row.teams_webhook || ''
+        webhook: row.teams_webhook || '',
+        proxyEnabled: Boolean(row.teams_proxy_enabled)
       },
       whatsapp: {
         enabled: Boolean(row.whatsapp_enabled),
         accountSid: row.whatsapp_account_sid || '',
         authToken: row.whatsapp_auth_token || '',
-        fromNumber: row.whatsapp_from_number || ''
+        fromNumber: row.whatsapp_from_number || '',
+        proxyEnabled: Boolean(row.whatsapp_proxy_enabled)
       }
     }
   }
@@ -223,68 +269,58 @@ export class ConfigDatabaseService {
   saveRemoteControlConfig(config: RemoteControlConfig): boolean {
     try {
       this.db.query(`
-        UPDATE remote_control_config SET
-          enabled = ?,
-          command_prefix = ?,
-          verify_code = ?,
-          telegram_enabled = ?,
-          telegram_bot_token = ?,
-          telegram_chat_id = ?,
-          qq_enabled = ?,
-          qq_bot_id = ?,
-          qq_webhook = ?,
-          wechat_enabled = ?,
-          wechat_webhook = ?,
-          feishu_enabled = ?,
-          feishu_app_id = ?,
-          feishu_app_secret = ?,
-          feishu_webhook = ?,
-          discord_enabled = ?,
-          discord_bot_token = ?,
-          discord_channel_id = ?,
-          slack_enabled = ?,
-          slack_bot_token = ?,
-          slack_channel_id = ?,
-          teams_enabled = ?,
-          teams_app_id = ?,
-          teams_app_secret = ?,
-          teams_webhook = ?,
-          whatsapp_enabled = ?,
-          whatsapp_account_sid = ?,
-          whatsapp_auth_token = ?,
-          whatsapp_from_number = ?,
-          updated_at = ?
-        WHERE id = 1
+        INSERT OR REPLACE INTO remote_control_config (
+          id, enabled, proxy_enabled, command_prefix, verify_code,
+          telegram_enabled, telegram_bot_token, telegram_chat_id, telegram_proxy_enabled,
+          qq_enabled, qq_bot_id, qq_webhook, qq_proxy_enabled,
+          wechat_enabled, wechat_webhook, wechat_proxy_enabled,
+          feishu_enabled, feishu_app_id, feishu_app_secret, feishu_webhook, feishu_proxy_enabled,
+          discord_enabled, discord_bot_token, discord_channel_id, discord_proxy_enabled,
+          slack_enabled, slack_bot_token, slack_channel_id, slack_proxy_enabled,
+          teams_enabled, teams_app_id, teams_app_secret, teams_webhook, teams_proxy_enabled,
+          whatsapp_enabled, whatsapp_account_sid, whatsapp_auth_token, whatsapp_from_number, whatsapp_proxy_enabled,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
+        1,
         config.enabled ? 1 : 0,
+        config.proxyEnabled ? 1 : 0,
         config.commandPrefix,
         config.verifyCode,
         config.telegram.enabled ? 1 : 0,
         config.telegram.botToken,
         config.telegram.chatId,
+        config.telegram.proxyEnabled ? 1 : 0,
         config.qq.enabled ? 1 : 0,
         config.qq.botId,
         config.qq.webhook,
+        config.qq.proxyEnabled ? 1 : 0,
         config.wechat.enabled ? 1 : 0,
         config.wechat.webhook,
+        config.wechat.proxyEnabled ? 1 : 0,
         config.feishu.enabled ? 1 : 0,
         config.feishu.appId,
         config.feishu.appSecret,
         config.feishu.webhook,
+        config.feishu.proxyEnabled ? 1 : 0,
         config.discord.enabled ? 1 : 0,
         config.discord.botToken,
         config.discord.channelId,
+        config.discord.proxyEnabled ? 1 : 0,
         config.slack.enabled ? 1 : 0,
         config.slack.botToken,
         config.slack.channelId,
+        config.slack.proxyEnabled ? 1 : 0,
         config.teams.enabled ? 1 : 0,
         config.teams.appId,
         config.teams.appSecret,
         config.teams.webhook,
+        config.teams.proxyEnabled ? 1 : 0,
         config.whatsapp.enabled ? 1 : 0,
         config.whatsapp.accountSid,
         config.whatsapp.authToken,
         config.whatsapp.fromNumber,
+        config.whatsapp.proxyEnabled ? 1 : 0,
         Date.now()
       )
 
@@ -320,6 +356,18 @@ export class ConfigDatabaseService {
       result[row.key] = row.value
     }
     return result
+  }
+
+  // ============ App Config (JSON) ============
+
+  private static readonly APP_CONFIG_KEY = 'app_config'
+
+  getAppConfigJson(): string | null {
+    return this.getConfig(ConfigDatabaseService.APP_CONFIG_KEY)
+  }
+
+  saveAppConfigJson(configJson: string): boolean {
+    return this.setConfig(ConfigDatabaseService.APP_CONFIG_KEY, configJson)
   }
 
   // ============ Chat History ============
@@ -420,16 +468,17 @@ export class ConfigDatabaseService {
   private getDefaultRemoteControlConfig(): RemoteControlConfig {
     return {
       enabled: false,
+      proxyEnabled: false,
       commandPrefix: '/agent',
       verifyCode: '',
-      telegram: { enabled: false, botToken: '', chatId: '' },
-      qq: { enabled: false, botId: '', webhook: '' },
-      wechat: { enabled: false, webhook: '' },
-      feishu: { enabled: false, appId: '', appSecret: '', webhook: '' },
-      discord: { enabled: false, botToken: '', channelId: '' },
-      slack: { enabled: false, botToken: '', channelId: '' },
-      teams: { enabled: false, appId: '', appSecret: '', webhook: '' },
-      whatsapp: { enabled: false, accountSid: '', authToken: '', fromNumber: '' }
+      telegram: { enabled: false, botToken: '', chatId: '', proxyEnabled: false },
+      qq: { enabled: false, botId: '', webhook: '', proxyEnabled: false },
+      wechat: { enabled: false, webhook: '', proxyEnabled: false },
+      feishu: { enabled: false, appId: '', appSecret: '', webhook: '', proxyEnabled: false },
+      discord: { enabled: false, botToken: '', channelId: '', proxyEnabled: false },
+      slack: { enabled: false, botToken: '', channelId: '', proxyEnabled: false },
+      teams: { enabled: false, appId: '', appSecret: '', webhook: '', proxyEnabled: false },
+      whatsapp: { enabled: false, accountSid: '', authToken: '', fromNumber: '', proxyEnabled: false }
     }
   }
 

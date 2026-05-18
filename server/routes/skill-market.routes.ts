@@ -31,7 +31,7 @@ function toSkillCategory(input: string): SkillCategory {
 /**
  * 处理 Skill Market 路由请求
  */
-export async function handleSkillMarketRoute(pathname: string, request: Request) {
+export async function handleSkillMarketRoute(pathname: string, request: Request): Promise<Response | null> {
   const appConfig = await configService.getConfig()
   const service = getSkillMarketService(appConfig.settings?.userDataDir)
 

@@ -8,6 +8,7 @@ import { readFile, writeFile, mkdir, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { logger } from './logger.service'
 import { retry, sleep } from '../shared/utils'
+import { PATHS } from '../shared/constants'
 
 // 定义类型
 type BufferEncoding = 'utf8' | 'utf16le' | 'latin1' | 'ascii' | 'base64' | 'hex'
@@ -34,7 +35,7 @@ export class ActionService {
   private bridgePath: string
 
   constructor(bridgePath?: string) {
-    this.bridgePath = bridgePath || path.join(process.cwd(), 'bridge', 'action-runner.mjs')
+    this.bridgePath = bridgePath || PATHS.BRIDGE_PATH
   }
 
   /**

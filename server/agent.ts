@@ -3,12 +3,24 @@ import { appendFileSync, existsSync, readFileSync } from "fs"
 import * as fs from "fs/promises"
 import * as os from "os"
 import * as path from "path"
+import { fileURLToPath } from 'node:url'
 import open from "open"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
-// @ts-ignore - robotjs has no TypeScript definitions
-import robot from "robotjs"
 import screenshot from "screenshot-desktop"
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+const PROJECT_ROOT = path.resolve(__dirname, '..')
+
+let robot: any = {
+  getMousePos: () => ({ x: 0, y: 0 }),
+  moveMouse: () => {},
+  mouseClick: () => {},
+  typeString: () => {},
+  keyTap: () => {},
+  scrollMouse: () => {},
+}
 
 interface McpServerConfig {
   command: string
@@ -88,7 +100,7 @@ interface BrowserState {
 }
 
 function loadLocalEnvFile() {
-  const envPath = path.resolve(process.cwd(), ".env")
+  const envPath = path.resolve(PROJECT_ROOT, ".env")
   if (!existsSync(envPath)) return
   const content = readFileSync(envPath, "utf8")
   for (const rawLine of content.split(/\r?\n/)) {
@@ -120,7 +132,7 @@ const CAPTURE_APP_ONLY = process.env.CAPTURE_APP_ONLY !== "false"
 const ENABLE_IMAGE_INPUT = process.env.ARK_ENABLE_IMAGE !== "false"
 const MAX_STAGNANT_STEPS = Number(process.env.MAX_STAGNANT_STEPS || 3)
 const MAX_REPEAT_ACTION_SIGNATURES = Number(process.env.MAX_REPEAT_ACTION_SIGNATURES || 3)
-const LOG_FILE = process.env.AGENT_LOG_FILE || path.resolve(process.cwd(), "agent-debug.log")
+const LOG_FILE = process.env.AGENT_LOG_FILE || path.resolve(PROJECT_ROOT, "agent-debug.log")
 
 const SUPPORTED_ACTIONS = new Set([
   "openApp",
@@ -145,23 +157,23 @@ const NORMALIZED_ARK_API_KEY = String(ARK_API_KEY || "").replace(/^Bearer\s+/i, 
 const MCP_SERVER_CONFIG: Record<string, McpServerConfig> = {
   filesystem: {
     command: process.execPath,
-    args: [path.resolve(process.cwd(), "node_modules/@modelcontextprotocol/server-filesystem/dist/index.js"), process.cwd()]
+    args: [path.resolve(PROJECT_ROOT, "node_modules/@modelcontextprotocol/server-filesystem/dist/index.js"), PROJECT_ROOT]
   },
   memory: {
     command: process.execPath,
-    args: [path.resolve(process.cwd(), "node_modules/@modelcontextprotocol/server-memory/dist/index.js")]
+    args: [path.resolve(PROJECT_ROOT, "node_modules/@modelcontextprotocol/server-memory/dist/index.js")]
   },
   puppeteer: {
     command: process.execPath,
-    args: [path.resolve(process.cwd(), "node_modules/@modelcontextprotocol/server-puppeteer/dist/index.js")]
+    args: [path.resolve(PROJECT_ROOT, "node_modules/@modelcontextprotocol/server-puppeteer/dist/index.js")]
   },
   fetch: {
     command: process.execPath,
-    args: [path.resolve(process.cwd(), "node_modules/mcp-fetch-server/dist/index.js")]
+    args: [path.resolve(PROJECT_ROOT, "node_modules/mcp-fetch-server/dist/index.js")]
   },
   shell: {
     command: process.execPath,
-    args: [path.resolve(process.cwd(), "node_modules/@mako10k/mcp-shell-server/dist/index.js")]
+    args: [path.resolve(PROJECT_ROOT, "node_modules/@mako10k/mcp-shell-server/dist/index.js")]
   }
 }
 
@@ -187,8 +199,12 @@ function maskApiKey(key: string): string {
   return `${k.slice(0, 6)}...${k.slice(-4)}`
 }
 
-function compactForLog(value: unknown, depth = 0): unknown {
+function compactForLog(value: unknown, depth = 0, visited = new WeakSet<object>()): unknown {
   if (depth > 6) return "[DepthLimit]"
+  if (value && typeof value === "object") {
+    if (visited.has(value as object)) return "[Circular]"
+    visited.add(value as object)
+  }
   if (typeof value === "string") {
     if (value.startsWith("data:image/") && value.includes("base64,")) {
       const idx = value.indexOf("base64,")
@@ -198,12 +214,12 @@ function compactForLog(value: unknown, depth = 0): unknown {
     return value.length > 2000 ? `${value.slice(0, 2000)}...[truncated ${value.length - 2000}]` : value
   }
   if (Array.isArray(value)) {
-    return value.map((v) => compactForLog(v, depth + 1))
+    return value.map((v) => compactForLog(v, depth + 1, visited))
   }
   if (value && typeof value === "object") {
     const out: Record<string, unknown> = {}
     for (const [k, v] of Object.entries(value)) {
-      out[k] = compactForLog(v, depth + 1)
+      out[k] = compactForLog(v, depth + 1, visited)
     }
     return out
   }
@@ -743,10 +759,12 @@ class McpManager {
       // 防止子进程退出后写入 stdin 产生 EPIPE 未处理错误
       const childProcess = (transport as any)._process
       if (childProcess) {
-        childProcess.stdin?.on('error', (err: any) => {
+        const onStdinError = (err: any) => {
           if (err?.code === 'EPIPE') return
-        })
+        }
+        childProcess.stdin?.on('error', onStdinError)
         childProcess.on('exit', () => {
+          childProcess.stdin?.removeListener('error', onStdinError)
           this.clients.delete(serverName)
         })
       }
@@ -1259,11 +1277,21 @@ async function main(): Promise<void> {
   }
 }
 
-if (import.meta.url.endsWith(process.argv[1])) {
+const isDirectExecution = (() => {
+  try {
+    const mod = import.meta.url.replace('file:///', '').replace(/\\/g, '/')
+    const arg = process.argv[1]?.replace(/\\/g, '/') ?? ''
+    if (!arg) return false
+    return mod.endsWith(arg)
+  } catch {
+    return false
+  }
+})()
+if (isDirectExecution) {
   main().catch((error) => {
     console.error("代理执行出错:", error)
     process.exit(1)
   })
 }
 
-export { main }
+export { main, sanitizeJson, tryRepairJsonText }

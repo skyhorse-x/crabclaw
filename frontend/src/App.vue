@@ -13,21 +13,6 @@
       </div>
     </div>
 
-    <!-- 后端离线提示 -->
-    <div v-if="!backendOnline && !isInitializing" class="backend-offline-banner">
-      <el-alert
-        title="后端服务未连接"
-        type="error"
-        :description="'请确认后端服务已启动，或点击重新连接'"
-        show-icon
-        :closable="false"
-      >
-        <template #default>
-          <el-button size="small" @click="retryBackendConnection">重新连接</el-button>
-        </template>
-      </el-alert>
-    </div>
-
     <!-- 三列布局 -->
     <div class="three-column-layout">
       <!-- 第一列：一级导航 -->
@@ -47,8 +32,8 @@
             v-for="item in navigationItems"
             :key="item.id"
             class="nav-item"
-            :class="{ active: selectedNav === item.id }"
-            @click="switchNav(item.id)"
+            :class="{ active: getNavPath(item.id) === $route.path }"
+            @click="navigateTo(item.id)"
           >
             <el-icon><component :is="item.icon" /></el-icon>
             <span v-if="!sidebarCollapsed">{{ t(item.labelKey) }}</span>
@@ -57,7 +42,7 @@
       </aside>
 
       <!-- 第二列：代理列表和记录 -->
-      <aside class="agent-sidebar" v-if="selectedNav === 'chat'">
+      <aside class="agent-sidebar" v-if="$route.path === '/'">
         <div class="agent-sidebar-header">
           <span class="agent-sidebar-title">{{ t('navAgents') }}</span>
           <el-button :icon="Plus" size="small" plain @click="newChat">
@@ -116,9 +101,16 @@
               >
                 {{ monitorPanelVisible ? t('monitorHide') : t('monitorShow') }}
               </button>
-              <el-button class="office-entry-btn" plain @click="openOffice3d">
-                3D代理办公室
-              </el-button>
+  
+              <!-- 代理开关 -->
+              <div class="toolbar-proxy-toggle" v-if="config.settings.proxy">
+                <span class="proxy-label" :class="{ active: config.settings.proxy.enabled }">代理</span>
+                <el-switch
+                  v-model="config.settings.proxy.enabled"
+                  size="small"
+                  @change="onProxyToggle"
+                />
+              </div>
               <!-- 菜单图标 -->
               <el-dropdown>
                 <el-button :icon="Menu" circle plain :title="t('systemMenu')"></el-button>
@@ -127,7 +119,7 @@
                     <el-dropdown-item
                       v-for="item in toolbarNavigationItems"
                       :key="`toolbar-${item.id}`"
-                      @click="switchNav(item.id)"
+                      @click="navigateTo(item.id)"
                     >
                       <el-icon><component :is="item.icon" /></el-icon>
                       <span>{{ t(item.labelKey) }}</span>
@@ -144,7 +136,7 @@
         </div>
 
         <!-- 聊天面板 (含文件编辑器) -->
-        <div class="chat-panel" v-if="selectedNav === 'chat'" :class="{ 'monitor-visible': monitorPanelVisible, 'editor-open': fileEditorVisible }">
+        <div class="chat-panel" v-if="$route.path === '/'" :class="{ 'monitor-visible': monitorPanelVisible, 'editor-open': fileEditorVisible }">
           <div class="chat-panel-main">
             <!-- 聊天消息区域 -->
             <div class="chat-messages" ref="chatMessagesRef" @click="handleChatClick">
@@ -485,726 +477,13 @@
         />
       </div>
 
-      <!-- 代理仪表盘面板 -->
-        <div class="agents-panel" v-if="selectedNav === 'agents'">
-          <AgentDashboard />
-        </div>
-
-        <!-- 流水线面板 -->
-        <div class="agents-panel" v-if="selectedNav === 'pipeline'">
-          <PipelineDashboard />
-        </div>
-
-        <!-- MCP 面板 -->
-        <div class="mcp-panel" v-if="selectedNav === 'mcp'">
-          <div class="panel-header">
-            <div class="panel-header-left">
-              <h3>{{ t('mcpMarketTitle') }}</h3>
-              <p class="panel-desc">{{ t('mcpMarketDesc') }}</p>
-            </div>
-          </div>
-          <div class="market-list" v-loading="mcpLoading" :element-loading-text="t('loading')">
-            <template v-if="mcpServers.length > 0">
-              <div class="market-card" v-for="server in mcpServers" :key="server.id">
-                <div class="market-card-header">
-                  <div class="market-icon">{{ server.name.charAt(0) }}</div>
-                  <div class="market-info">
-                    <div class="market-name">{{ server.name }}</div>
-                    <div class="market-category">{{ server.category }}</div>
-                  </div>
-                  <el-tag :type="server.installed ? 'success' : 'info'" size="small">
-                    {{ server.installed ? t('mcpStatusInstalled') : t('mcpStatusNotInstalled') }}
-                  </el-tag>
-                </div>
-                <div class="market-desc">{{ server.description }}</div>
-                <div class="market-stats">
-                  <span><el-icon><Star /></el-icon> {{ server.downloads }}</span>
-                  <span v-if="server.author">{{ server.author }}</span>
-                </div>
-                <div class="market-actions">
-                  <el-button 
-                    v-if="!server.installed" 
-                    size="small" 
-                    type="primary"
-                    @click="showMcpInstallDialog(server)"
-                  >{{ t('mcpInstall') }}</el-button>
-                  <el-button 
-                    v-if="server.installed" 
-                    size="small" 
-                  type="danger" 
-                  plain
-                  @click="uninstallMcpServer(server)"
-                >{{ t('mcpUninstall') }}</el-button>
-                <el-button size="small" @click="openMcpUrl(server.url)">{{ t('mcpDetails') }}</el-button>
-              </div>
-            </div>
-            </template>
-            <el-empty v-else-if="!mcpLoading" :description="t('mcpNoData')" />
-          </div>
-        </div>
-
-        <!-- 技能面板 -->
-        <div class="settings-panel" v-if="selectedNav === 'skills'">
-          <div class="panel-header">
-            <div class="panel-header-left">
-              <h3>{{ t('skillMarketTitle') }}</h3>
-              <p class="panel-desc">{{ t('skillMarketDesc') }}</p>
-            </div>
-            <el-button :icon="Plus" type="primary" @click="skillDialogVisible = true">{{ t('addSkill') }}</el-button>
-          </div>
-          <div class="market-list" v-loading="skillLoading" :element-loading-text="t('loading')">
-            <template v-if="skillMarket.length > 0">
-              <div class="market-card" v-for="skill in skillMarket" :key="skill.id" @click="showSkillDetail(skill)">
-                <div class="market-card-header">
-                  <div class="market-icon">{{ skill.name.charAt(0) }}</div>
-                  <div class="market-info">
-                    <div class="market-name">{{ skill.name }}</div>
-                    <div class="market-category">{{ skill.category }}</div>
-                  </div>
-                  <el-tag v-if="skill.author === 'local' || skill.isBuiltIn" type="info" size="small" effect="plain" style="margin-right:6px">内置</el-tag>
-                  <el-tag :type="skill.installed ? 'success' : 'info'" size="small">
-                    {{ skill.installed ? t('skillInstalled') : t('skillNotInstalled') }}
-                  </el-tag>
-                  <el-dropdown style="margin-left:8px" @click.stop>
-                    <el-button :icon="MoreFilled" circle plain size="small"></el-button>
-                    <template #dropdown>
-                      <el-dropdown-menu>
-                        <el-dropdown-item v-if="!skill.installed" @click.stop="installSkill(skill)">
-                          {{ t('mcpInstall') }}
-                        </el-dropdown-item>
-                        <el-dropdown-item @click.stop="showSkillDetail(skill)">
-                          {{ t('mcpDetails') }}
-                        </el-dropdown-item>
-                      </el-dropdown-menu>
-                    </template>
-                  </el-dropdown>
-                </div>
-                <div class="market-desc">{{ skill.description }}</div>
-              </div>
-            </template>
-            <el-empty v-else-if="!skillLoading" :description="t('skillNoData')" />
-          </div>
-          <div class="pagination-container" v-if="skillPagination.total > 0">
-            <el-pagination
-              v-model:current-page="skillCurrentPage"
-              :page-size="skillPageSize"
-              :total="skillPagination.total"
-              layout="total, prev, pager, next"
-              @current-change="handleSkillPageChange"
-            />
-          </div>
-        </div>
-
-        <!-- 任务面板 -->
-        <div class="settings-panel tasks-settings-panel" v-if="selectedNav === 'tasks'">
-          <div class="panel-header">
-            <div class="panel-header-left">
-              <h3>{{ t('taskPanelTitle') }}</h3>
-              <p class="panel-desc">{{ t('taskPanelDesc') }}</p>
-            </div>
-            <el-button size="small" @click="loadScheduledTasks">{{ t('refresh') }}</el-button>
-          </div>
-
-          <!-- 定时任务列表 -->
-          <div class="scheduled-tasks-section">
-            <h4>{{ t('scheduledTasksTitle') }}</h4>
-            <div v-if="scheduledTasksLoading" class="tasks-loading">
-              <el-icon class="is-loading"><LoadingIcon /></el-icon> {{ t('loading') }}
-            </div>
-            <div v-else-if="scheduledTasks.length === 0" class="tasks-empty">
-              {{ t('scheduledTasksEmpty') }}
-            </div>
-            <div v-else class="scheduled-task-list">
-              <div v-for="task in scheduledTasks" :key="task.id" class="scheduled-task-card">
-                <div class="scheduled-task-header">
-                  <span class="scheduled-task-name">{{ task.name }}</span>
-                  <el-tag :type="task.enabled ? 'success' : 'info'" size="small">
-                    {{ task.enabled ? t('enabled') : t('disabled') }}
-                  </el-tag>
-                </div>
-                <div class="scheduled-task-info">
-                  <div class="scheduled-task-row">
-                    <span class="scheduled-task-label">{{ t('taskInterval') }}:</span>
-                    <span>{{ formatInterval(task.intervalMs) }}</span>
-                  </div>
-                  <div class="scheduled-task-row">
-                    <span class="scheduled-task-label">{{ t('taskLastRun') }}:</span>
-                    <span>{{ formatTime(task.lastRun) }}</span>
-                  </div>
-                  <div class="scheduled-task-row">
-                    <span class="scheduled-task-label">{{ t('taskNextRun') }}:</span>
-                    <span>{{ formatTime(task.nextRun) }}</span>
-                  </div>
-                  <div class="scheduled-task-row">
-                    <span class="scheduled-task-label">{{ t('taskTool') }}:</span>
-                    <span class="scheduled-task-tool">{{ task.toolName }}</span>
-                  </div>
-                </div>
-                <div class="scheduled-task-actions">
-                  <el-button size="small" @click="viewTaskLogs(task.id)">
-                    {{ selectedTaskId === task.id ? t('close') : t('viewLogs') }}
-                  </el-button>
-                  <el-button size="small" @click="editScheduledTask(task)">
-                    {{ t('edit') }}
-                  </el-button>
-                  <el-switch
-                    :model-value="task.enabled"
-                    @change="(val: boolean) => toggleScheduledTask(task.id, val)"
-                    :disabled="false"
-                  />
-                  <el-button size="small" type="danger" @click="deleteScheduledTask(task.id)">
-                    {{ t('delete') }}
-                  </el-button>
-                </div>
-
-                <div v-if="selectedTaskId === task.id" class="task-logs-section task-logs-inline">
-                  <div class="logs-header">
-                    <h4>{{ t('taskLogsTitle') }}</h4>
-                    <div class="logs-header-actions">
-                      <el-button
-                        size="small"
-                        :disabled="taskLogsLoading || taskLogs.length === 0"
-                        @click="copyAllTaskLogs"
-                      >
-                        {{ t('taskLogsCopyAll') }}
-                      </el-button>
-                      <el-button
-                        size="small"
-                        type="danger"
-                        plain
-                        :disabled="taskLogsLoading || taskLogs.length === 0"
-                        @click="clearTaskLogs"
-                      >
-                        {{ t('taskLogsClear') }}
-                      </el-button>
-                    </div>
-                  </div>
-                  <div v-if="taskLogsLoading" class="tasks-loading">
-                    <el-icon class="is-loading"><LoadingIcon /></el-icon> {{ t('loading') }}
-                  </div>
-                  <div v-else-if="taskLogs.length === 0" class="tasks-empty">
-                    {{ t('taskLogsEmpty') }}
-                  </div>
-                  <div v-else class="task-log-list">
-                    <div v-for="log in taskLogs" :key="log.id" class="task-log-item" :class="'log-' + log.status">
-                      <div class="task-log-header">
-                        <el-tag :type="log.status === 'success' ? 'success' : 'danger'" size="small">
-                          {{ log.status === 'success' ? t('success') : t('failed') }}
-                        </el-tag>
-                        <span class="task-log-time">{{ formatTime(log.executedAt) }}</span>
-                        <el-button text size="small" @click="copyTaskLog(log)">{{ t('copyMessage') }}</el-button>
-                      </div>
-                      <div v-if="log.result" class="task-log-result">{{ log.result }}</div>
-                      <div v-if="log.error" class="task-log-error">{{ log.error }}</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- 编辑任务对话框 -->
-          <el-dialog v-model="editingTask" :title="t('editTask')" width="500px" v-if="editingTask">
-            <el-form label-width="100px">
-              <el-form-item :label="t('taskName')">
-                <el-input v-model="editingTask.name" />
-              </el-form-item>
-              <el-form-item :label="t('taskInterval')">
-                <el-input-number v-model="editingTask.intervalMs" :min="1000" :step="1000" />
-                <span style="margin-left: 8px">ms</span>
-              </el-form-item>
-              <el-form-item :label="t('taskTool')">
-                <el-input v-model="editingTask.toolName" />
-              </el-form-item>
-            </el-form>
-            <template #footer>
-              <el-button @click="cancelEditTask">{{ t('cancel') }}</el-button>
-              <el-button type="primary" @click="saveScheduledTask">{{ t('save') }}</el-button>
-            </template>
-          </el-dialog>
-
-          <!-- 执行计划概览 -->
-          <div class="tasks-overview">
-            <div class="task-stat-card">
-              <div class="task-stat-label">{{ t('taskTotal') }}</div>
-              <div class="task-stat-value">{{ currentPlan.length }}</div>
-            </div>
-            <div class="task-stat-card">
-              <div class="task-stat-label">{{ t('taskRunning') }}</div>
-              <div class="task-stat-value">{{ runningPlanCount }}</div>
-            </div>
-            <div class="task-stat-card">
-              <div class="task-stat-label">{{ t('taskCompleted') }}</div>
-              <div class="task-stat-value">{{ completedPlanCount }}</div>
-            </div>
-          </div>
-          <div class="task-automation-card">
-            <div class="task-automation-title">{{ t('taskAutomationTitle') }}</div>
-            <div class="task-automation-desc">{{ t('taskAutomationDesc') }}</div>
-            <div class="task-automation-actions">
-              <el-select v-model="chatExecutionMode" size="small" style="width: 180px">
-                <el-option :label="t('executionModeAuto')" value="auto" />
-                <el-option :label="t('executionModeManual')" value="manual" />
-              </el-select>
-              <el-button size="small" @click="switchNav('chat')">{{ t('taskGoChat') }}</el-button>
-            </div>
-          </div>
-        </div>
-
-        <!-- 控制端面板 -->
-        <div class="settings-panel" v-if="selectedNav === 'control'">
-          <div class="panel-header">
-            <div class="panel-header-left">
-              <h3>{{ t('controlPanelTitle') }}</h3>
-              <p class="panel-desc">{{ t('controlPanelDesc') }}</p>
-            </div>
-          </div>
-
-          <div class="control-global-card">
-            <div class="control-global-main">
-              <div class="control-global-title">{{ t('controlGlobalEnable') }}</div>
-              <el-switch v-model="remoteControlConfig.enabled" />
-            </div>
-            <div class="control-global-row">
-              <el-input v-model="remoteControlConfig.commandPrefix" :placeholder="t('controlCommandPrefix')">
-                <template #prepend>{{ t('controlCommandPrefix') }}</template>
-              </el-input>
-            </div>
-            <div class="control-global-row">
-              <el-input v-model="remoteControlConfig.verifyCode" :placeholder="t('controlVerifyCode')">
-                <template #prepend>{{ t('controlVerifyCode') }}</template>
-              </el-input>
-              <el-input :model-value="remoteControlWebhookUrl" readonly>
-                <template #prepend>{{ t('controlWebhookUrl') }}</template>
-              </el-input>
-              <el-button size="small" @click="copyMessageText(remoteControlWebhookUrl)">{{ t('copyMessage') }}</el-button>
-            </div>
-          </div>
-
-          <el-tabs type="border-card" class="platform-tabs">
-            <el-tab-pane name="telegram">
-              <template #label>
-                <span class="platform-tab-label">
-                  <span>{{ t('controlChannelTelegram') }}</span>
-                </span>
-              </template>
-              <div class="platform-config">
-                <div class="platform-enable-row">
-                  <span>{{ t('controlEnable') }}</span>
-                  <el-switch v-model="remoteControlConfig.telegram.enabled" />
-                </div>
-                <el-form label-width="100px" label-position="left">
-                  <el-form-item :label="t('controlBotToken')">
-                    <el-input v-model="remoteControlConfig.telegram.botToken" type="password" show-password />
-                  </el-form-item>
-                  <el-form-item :label="t('controlChatId')">
-                    <el-input v-model="remoteControlConfig.telegram.chatId" />
-                  </el-form-item>
-                  <el-form-item :label="t('controlTestMessage')">
-                    <el-input v-model="telegramTestMessage" :placeholder="t('controlTestMessagePlaceholder') || '输入测试消息内容'" />
-                  </el-form-item>
-                  <el-form-item>
-                    <el-button type="primary" @click="sendTestToTelegram" :loading="sendingToTelegram">
-                      {{ t('controlSendTest') || '发送测试' }}
-                    </el-button>
-                  </el-form-item>
-                </el-form>
-              </div>
-            </el-tab-pane>
-
-            <el-tab-pane name="qq">
-              <template #label>
-                <span class="platform-tab-label">
-                  <span class="platform-icon qq-icon">Q</span>
-                  <span>{{ t('controlChannelQq') }}</span>
-                </span>
-              </template>
-              <div class="platform-config">
-                <div class="platform-enable-row">
-                  <span>{{ t('controlEnable') }}</span>
-                  <el-switch v-model="remoteControlConfig.qq.enabled" />
-                </div>
-                <el-form label-width="100px" label-position="left">
-                  <el-form-item :label="t('controlBotId')">
-                    <el-input v-model="remoteControlConfig.qq.botId" />
-                  </el-form-item>
-                  <el-form-item :label="t('controlWebhook')">
-                    <el-input v-model="remoteControlConfig.qq.webhook" />
-                  </el-form-item>
-                </el-form>
-              </div>
-            </el-tab-pane>
-
-            <el-tab-pane name="wechat">
-              <template #label>
-                <span class="platform-tab-label">
-                  <span class="platform-icon wechat-icon">微</span>
-                  <span>{{ t('controlChannelWechat') || '企业微信' }}</span>
-                </span>
-              </template>
-              <div class="platform-config">
-                <div class="platform-enable-row">
-                  <span>{{ t('controlEnable') }}</span>
-                  <el-switch v-model="remoteControlConfig.wechat.enabled" />
-                </div>
-                <el-form label-width="100px" label-position="left">
-                  <el-form-item :label="t('controlWebhook')">
-                    <el-input v-model="remoteControlConfig.wechat.webhook" />
-                  </el-form-item>
-                </el-form>
-              </div>
-            </el-tab-pane>
-
-            <el-tab-pane name="wechat-personal">
-              <template #label>
-                <span class="platform-tab-label">
-                  <span class="platform-icon wechat-personal-icon">信</span>
-                  <span>{{ '个人微信' }}</span>
-                </span>
-              </template>
-              <div class="platform-config">
-                <div class="wechat-personal-login-section">
-                  <div v-if="wechatAccounts.length === 0" class="wechat-personal-empty">
-                    <p style="color:#94a3b8;margin-bottom:16px;">扫码登录个人微信，接收消息并控制 Agent</p>
-                    <el-button type="primary" size="large" @click="startWechatLogin" :loading="wechatLoginLoading">
-                      扫码登录微信
-                    </el-button>
-                  </div>
-
-                  <div v-if="wechatQrCodeUrl" class="wechat-personal-qrcode">
-                    <img :src="wechatQrCodeUrl" alt="微信登录二维码" style="width:200px;height:200px;border:1px solid #e2e8f0;border-radius:8px;" />
-                    <p style="color:#94a3b8;font-size:13px;margin-top:8px;">请用微信扫码登录</p>
-                    <p v-if="wechatLoginStatus === 'waiting'" style="color:#f59e0b;font-size:12px;">
-                      <el-icon style="font-size:12px"><LoadingIcon /></el-icon> 等待扫码...
-                    </p>
-                    <p v-else-if="wechatLoginStatus === 'success'" style="color:#10b981;font-size:12px;">登录成功</p>
-                    <el-button size="small" @click="cancelWechatLogin" style="margin-top:8px;">取消</el-button>
-                  </div>
-
-                  <div v-if="wechatAccounts.length > 0" class="wechat-personal-accounts">
-                    <div class="wechat-personal-accounts-header">
-                      <span>已登录账号 ({{ wechatAccounts.length }})</span>
-                      <el-button size="small" type="primary" plain @click="startWechatLogin" :loading="wechatLoginLoading">添加账号</el-button>
-                    </div>
-                    <div v-for="acc in wechatAccounts" :key="acc.wxid" class="wechat-personal-account-item">
-                      <div class="wechat-personal-account-info">
-                        <span class="wechat-personal-account-nickname">{{ acc.nickname }}</span>
-                        <span class="wechat-personal-account-wxid">{{ acc.wxid }}</span>
-                      </div>
-                      <el-button size="small" type="danger" plain @click="logoutWechatAccount(acc.wxid)">登出</el-button>
-                    </div>
-                  </div>
-                </div>
-
-                <el-divider />
-
-                <div v-if="wechatAccounts.length > 0" class="wechat-received-section">
-                  <div class="wechat-received-header">
-                    <span>接收的消息</span>
-                    <el-button size="small" @click="fetchWechatStatus" :disabled="wechatMessages.length === 0">
-                      <el-icon style="font-size:12px"><Refresh /></el-icon> 刷新
-                    </el-button>
-                  </div>
-                  <div v-if="wechatMessages.length === 0" class="wechat-received-empty">
-                    <p style="color:#94a3b8;font-size:13px;">暂无消息，请在手机上给 bot 发消息测试</p>
-                  </div>
-                  <div v-else class="wechat-received-list">
-                    <div v-for="(msg, i) in wechatMessages.slice().reverse()" :key="i" class="wechat-received-item">
-                      <div class="wechat-received-item-header">
-                        <span class="wechat-received-sender">{{ msg.senderName || msg.sender }}</span>
-                        <span class="wechat-received-time">{{ formatWechatTime(msg.timestamp) }}</span>
-                      </div>
-                      <div class="wechat-received-text">{{ msg.text }}</div>
-                    </div>
-                  </div>
-                </div>
-
-                <el-divider />
-
-                <el-form label-width="100px" label-position="left">
-                  <el-form-item :label="t('controlTestMessage')">
-                    <el-input v-model="wechatTestMessage" :placeholder="t('controlTestMessagePlaceholder') || '输入要发送给自己的消息'" />
-                  </el-form-item>
-                  <el-form-item>
-                    <el-button type="primary" @click="sendTestToWechat" :loading="wechatSending" :disabled="wechatAccounts.length === 0">
-                      {{ t('controlSendTest') || '发送测试' }}
-                    </el-button>
-                  </el-form-item>
-                </el-form>
-              </div>
-            </el-tab-pane>
-
-            <el-tab-pane name="feishu">
-              <template #label>
-                <span class="platform-tab-label">
-                  <span class="platform-icon feishu-icon">飞</span>
-                  <span>{{ t('controlChannelFeishu') }}</span>
-                </span>
-              </template>
-              <div class="platform-config">
-                <div class="platform-enable-row">
-                  <span>{{ t('controlEnable') }}</span>
-                  <el-switch v-model="remoteControlConfig.feishu.enabled" />
-                </div>
-                <el-form label-width="100px" label-position="left">
-                  <el-form-item :label="t('controlAppId')">
-                    <el-input v-model="remoteControlConfig.feishu.appId" />
-                  </el-form-item>
-                  <el-form-item :label="t('controlAppSecret')">
-                    <el-input v-model="remoteControlConfig.feishu.appSecret" type="password" show-password />
-                  </el-form-item>
-                  <el-form-item :label="t('controlWebhook')">
-                    <el-input v-model="remoteControlConfig.feishu.webhook" />
-                  </el-form-item>
-                </el-form>
-              </div>
-            </el-tab-pane>
-
-            <el-tab-pane name="discord">
-              <template #label>
-                <span class="platform-tab-label">
-                  <span class="platform-icon discord-icon">D</span>
-                  <span>{{ t('controlChannelDiscord') }}</span>
-                </span>
-              </template>
-              <div class="platform-config">
-                <div class="platform-enable-row">
-                  <span>{{ t('controlEnable') }}</span>
-                  <el-switch v-model="remoteControlConfig.discord.enabled" />
-                </div>
-                <el-form label-width="100px" label-position="left">
-                  <el-form-item :label="t('controlBotToken')">
-                    <el-input v-model="remoteControlConfig.discord.botToken" type="password" show-password />
-                  </el-form-item>
-                  <el-form-item :label="t('controlChannelId')">
-                    <el-input v-model="remoteControlConfig.discord.channelId" />
-                  </el-form-item>
-                </el-form>
-              </div>
-            </el-tab-pane>
-
-            <el-tab-pane name="slack">
-              <template #label>
-                <span class="platform-tab-label">
-                  <span class="platform-icon slack-icon">S</span>
-                  <span>{{ t('controlChannelSlack') }}</span>
-                </span>
-              </template>
-              <div class="platform-config">
-                <div class="platform-enable-row">
-                  <span>{{ t('controlEnable') }}</span>
-                  <el-switch v-model="remoteControlConfig.slack.enabled" />
-                </div>
-                <el-form label-width="100px" label-position="left">
-                  <el-form-item :label="t('controlBotToken')">
-                    <el-input v-model="remoteControlConfig.slack.botToken" type="password" show-password />
-                  </el-form-item>
-                  <el-form-item :label="t('controlChannelId')">
-                    <el-input v-model="remoteControlConfig.slack.channelId" />
-                  </el-form-item>
-                </el-form>
-              </div>
-            </el-tab-pane>
-
-            <el-tab-pane name="teams">
-              <template #label>
-                <span class="platform-tab-label">
-                  <span class="platform-icon teams-icon">T</span>
-                  <span>{{ t('controlChannelTeams') }}</span>
-                </span>
-              </template>
-              <div class="platform-config">
-                <div class="platform-enable-row">
-                  <span>{{ t('controlEnable') }}</span>
-                  <el-switch v-model="remoteControlConfig.teams.enabled" />
-                </div>
-                <el-form label-width="100px" label-position="left">
-                  <el-form-item :label="t('controlAppId')">
-                    <el-input v-model="remoteControlConfig.teams.appId" />
-                  </el-form-item>
-                  <el-form-item :label="t('controlAppSecret')">
-                    <el-input v-model="remoteControlConfig.teams.appSecret" type="password" show-password />
-                  </el-form-item>
-                  <el-form-item :label="t('controlWebhook')">
-                    <el-input v-model="remoteControlConfig.teams.webhook" />
-                  </el-form-item>
-                </el-form>
-              </div>
-            </el-tab-pane>
-
-            <el-tab-pane name="whatsapp">
-              <template #label>
-                <span class="platform-tab-label">
-                  <span class="platform-icon whatsapp-icon">W</span>
-                  <span>{{ t('controlChannelWhatsApp') }}</span>
-                </span>
-              </template>
-              <div class="platform-config">
-                <div class="platform-enable-row">
-                  <span>{{ t('controlEnable') }}</span>
-                  <el-switch v-model="remoteControlConfig.whatsapp.enabled" />
-                </div>
-                <el-form label-width="120px" label-position="left">
-                  <el-form-item :label="t('controlTwilioSid')">
-                    <el-input v-model="remoteControlConfig.whatsapp.accountSid" />
-                  </el-form-item>
-                  <el-form-item :label="t('controlTwilioToken')">
-                    <el-input v-model="remoteControlConfig.whatsapp.authToken" type="password" show-password />
-                  </el-form-item>
-                  <el-form-item :label="t('controlFromNumber')">
-                    <el-input v-model="remoteControlConfig.whatsapp.fromNumber" placeholder="+1234567890" />
-                  </el-form-item>
-                </el-form>
-              </div>
-            </el-tab-pane>
-          </el-tabs>
-
-          <div class="control-footer">
-            <el-button type="primary" size="large" @click="saveRemoteControlConfig">{{ t('controlSave') }}</el-button>
-          </div>
-        </div>
-
-        <!-- 设置面板 -->
-        <div class="settings-panel" v-if="selectedNav === 'settings'">
-          <div class="settings-header">
-            <h3>{{ t('systemSettings') }}</h3>
-          </div>
-          
-          <el-tabs v-model="activeSettingTab">
-            <el-tab-pane :label="t('basicSettings')" name="basic">
-              <el-form label-position="top">
-              <el-form-item :label="t('backendAddress')">
-                <el-input v-model="config.settings.backendPort" placeholder="17871" />
-              </el-form-item>
-              <el-form-item :label="t('skillsDir')">
-                <el-input v-model="config.settings.skillsDir" :placeholder="t('skillsDirPlaceholder')" />
-              </el-form-item>
-                <el-form-item :label="t('themeSetting')">
-                  <el-select v-model="config.settings.theme">
-                    <el-option :label="t('light')" value="light" />
-                    <el-option :label="t('dark')" value="dark" />
-                    <el-option :label="t('gray')" value="gray" />
-                  </el-select>
-                </el-form-item>
-                <el-form-item :label="t('languageSetting')">
-                  <el-select v-model="config.settings.language">
-                    <el-option :label="t('chinese')" value="zh-CN" />
-                    <el-option :label="t('english')" value="en-US" />
-                  </el-select>
-                </el-form-item>
-                <el-form-item :label="t('dataDirectory')">
-                  <el-input v-model="chatStorageConfig.currentUserDataDir" />
-                  <el-button style="margin-top: 8px" @click="saveChatStorageDirectory">
-                    {{ t('saveDataDirectory') }}
-                  </el-button>
-                </el-form-item>
-                <el-form-item>
-                  <el-button type="primary" @click="persistConfig">{{ t('saveSettings') }}</el-button>
-                </el-form-item>
-              </el-form>
-            </el-tab-pane>
-            <el-tab-pane :label="t('modelConfig')" name="model">
-              <div class="model-config-container">
-                <!-- 模型列表 -->
-                <div class="model-list-simple">
-                  <div 
-                    v-for="model in config.models" 
-                    :key="model.id"
-                    class="model-item"
-                    :class="{ active: model.id === config.settings.activeModelId }"
-                  >
-                    <div class="model-item-left" @click="activateModel(model.id)">
-                      <div class="model-item-info">
-                        <div class="model-item-name">
-                          {{ model.name }}
-                          <el-tag v-if="model.isBuiltIn" type="info" size="small" effect="plain" class="type-tag">
-                            {{ t('builtIn') }}
-                          </el-tag>
-                          <el-tag v-if="model.id === config.settings.activeModelId" size="small" effect="plain" class="status-tag-inline">
-                            ●
-                          </el-tag>
-                        </div>
-                        <div class="model-item-provider">{{ model.customProviderName || getProviderName(model.provider) }}</div>
-                      </div>
-                    </div>
-                    <div class="model-item-actions">
-                      <el-button circle size="small" @click.stop="openModelDialog('edit', model)">
-                        <el-icon><EditPen /></el-icon>
-                      </el-button>
-                      <el-button circle size="small" type="danger" @click.stop="deleteModel(model.id)">
-                        <el-icon><Delete /></el-icon>
-                      </el-button>
-                    </div>
-                  </div>
-                  
-                  <!-- 添加模型按钮 -->
-                  <div class="model-add-simple" @click="openModelDialog('add')">
-                    <el-icon :size="20"><Plus /></el-icon>
-                    <span>{{ t('addModel') }}</span>
-                  </div>
-                </div>
-              </div>
-            </el-tab-pane>
-
-            <el-tab-pane :label="t('tokenStats')" name="token">
-              <div class="token-stats-container">
-                <el-row :gutter="20" v-if="tokenStats.totalTokens > 0">
-                  <el-col :span="8">
-                    <el-card shadow="hover" class="token-card">
-                      <div class="token-stat-label">{{ t('totalTokens') }}</div>
-                      <div class="token-stat-value">{{ formatNumber(tokenStats.totalTokens) }}</div>
-                    </el-card>
-                  </el-col>
-                  <el-col :span="8">
-                    <el-card shadow="hover" class="token-card">
-                      <div class="token-stat-label">{{ t('promptTokens') }}</div>
-                      <div class="token-stat-value">{{ formatNumber(tokenStats.totalPrompt) }}</div>
-                    </el-card>
-                  </el-col>
-                  <el-col :span="8">
-                    <el-card shadow="hover" class="token-card">
-                      <div class="token-stat-label">{{ t('completionTokens') }}</div>
-                      <div class="token-stat-value">{{ formatNumber(tokenStats.totalCompletion) }}</div>
-                    </el-card>
-                  </el-col>
-                </el-row>
-                <el-empty v-else :description="t('noTokenData')" />
-                <el-divider v-if="Object.keys(tokenStats.byModel || {}).length > 0">{{ t('byModel') }}</el-divider>
-                <el-table v-if="Object.keys(tokenStats.byModel || {}).length > 0" :data="tokenStatsTableData" stripe>
-                  <el-table-column prop="model" :label="t('model')" />
-                  <el-table-column prop="prompt" :label="t('promptTokens')" align="right">
-                    <template #default="{ row }">{{ formatNumber(row.prompt) }}</template>
-                  </el-table-column>
-                  <el-table-column prop="completion" :label="t('completionTokens')" align="right">
-                    <template #default="{ row }">{{ formatNumber(row.completion) }}</template>
-                  </el-table-column>
-                  <el-table-column prop="total" :label="t('totalTokens')" align="right">
-                    <template #default="{ row }">{{ formatNumber(row.total) }}</template>
-                  </el-table-column>
-                </el-table>
-              </div>
-            </el-tab-pane>
-
-            <el-tab-pane label="关于" name="about">
-              <div class="about-container">
-                <div class="about-logo">
-                  <img class="logo-icon" style="width: 60px; height: 60px;" src="/icons/appIcon.png" alt="Logo" />
-                  <h2>{{ t('appTitle') }}</h2>
-                </div>
-                <div class="about-version">版本 v1.0.0</div>
-                <div class="about-desc">一个智能桌面助手，帮助你完成各种任务</div>
-                <el-divider />
-                <div class="about-actions">
-                  <el-button type="primary" @click="checkForUpdate">检查更新</el-button>
-                </div>
-              </div>
-            </el-tab-pane>
-          </el-tabs>
-
-          <el-divider />
-        </div>
-      </main>
+      <!-- 非聊天页面通过 router-view 渲染 -->
+      <div class="router-view-wrapper" v-if="$route.path !== '/'">
+        <router-view />
+      </div>
+    </main>
     </div>
+  </div>
 
     <!-- 对话右键菜单 -->
     <Teleport to="body">
@@ -1228,132 +507,6 @@
         </div>
       </div>
     </Teleport>
-
-    <!-- 创建技能对话框 -->
-    <el-dialog v-model="skillDialogVisible" title="创建技能" width="500px">
-      <el-form :model="skillDialogForm" label-width="80px">
-        <el-form-item label="技能名称">
-          <el-input v-model="skillDialogForm.name" />
-        </el-form-item>
-        <el-form-item label="技能描述">
-          <el-input v-model="skillDialogForm.description" type="textarea" :rows="3" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="skillDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="createSkill">创建</el-button>
-      </template>
-    </el-dialog>
-
-    <!-- 技能详情对话框 -->
-    <el-dialog v-model="skillDetailVisible" title="技能详情" width="560px">
-      <template v-if="skillDetailData">
-        <div class="skill-detail-header">
-          <div class="skill-detail-icon">{{ skillDetailData.name?.charAt(0) || 'S' }}</div>
-          <div class="skill-detail-info">
-            <h3>{{ skillDetailData.name }}</h3>
-            <div class="skill-detail-meta">
-              <el-tag size="small">{{ skillDetailData.category }}</el-tag>
-              <el-tag v-if="skillDetailData.author === 'local' || skillDetailData.isBuiltIn" size="small" type="info" effect="plain">内置</el-tag>
-              <el-tag v-else size="small" type="warning" effect="plain">自定义</el-tag>
-              <span v-if="skillDetailData.author && skillDetailData.author !== 'local'" class="skill-detail-author">作者: {{ skillDetailData.author }}</span>
-              <span v-if="skillDetailData.stepsCount != null" class="skill-detail-steps">步骤: {{ skillDetailData.stepsCount }}</span>
-              <span v-if="skillDetailData.downloads != null" class="skill-detail-downloads">下载: {{ skillDetailData.downloads }}</span>
-            </div>
-          </div>
-        </div>
-        <div class="skill-detail-section">
-          <label>简介</label>
-          <p>{{ skillDetailData.description }}</p>
-        </div>
-        <div v-if="skillDetailData.tags && skillDetailData.tags.length > 0" class="skill-detail-section">
-          <label>标签</label>
-          <div class="skill-detail-tags">
-            <el-tag v-for="tag in skillDetailData.tags" :key="tag" size="small" effect="plain">{{ tag }}</el-tag>
-          </div>
-        </div>
-      </template>
-      <template #footer>
-        <el-button @click="skillDetailVisible = false">{{ t('close') }}</el-button>
-        <el-button v-if="!skillDetailData?.installed" type="primary" @click="installSkillFromDetail">
-          {{ t('mcpInstall') }}
-        </el-button>
-      </template>
-    </el-dialog>
-
-    <!-- 技能选择对话框 -->
-    <el-dialog v-model="skillSelectorVisible" title="选择技能" width="440px">
-      <div class="skill-selector-list">
-        <div
-          v-for="skill in config.skills"
-          :key="skill.id"
-          class="skill-selector-item"
-          :class="{ active: selectedChatSkillIds.includes(skill.id) }"
-          @click="toggleSkillSelection(skill.id)"
-        >
-          <span class="skill-selector-check">
-            <el-icon v-if="selectedChatSkillIds.includes(skill.id)" color="#1a1a1a"><CircleCheckFilled /></el-icon>
-            <span v-else class="skill-selector-empty-circle"></span>
-          </span>
-          <span class="skill-selector-name">{{ skill.name }}</span>
-          <el-tag v-if="(skill as any).category" size="small" effect="plain" class="skill-selector-tag">{{ (skill as any).category }}</el-tag>
-        </div>
-      </div>
-      <template #footer>
-        <div class="skill-selector-footer">
-          <button class="skill-clear-btn" @click="clearSkillSelection">清除全部</button>
-          <button class="skill-confirm-btn" @click="confirmSkillSelection">
-            确认{{ selectedChatSkillIds.length > 0 ? `（${selectedChatSkillIds.length}）` : '' }}
-          </button>
-        </div>
-      </template>
-    </el-dialog>
-
-    <!-- MCP 安装配置对话框 -->
-    <el-dialog v-model="mcpInstallDialogVisible" title="安装 MCP 服务器" width="600px">
-      <div class="mcp-config-editor">
-        <div class="mcp-config-hint">
-          请输入 MCP 服务器配置（JSON 格式）：
-        </div>
-        <el-input
-          v-model="mcpConfigJson"
-          type="textarea"
-          :rows="12"
-          placeholder='{
-  "mcpServers": {
-    "playwright": {
-      "command": "npx",
-      "args": ["@playwright/mcp@latest"]
-    }
-  }
-}'
-          class="mcp-config-textarea"
-        />
-        <div class="mcp-config-example">
-          <el-collapse>
-            <el-collapse-item title="查看配置示例" name="examples">
-              <div class="example-item">
-                <strong>Playwright:</strong>
-                <pre>{ "command": "npx", "args": ["@playwright/mcp@latest"] }</pre>
-              </div>
-              <div class="example-item">
-                <strong>Filesystem:</strong>
-                <pre>{ "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/dir"] }</pre>
-              </div>
-              <div class="example-item">
-                <strong>SQLite:</strong>
-                <pre>{ "command": "npx", "args": ["-y", "@modelcontextprotocol/server-sqlite", "--db-path", "/path/to/db.sqlite"] }</pre>
-              </div>
-            </el-collapse-item>
-          </el-collapse>
-        </div>
-      </div>
-      <template #footer>
-        <el-button @click="mcpInstallDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="confirmInstallMcpServer" :loading="mcpInstalling">确认安装</el-button>
-      </template>
-    </el-dialog>
-
 
     <!-- 模型管理对话框 -->
     <el-dialog 
@@ -1621,26 +774,26 @@
       </div>
     </div>
 
-  </div>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue"
+import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from "element-plus"
 import { ArrowRight, More, Cellphone } from "@element-plus/icons-vue"
 import MonitorPanel from "./components/MonitorPanel.vue"
-import AgentDashboard from "./components/AgentDashboard.vue"
-import PipelineDashboard from "./components/PipelineDashboard.vue"
-import AgentOffice3D from "./components/AgentOffice3D.vue"
 import FileEditor from "./components/FileEditor.vue"
 import hljs from "highlight.js"
 import { useVoiceInput } from "./composables/useVoiceInput"
 import { useWebSocket } from "./composables/useWebSocket"
+import AgentOffice3D from "./components/AgentOffice3D.vue"
 import { ArrowDown,
   ArrowLeftBold,
+  ArrowUp,
   Check,
   ChatLineRound,
   CircleCheckFilled,
+  Close,
   CloseBold,
   Connection,
   CopyDocument,
@@ -1672,9 +825,31 @@ import { ArrowDown,
   Share,
   Calendar,
   ChatDotSquare,
+  WarningFilled,
 } from "@element-plus/icons-vue"
 
 const apiBase = ref("")
+
+const router = useRouter()
+const route = useRoute()
+
+function getNavPath(id: string): string {
+  const pathMap: Record<string, string> = {
+    chat: '/',
+    agents: '/agents',
+    pipeline: '/pipeline',
+    mcp: '/mcp',
+    skills: '/skills',
+    tasks: '/tasks',
+    control: '/control',
+    settings: '/settings'
+  }
+  return pathMap[id] || '/'
+}
+
+function navigateTo(id: string) {
+  router.push(getNavPath(id))
+}
 
 const traceIcons: Record<string, any> = {
   Tools, Monitor, Timer, Bell, Promotion, Document, CircleCheckFilled, LoadingIcon
@@ -1690,8 +865,8 @@ const isChatPaused = ref(false)
 let chatAbortController: AbortController | null = null
 let typewriterTimer: ReturnType<typeof setInterval> | null = null
 let chatHistorySaveTimer: ReturnType<typeof setTimeout> | null = null
-let backendPollTimer: ReturnType<typeof setInterval> | null = null
 let officePollTimer: ReturnType<typeof setInterval> | null = null
+let taskLogsInterval: ReturnType<typeof setInterval> | null = null
 const typewriterState = {
   messageIndex: -1,
   queue: [] as string[],
@@ -1719,7 +894,8 @@ function closeFileEditor() {
 }
 
 function buildFileApiUrl(path: string): string {
-  const port = location.port === '4173' ? '17870' : location.port
+  const backendPort = config.value.settings.backendPort || 17871
+  const port = location.port === '4173' ? backendPort : location.port
   return `http://${location.hostname}:${port}${path}`
 }
 
@@ -1807,243 +983,12 @@ interface CustomAskAiItem {
 }
 const customAskAiList = ref<CustomAskAiItem[]>([])
 const mcpToolServers = ref<string[]>([])
-const backendOnline = ref(false)
 
 const voiceInput = useVoiceInput({ lang: 'zh-CN', continuous: false, interimResults: true })
 const showVoiceIndicator = ref(false)
 
 const chatWs = useWebSocket()
 
-// 定时任务列表
-interface ScheduledTask {
-  id: string
-  name: string
-  type: 'interval' | 'cron'
-  intervalMs?: number
-  toolName: string
-  toolInput: Record<string, unknown>
-  enabled: boolean
-  lastRun?: number
-  nextRun?: number
-  createdAt: number
-}
-
-interface TaskLog {
-  id: string
-  taskId: string
-  taskName: string
-  status: 'success' | 'error'
-  result?: string
-  error?: string
-  executedAt: number
-}
-
-const scheduledTasks = ref<ScheduledTask[]>([])
-const scheduledTasksLoading = ref(false)
-const taskLogs = ref<TaskLog[]>([])
-const taskLogsLoading = ref(false)
-const selectedTaskId = ref<string | null>(null)
-let taskLogsInterval: ReturnType<typeof setInterval> | null = null
-
-async function loadScheduledTasks() {
-  scheduledTasksLoading.value = true
-  try {
-    const res = await fetch(buildApiUrl('/api/scheduled-tasks'))
-    const data = await res.json()
-    if (data.ok) {
-      scheduledTasks.value = data.tasks
-    }
-  } catch (err) {
-    console.error('加载定时任务失败:', err)
-  } finally {
-    scheduledTasksLoading.value = false
-  }
-}
-
-async function loadTaskLogs(taskId?: string) {
-  taskLogsLoading.value = true
-  try {
-    let url = '/api/scheduled-tasks/logs'
-    if (taskId) {
-      url += `?taskId=${taskId}`
-    }
-    const res = await fetch(buildApiUrl(url))
-    const data = await res.json()
-    if (data.ok) {
-      taskLogs.value = data.logs
-    }
-  } catch (err) {
-    console.error('加载任务日志失败:', err)
-  } finally {
-    taskLogsLoading.value = false
-  }
-}
-
-function viewTaskLogs(taskId: string) {
-  if (selectedTaskId.value === taskId) {
-    selectedTaskId.value = null
-    taskLogs.value = []
-    return
-  }
-  selectedTaskId.value = taskId
-  loadTaskLogs(taskId)
-}
-
-watch(selectedTaskId, (taskId) => {
-  if (taskLogsInterval) {
-    clearInterval(taskLogsInterval)
-    taskLogsInterval = null
-  }
-  if (!taskId) return
-  taskLogsInterval = setInterval(() => {
-    loadTaskLogs(taskId)
-  }, 2000) as unknown as ReturnType<typeof setInterval>
-})
-
-async function clearTaskLogs() {
-  if (!selectedTaskId.value) return
-
-  try {
-    await ElMessageBox.confirm(
-      t('taskLogsClearConfirm'),
-      t('taskLogsClearTitle'),
-      { type: 'warning' }
-    )
-  } catch {
-    return
-  }
-
-  try {
-    const res = await fetch(buildApiUrl('/api/scheduled-tasks'), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        action: 'clear_logs',
-        taskId: selectedTaskId.value
-      })
-    })
-    const data = await res.json()
-    if (data.ok) {
-      taskLogs.value = []
-      ElMessage.success(t('taskLogsCleared'))
-    }
-  } catch (err) {
-    console.error('清空任务日志失败:', err)
-    ElMessage.error(t('taskLogsClearFailed'))
-  }
-}
-
-function formatTaskLogText(log: TaskLog): string {
-  const lines = [
-    `${t('taskName')}: ${log.taskName || ''}`,
-    `${t('taskLogsTitle')}: ${log.status === 'success' ? t('success') : t('failed')}`,
-    `${t('taskLastRun')}: ${formatTime(log.executedAt)}`
-  ]
-  if (log.result) {
-    lines.push(`result: ${log.result}`)
-  }
-  if (log.error) {
-    lines.push(`error: ${log.error}`)
-  }
-  return lines.join('\n')
-}
-
-async function copyTaskLog(log: TaskLog) {
-  await copyMessageText(formatTaskLogText(log), true)
-}
-
-async function copyAllTaskLogs() {
-  if (taskLogs.value.length === 0) return
-  const content = taskLogs.value.map((log) => formatTaskLogText(log)).join('\n\n----------------\n\n')
-  await copyMessageText(content, true)
-}
-
-const editingTask = ref<ScheduledTask | null>(null)
-
-function editScheduledTask(task: ScheduledTask) {
-  editingTask.value = { ...task }
-}
-
-function cancelEditTask() {
-  editingTask.value = null
-}
-
-async function saveScheduledTask() {
-  if (!editingTask.value) return
-  try {
-    const res = await fetch(buildApiUrl('/api/scheduled-tasks'), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        action: 'update',
-        id: editingTask.value.id,
-        updates: {
-          name: editingTask.value.name,
-          intervalMs: editingTask.value.intervalMs,
-          enabled: editingTask.value.enabled,
-          toolName: editingTask.value.toolName,
-          toolInput: editingTask.value.toolInput
-        }
-      })
-    })
-    const data = await res.json()
-    if (data.ok) {
-      editingTask.value = null
-      await loadScheduledTasks()
-    }
-  } catch (err) {
-    console.error('保存任务失败:', err)
-  }
-}
-
-async function toggleScheduledTask(id: string, enabled: boolean) {
-  const action = enabled ? 'enable' : 'disable'
-  try {
-    const res = await fetch(buildApiUrl('/api/scheduled-tasks'), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ action, id })
-    })
-    const data = await res.json()
-    if (data.ok) {
-      await loadScheduledTasks()
-    }
-  } catch (err) {
-    console.error('切换定时任务状态失败:', err)
-  }
-}
-
-async function deleteScheduledTask(id: string) {
-  try {
-    const res = await fetch(buildApiUrl('/api/scheduled-tasks'), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ action: 'delete', id })
-    })
-    const data = await res.json()
-    if (data.ok) {
-      await loadScheduledTasks()
-    }
-  } catch (err) {
-    console.error('删除定时任务失败:', err)
-  }
-}
-
-function formatInterval(ms?: number): string {
-  if (!ms) return '-'
-  const minutes = Math.round(ms / 60000)
-  if (minutes < 60) return `${minutes} 分钟`
-  const hours = Math.round(minutes / 60)
-  if (hours < 24) return `${hours} 小时`
-  return `${Math.round(hours / 24)} 天`
-}
-
-function formatTime(ts?: number): string {
-  if (!ts) return '-'
-  return new Date(ts).toLocaleString('zh-CN')
-}
-
-// 计划列表
 const currentPlan = ref<any[]>([])
 
 interface TraceDetailItem {
@@ -2094,6 +1039,14 @@ interface AppConfig {
     userDataDir?: string
     skillsDir?: string
     username?: string
+    proxy?: {
+      enabled: boolean
+      protocol: string
+      host: string
+      port: number
+      username?: string
+      password?: string
+    }
   }
   models: Array<{
     id: string
@@ -2146,7 +1099,8 @@ const config = ref<AppConfig>({
     language: "zh-CN",
     activeModelId: "",
     userDataDir: "",
-    skillsDir: ""
+    skillsDir: "",
+    proxy: { enabled: false, protocol: 'http', host: '', port: 0, username: '', password: '' }
   },
   models: [],
   skills: []
@@ -2173,49 +1127,58 @@ const chatStorageConfig = reactive({
 
 interface RemoteControlConfig {
   enabled: boolean
+  proxyEnabled: boolean
   commandPrefix: string
   verifyCode: string
   telegram: {
     enabled: boolean
     botToken: string
     chatId: string
+    proxyEnabled: boolean
   }
   qq: {
     enabled: boolean
     botId: string
     webhook: string
+    proxyEnabled: boolean
   }
   wechat: {
     enabled: boolean
     webhook: string
+    proxyEnabled: boolean
   }
   feishu: {
     enabled: boolean
     appId: string
     appSecret: string
     webhook: string
+    proxyEnabled: boolean
   }
   discord: {
     enabled: boolean
     botToken: string
     channelId: string
+    proxyEnabled: boolean
   }
   slack: {
     enabled: boolean
     botToken: string
     channelId: string
+    proxyEnabled: boolean
   }
   teams: {
     enabled: boolean
     appId: string
     appSecret: string
     webhook: string
+    proxyEnabled: boolean
   }
   whatsapp: {
     enabled: boolean
     accountSid: string
     authToken: string
     fromNumber: string
+    proxyEnabled: boolean
   }
 }
 
@@ -2223,49 +1186,58 @@ const remoteControlStorageKey = 'desktop-agent-remote-control-config'
 function createDefaultRemoteControlConfig(): RemoteControlConfig {
   return {
     enabled: false,
+    proxyEnabled: false,
     commandPrefix: '/agent',
     verifyCode: '',
     telegram: {
       enabled: false,
       botToken: '',
-      chatId: ''
+      chatId: '',
+      proxyEnabled: false
     },
     qq: {
       enabled: false,
       botId: '',
-      webhook: ''
+      webhook: '',
+      proxyEnabled: false
     },
     wechat: {
       enabled: false,
-      webhook: ''
+      webhook: '',
+      proxyEnabled: false
     },
     feishu: {
       enabled: false,
       appId: '',
       appSecret: '',
-      webhook: ''
+      webhook: '',
+      proxyEnabled: false
     },
     discord: {
       enabled: false,
       botToken: '',
-      channelId: ''
+      channelId: '',
+      proxyEnabled: false
     },
     slack: {
       enabled: false,
       botToken: '',
-      channelId: ''
+      channelId: '',
+      proxyEnabled: false
     },
     teams: {
       enabled: false,
       appId: '',
       appSecret: '',
-      webhook: ''
+      webhook: '',
+      proxyEnabled: false
     },
     whatsapp: {
       enabled: false,
       accountSid: '',
       authToken: '',
-      fromNumber: ''
+      fromNumber: '',
+      proxyEnabled: false
     }
   }
 }
@@ -2538,7 +1510,16 @@ const locales = {
     skillStarted: "技能已启动",
     saveSuccess: "配置已保存",
     saveFailed: "保存失败",
-    dataDirectorySaved: "聊天数据目录已更新"
+    dataDirectorySaved: "聊天数据目录已更新",
+
+    // 代理配置
+    settingsProxy: "网络代理",
+    settingsProxyEnable: "启用代理",
+    settingsProxyProtocol: "代理协议",
+    settingsProxyHost: "主机地址",
+    settingsProxyPort: "端口",
+    settingsProxyUsername: "用户名（可选）",
+    settingsProxyPassword: "密码（可选）"
   },
   "en-US": {
     // Common
@@ -2805,7 +1786,16 @@ const locales = {
     skillStarted: "Skill started",
     saveSuccess: "Configuration saved",
     saveFailed: "Save failed",
-    dataDirectorySaved: "Chat data directory updated"
+    dataDirectorySaved: "Chat data directory updated",
+
+    // Proxy
+    settingsProxy: "Network Proxy",
+    settingsProxyEnable: "Enable Proxy",
+    settingsProxyProtocol: "Proxy Protocol",
+    settingsProxyHost: "Host",
+    settingsProxyPort: "Port",
+    settingsProxyUsername: "Username (Optional)",
+    settingsProxyPassword: "Password (Optional)"
   }
 }
 
@@ -2884,7 +1874,6 @@ const skillDialogVisible = ref(false)
 const skillSelectorVisible = ref(false)
 const skillDetailVisible = ref(false)
 const skillDetailData = ref<any>(null)
-const selectedNav = ref<NavKey>("chat")
 const sidebarCollapsed = ref(false)
 const isInitializing = ref(true)
 const initProgress = ref(0)
@@ -2959,8 +1948,7 @@ function openInspirationDialog() {
 }
 
 function openUserMenu() {
-  selectedNav.value = 'settings'
-  activeSettingTab.value = 'basic'
+  router.push('/settings')
 }
 
 watch(activeSettingTab, (newTab) => {
@@ -2987,6 +1975,30 @@ async function loadAgentList() {
         avatar: String(a.avatar || a.name?.[0] || 'A')
       }))
     ]
+  } catch {
+    // keep builtin-bot if fetch fails
+  }
+}
+
+async function loadAgentData() {
+  try {
+    const res = await fetch(buildApiUrl('/api/agents'))
+    const data = await res.json()
+    const remotes = Array.isArray(data) ? data : []
+    agents.value = [
+      { id: 'builtin-bot', name: 'CraBot', avatar: '🤖', isBuiltIn: true },
+      ...remotes.map((a: any) => ({
+        id: String(a.id),
+        name: String(a.name || a.id),
+        avatar: String(a.avatar || a.name?.[0] || 'A')
+      }))
+    ]
+    customAskAiList.value = remotes
+      .filter((agent: any) => String(agent?.modelId || '').trim())
+      .map((agent: any) => mapAgentToCustomAskAiItem(agent))
+    if (!customAskAiList.value.some(item => item.id === selectedCustomAskAiId.value)) {
+      selectedCustomAskAiId.value = customAskAiList.value[0]?.id || ''
+    }
   } catch {
     // keep builtin-bot if fetch fails
   }
@@ -3919,6 +2931,9 @@ function loadRemoteControlConfig() {
         if (data.enabled !== undefined) {
           remoteControlConfig.enabled = Boolean(data.enabled)
         }
+        if (data.proxyEnabled !== undefined) {
+          remoteControlConfig.proxyEnabled = Boolean(data.proxyEnabled)
+        }
         if (data.commandPrefix) {
           remoteControlConfig.commandPrefix = String(data.commandPrefix)
         }
@@ -3930,17 +2945,20 @@ function loadRemoteControlConfig() {
           remoteControlConfig.telegram.enabled = Boolean(data.telegram.enabled)
           remoteControlConfig.telegram.botToken = String(data.telegram.botToken || '')
           remoteControlConfig.telegram.chatId = String(data.telegram.chatId || '')
+          remoteControlConfig.telegram.proxyEnabled = Boolean(data.telegram.proxyEnabled)
         }
 
         if (data.qq) {
           remoteControlConfig.qq.enabled = Boolean(data.qq.enabled)
           remoteControlConfig.qq.botId = String(data.qq.botId || '')
           remoteControlConfig.qq.webhook = String(data.qq.webhook || '')
+          remoteControlConfig.qq.proxyEnabled = Boolean(data.qq.proxyEnabled)
         }
 
         if (data.wechat) {
           remoteControlConfig.wechat.enabled = Boolean(data.wechat.enabled)
           remoteControlConfig.wechat.webhook = String(data.wechat.webhook || '')
+          remoteControlConfig.wechat.proxyEnabled = Boolean(data.wechat.proxyEnabled)
         }
 
         if (data.feishu) {
@@ -3948,6 +2966,37 @@ function loadRemoteControlConfig() {
           remoteControlConfig.feishu.appId = String(data.feishu.appId || '')
           remoteControlConfig.feishu.appSecret = String(data.feishu.appSecret || '')
           remoteControlConfig.feishu.webhook = String(data.feishu.webhook || '')
+          remoteControlConfig.feishu.proxyEnabled = Boolean(data.feishu.proxyEnabled)
+        }
+
+        if (data.discord) {
+          remoteControlConfig.discord.enabled = Boolean(data.discord.enabled)
+          remoteControlConfig.discord.botToken = String(data.discord.botToken || '')
+          remoteControlConfig.discord.channelId = String(data.discord.channelId || '')
+          remoteControlConfig.discord.proxyEnabled = Boolean(data.discord.proxyEnabled)
+        }
+
+        if (data.slack) {
+          remoteControlConfig.slack.enabled = Boolean(data.slack.enabled)
+          remoteControlConfig.slack.botToken = String(data.slack.botToken || '')
+          remoteControlConfig.slack.channelId = String(data.slack.channelId || '')
+          remoteControlConfig.slack.proxyEnabled = Boolean(data.slack.proxyEnabled)
+        }
+
+        if (data.teams) {
+          remoteControlConfig.teams.enabled = Boolean(data.teams.enabled)
+          remoteControlConfig.teams.appId = String(data.teams.appId || '')
+          remoteControlConfig.teams.appSecret = String(data.teams.appSecret || '')
+          remoteControlConfig.teams.webhook = String(data.teams.webhook || '')
+          remoteControlConfig.teams.proxyEnabled = Boolean(data.teams.proxyEnabled)
+        }
+
+        if (data.whatsapp) {
+          remoteControlConfig.whatsapp.enabled = Boolean(data.whatsapp.enabled)
+          remoteControlConfig.whatsapp.accountSid = String(data.whatsapp.accountSid || '')
+          remoteControlConfig.whatsapp.authToken = String(data.whatsapp.authToken || '')
+          remoteControlConfig.whatsapp.fromNumber = String(data.whatsapp.fromNumber || '')
+          remoteControlConfig.whatsapp.proxyEnabled = Boolean(data.whatsapp.proxyEnabled)
         }
       })
       .catch(err => {
@@ -4132,51 +3181,69 @@ async function sendTestToTelegram() {
 
 function saveRemoteControlConfig() {
   try {
+    remoteControlConfig.enabled =
+      remoteControlConfig.telegram.enabled ||
+      remoteControlConfig.qq.enabled ||
+      remoteControlConfig.wechat.enabled ||
+      remoteControlConfig.feishu.enabled ||
+      remoteControlConfig.discord.enabled ||
+      remoteControlConfig.slack.enabled ||
+      remoteControlConfig.teams.enabled ||
+      remoteControlConfig.whatsapp.enabled
     const payload = {
       enabled: remoteControlConfig.enabled,
+      proxyEnabled: remoteControlConfig.proxyEnabled,
       commandPrefix: remoteControlConfig.commandPrefix,
       verifyCode: remoteControlConfig.verifyCode,
       telegram: {
         enabled: remoteControlConfig.telegram.enabled,
         botToken: remoteControlConfig.telegram.botToken,
-        chatId: remoteControlConfig.telegram.chatId
+        chatId: remoteControlConfig.telegram.chatId,
+        proxyEnabled: remoteControlConfig.telegram.proxyEnabled
       },
       qq: {
         enabled: remoteControlConfig.qq.enabled,
         botId: remoteControlConfig.qq.botId,
-        webhook: remoteControlConfig.qq.webhook
+        webhook: remoteControlConfig.qq.webhook,
+        proxyEnabled: remoteControlConfig.qq.proxyEnabled
       },
       wechat: {
         enabled: remoteControlConfig.wechat.enabled,
-        webhook: remoteControlConfig.wechat.webhook
+        webhook: remoteControlConfig.wechat.webhook,
+        proxyEnabled: remoteControlConfig.wechat.proxyEnabled
       },
       feishu: {
         enabled: remoteControlConfig.feishu.enabled,
         appId: remoteControlConfig.feishu.appId,
         appSecret: remoteControlConfig.feishu.appSecret,
-        webhook: remoteControlConfig.feishu.webhook
+        webhook: remoteControlConfig.feishu.webhook,
+        proxyEnabled: remoteControlConfig.feishu.proxyEnabled
       },
       discord: {
         enabled: remoteControlConfig.discord.enabled,
         botToken: remoteControlConfig.discord.botToken,
-        channelId: remoteControlConfig.discord.channelId
+        channelId: remoteControlConfig.discord.channelId,
+        proxyEnabled: remoteControlConfig.discord.proxyEnabled
       },
       slack: {
         enabled: remoteControlConfig.slack.enabled,
         botToken: remoteControlConfig.slack.botToken,
-        channelId: remoteControlConfig.slack.channelId
+        channelId: remoteControlConfig.slack.channelId,
+        proxyEnabled: remoteControlConfig.slack.proxyEnabled
       },
       teams: {
         enabled: remoteControlConfig.teams.enabled,
         appId: remoteControlConfig.teams.appId,
         appSecret: remoteControlConfig.teams.appSecret,
-        webhook: remoteControlConfig.teams.webhook
+        webhook: remoteControlConfig.teams.webhook,
+        proxyEnabled: remoteControlConfig.teams.proxyEnabled
       },
       whatsapp: {
         enabled: remoteControlConfig.whatsapp.enabled,
         accountSid: remoteControlConfig.whatsapp.accountSid,
         authToken: remoteControlConfig.whatsapp.authToken,
-        fromNumber: remoteControlConfig.whatsapp.fromNumber
+        fromNumber: remoteControlConfig.whatsapp.fromNumber,
+        proxyEnabled: remoteControlConfig.whatsapp.proxyEnabled
       }
     }
 
@@ -4209,16 +3276,6 @@ async function loadOfficeAgents() {
 
 function openOffice3d() {
   office3dVisible.value = true
-}
-
-function switchNav(nav: NavKey) {
-  selectedNav.value = nav
-  if (nav === "mcp" && !mcpLoading.value && mcpServers.value.length === 0) {
-    void fetchMcpServers()
-  }
-  if (nav === "skills" && !skillLoading.value && skillMarket.value.length === 0) {
-    void fetchSkillMarket(1)
-  }
 }
 
 watch(office3dVisible, (visible) => {
@@ -4625,79 +3682,45 @@ function buildApiUrl(path: string): string {
 }
 
 function getBackendCandidates(): string[] {
-  const port = config.value?.settings?.backendPort || 17870
   const candidates: string[] = []
 
-  // 已知后端端口，绝对地址优先（打包和开发环境都有效）
-  const ports = Array.from(new Set([port, 17870, 17871, 17872]))
-  for (const p of ports) {
-    candidates.push(`http://127.0.0.1:${p}`)
-    candidates.push(`http://localhost:${p}`)
-  }
-
-  // 开发环境 Vite 代理（仅当 origin 端口是已知 dev server 端口时才加入）
+  // 开发环境 Vite 代理（最快，无网络延迟）
   if (typeof window !== 'undefined' && window.location?.origin?.startsWith('http')) {
     const originPort = parseInt(window.location.port)
     if ([4173, 5173].includes(originPort)) {
-      candidates.unshift(window.location.origin)
+      candidates.push(window.location.origin)
     }
+  }
+
+  // 已知后端端口，127.0.0.1 优先（避免 localhost DNS 解析延迟）
+  const port = config.value?.settings?.backendPort || 17871
+  const ports = Array.from(new Set([port, 17871]))
+  for (const p of ports) {
+    candidates.push(`http://127.0.0.1:${p}`)
   }
 
   return candidates
 }
 
-async function detectBackend(): Promise<boolean> {
-  for (const candidate of getBackendCandidates()) {
-    const url = `${candidate}/api/health`
-    try {
-      const res = await fetch(url)
-      if (!res.ok) continue
-      const data = await res.json()
-      if (data?.ok) {
-        apiBase.value = candidate
-        return true
-      }
-    } catch {
-      // try next candidate
-    }
-  }
-
-  return false
-}
-
 async function bootstrap() {
   loading.bootstrap = true
   try {
-    await checkBackend()
-    await loadConfig()
-    await checkBackend()
-    await loadChatStorageConfig()
-    await loadChatHistory()
+    await Promise.all([
+      loadConfig(),
+      loadState(),
+      fetchMcpServers(),
+      fetchSkillMarket(1)
+    ])
     await nextTick()
     await replayPersistedAssistantAnimation()
-    // 设置默认聊天模型（使用模型 ID，复用已配置模型）
     const activeModel = config.value?.models?.find(m => m.id === config.value.settings.activeModelId)
     if (activeModel) {
       selectedChatModel.value = activeModel.id
     } else if (config.value.models && config.value.models.length > 0) {
-      // 如果没有激活模型，使用第一个已添加模型的 ID
       selectedChatModel.value = config.value.models[0].id
     }
-    await loadState()
-    await Promise.all([fetchMcpServers(), fetchSkillMarket(1)])
   } finally {
     loading.bootstrap = false
-  }
-}
-
-async function checkBackend() {
-  backendOnline.value = await detectBackend()
-}
-
-async function retryBackendConnection() {
-  backendOnline.value = await detectBackend()
-  if (backendOnline.value) {
-    await loadConfig()
   }
 }
 
@@ -4713,7 +3736,8 @@ async function loadConfig() {
         language: data?.settings?.language ?? "zh-CN",
         activeModelId: data?.settings?.activeModelId ?? "",
         userDataDir: data?.settings?.userDataDir ?? "",
-        skillsDir: data?.settings?.skillsDir ?? ""
+        skillsDir: data?.settings?.skillsDir ?? "",
+        proxy: data?.settings?.proxy ?? { enabled: false, protocol: 'http', host: '', port: 0, username: '', password: '' }
       },
       models: Array.isArray(data?.models) && data.models.length > 0 ? data.models : [],
       skills: Array.isArray(data?.skills) ? data.skills : []
@@ -4735,6 +3759,13 @@ async function loadState() {
 
 function checkForUpdate() {
   ElMessage.info('已是最新版本')
+}
+
+function onProxyToggle(val: boolean) {
+  if (config.value.settings.proxy) {
+    config.value.settings.proxy.enabled = val
+    persistConfig(val ? '代理已启用' : '代理已禁用')
+  }
 }
 
 async function persistConfig(message = t('saveSuccess')) {
@@ -4828,7 +3859,7 @@ async function sendChat(
       .map(m => ({ role: m.role, text: m.text }))
     
     if (!chatWs.isConnected.value) {
-      chatWs.connect(`ws://${window.location.hostname}:17870/ws`)
+      chatWs.connect(`ws://${window.location.hostname}:${config.value.settings.backendPort || 17871}/ws`)
       await new Promise(resolve => setTimeout(resolve, 1000))
     }
 
@@ -5348,13 +4379,6 @@ function handleVoiceInput() {
   }
 }
 
-watch(() => voiceInput.interimTranscript.value, (val) => {
-  if (val && showVoiceIndicator.value) {
-    const preview = chatInput.value + (chatInput.value ? ' ' : '') + voiceInput.transcript.value + val
-    console.log('Voice preview:', preview)
-  }
-})
-
 watch(() => voiceInput.isRecording.value, (recording) => {
   if (!recording && showVoiceIndicator.value) {
     const fullText = voiceInput.getFullTranscript()
@@ -5451,7 +4475,7 @@ async function addCustomAskAi() {
       ElMessage.error(String(data?.error || '创建失败'))
       return
     }
-    await Promise.all([loadCustomAskAiList(), loadAgentList()])
+    await loadAgentData()
     selectedCustomAskAiId.value = String(data?.id || selectedCustomAskAiId.value)
     ElMessage.success(t('customAiAdded'))
   } catch (error) {
@@ -5470,7 +4494,7 @@ async function removeCustomAskAi(id: string) {
       ElMessage.error(String(data?.error || '删除失败'))
       return
     }
-    await Promise.all([loadCustomAskAiList(), loadAgentList()])
+    await loadAgentData()
     ElMessage.success(t('customAiRemoved'))
   } catch (error) {
     console.error('删除代理失败:', error)
@@ -5758,58 +4782,42 @@ function syncSelectedChatModelWithConfig() {
   selectedChatModel.value = activeModel?.id || models[0].id
 }
 
-async function checkBackendAlive(): Promise<boolean> {
-  try {
-    const res = await fetch('http://127.0.0.1:17870/api/health')
-    if (!res.ok) return false
-    const data = await res.json()
-    return data?.ok === true
-  } catch {
-    return false
-  }
-}
-
-async function spawnBackendIfNeeded() {
-  const Neutralino = (window as any).Neutralino
-  if (!Neutralino) return
-
-  try {
-    if (await checkBackendAlive()) return
-
-    await Neutralino.init()
-
-    const { ensureBackendRunning } = await import('./services/backendService')
-    await ensureBackendRunning()
-  } catch (e) {
-    console.warn('[Backend] spawnBackendIfNeeded failed:', e)
-  }
-}
-
 onMounted(async () => {
   isInitializing.value = true
   initProgress.value = 5
 
-  await spawnBackendIfNeeded()
-  initProgress.value = 10
+  // 安全超时：最多显示 15 秒启动画面，防止某个请求卡死
+  const safetyTimer = setTimeout(() => {
+    isInitializing.value = false
+  }, 15000)
 
-  await Promise.all([
+  // Phase 1: 等待后端就绪（bootstrap 包含 loadConfig，确认后端 API 可用）
+  // 启动画面消失速度取决于后端启动速度
+  await bootstrap()
+  initProgress.value = 60
+
+  // Phase 2: 后端已就绪，立即显示主界面
+  // 其余初始化在后台继续执行，不影响用户交互
+  initProgress.value = 100
+  clearTimeout(safetyTimer)
+  isInitializing.value = false
+
+  // Phase 3: 后台继续初始化（不阻塞界面）
+  Promise.allSettled([
     loadScheduledTasks(),
     loadChatHistory(),
     loadChatStorageConfig(),
-    loadTokenStats()
-  ])
-  initProgress.value = 60
+    loadTokenStats(),
+    loadAgentData(),
+    loadRemoteControlConfig()
+  ]).then(() => {
+    // 所有后台任务完成后，建立 WebSocket 连接
+    chatWs.connect(`ws://${window.location.hostname}:${config.value.settings.backendPort || 17871}/ws`)
+  }).catch(() => {
+    // WebSocket 连接失败不影响主界面
+  })
 
-  await Promise.all([loadCustomAskAiList(), loadAgentList()])
-  initProgress.value = 80
-
-  await bootstrap()
-  loadRemoteControlConfig()
-  initProgress.value = 90
-
-  chatWs.connect(`ws://${window.location.hostname}:17870/ws`)
-
-  // remote_message: 仅用于微信消息面板展示原始消息，不再触发对话
+  // 注册事件监听（不依赖后台任务完成）
   chatWs.on('remote_message', (payload: any) => {
     const msg = payload as { platform: string; text: string; sender: string; timestamp: number; msgType?: string }
     if (msg.platform === 'wechat') {
@@ -5878,24 +4886,10 @@ onMounted(async () => {
     scheduleSaveChatHistory()
   })
 
-  backendPollTimer = setInterval(async () => {
-    const wasOnline = backendOnline.value
-    await checkBackend()
-    if (!wasOnline && backendOnline.value) {
-      console.log('[App] Backend reconnected, reloading config')
-      await loadConfig()
-    }
-    void loadState()
-  }, 5000) as unknown as ReturnType<typeof setInterval> | null
   window.addEventListener('pointerdown', handleGlobalPointerDown)
   window.addEventListener('scroll', handleGlobalScroll, true)
   window.addEventListener('resize', handleGlobalScroll)
   window.addEventListener('keydown', handleGlobalKeydown)
-
-  initProgress.value = 100
-
-  await new Promise(resolve => setTimeout(resolve, 1000))
-  isInitializing.value = false
 })
 
 watch(
@@ -5916,10 +4910,6 @@ watch(
 )
 
 onBeforeUnmount(() => {
-  if (backendPollTimer) {
-    clearInterval(backendPollTimer)
-    backendPollTimer = null
-  }
   if (officePollTimer) {
     clearInterval(officePollTimer)
     officePollTimer = null
@@ -5932,6 +4922,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointerdown', handleGlobalPointerDown)
   window.removeEventListener('scroll', handleGlobalScroll, true)
   window.removeEventListener('resize', handleGlobalScroll)
+  window.removeEventListener('keydown', handleGlobalKeydown)
 })
 
 watch(
@@ -5942,13 +4933,15 @@ watch(
   { deep: true }
 )
 
-async function request(path: string, options: any = {}) {
-  if (!apiBase.value && path.startsWith('/api')) {
-    const online = await detectBackend()
-    if (!online) {
-      throw new Error('后端不可用，请确认服务已启动')
-    }
+async function loadScheduledTasks() {
+  try {
+    await request('/api/scheduled-tasks')
+  } catch {
+    // silently ignore - scheduled tasks is non-critical
   }
+}
+
+async function request(path: string, options: any = {}) {
 
   const response = await fetch(buildApiUrl(path), {
     headers: {
@@ -6154,18 +5147,6 @@ function deleteModel(modelId: string) {
 </script>
 
 <style scoped>
-/* 后端离线提示 */
-.backend-offline-banner {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 9999;
-}
-.backend-offline-banner .el-alert {
-  border-radius: 0;
-}
-
 /* 三列布局 */
 .three-column-layout {
   display: flex;
@@ -6459,6 +5440,13 @@ function deleteModel(modelId: string) {
 .main-content {
   flex: 1;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.router-view-wrapper {
+  flex: 1;
+  overflow: auto;
   display: flex;
   flex-direction: column;
 }
@@ -7119,6 +6107,16 @@ function deleteModel(modelId: string) {
   color: var(--el-text-color-primary);
 }
 
+.control-proxy-label {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  margin-left: 16px;
+}
+
+.control-proxy-switch {
+  margin-left: 6px;
+}
+
 .control-global-row {
   margin-top: 10px;
 }
@@ -7234,6 +6232,29 @@ function deleteModel(modelId: string) {
   border-color: var(--el-color-primary);
   color: var(--el-color-primary);
   background: var(--el-color-primary-light-9);
+}
+
+.toolbar-proxy-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 10px;
+  background: var(--el-bg-color);
+  cursor: default;
+  white-space: nowrap;
+}
+
+.proxy-label {
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+  transition: color 0.2s;
+}
+
+.proxy-label.active {
+  color: var(--el-color-primary);
+  font-weight: 500;
 }
 
 .office-dialog-header {

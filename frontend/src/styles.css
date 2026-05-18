@@ -142,11 +142,12 @@ a:hover {
   left: 0;
   right: 0;
   bottom: 0;
-  background: #ffffff;
+  background: rgba(255, 255, 255, 0.95);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 9999;
+  pointer-events: none;
 }
 
 .loading-content {

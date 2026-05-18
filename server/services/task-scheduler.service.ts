@@ -485,7 +485,7 @@ class TaskSchedulerService {
     }
   }
 
-  private async executeTask(task: ScheduledTask) {
+  public async executeTask(task: ScheduledTask) {
     logger.info('[TaskScheduler] Executing task', { id: task.id, name: task.name, toolName: task.toolName })
 
     try {

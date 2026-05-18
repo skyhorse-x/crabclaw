@@ -7,7 +7,8 @@ import { logger } from '../services/logger.service'
 import { createId } from '../shared/utils'
 import { readFile, writeFile, mkdir } from 'fs/promises'
 import { existsSync } from 'fs'
-import { join } from 'path'
+import { join, dirname } from 'path'
+import { PATHS } from '../shared/constants'
 import type {
   ExperienceNode,
   ExperienceSearchResult,
@@ -25,7 +26,7 @@ export class ExperienceGraph {
   private embeddingDimension: number = 128
 
   private constructor() {
-    this.storagePath = join(process.cwd(), 'data', 'experience-graph.json')
+    this.storagePath = join(PATHS.DATA_DIR, 'experience-graph.json')
   }
 
   static getInstance(): ExperienceGraph {
@@ -41,7 +42,7 @@ export class ExperienceGraph {
     }
 
     try {
-      const dir = this.storagePath.substring(0, this.storagePath.lastIndexOf('/'))
+      const dir = dirname(this.storagePath)
       if (!existsSync(dir)) {
         await mkdir(dir, { recursive: true })
       }

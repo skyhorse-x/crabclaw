@@ -140,7 +140,7 @@ const MCP_MARKET_DATA: McpServerMarketItem[] = [
 /**
  * 处理 MCP 路由请求
  */
-export async function handleMcpRoute(pathname: string, request: Request) {
+export async function handleMcpRoute(pathname: string, request: Request): Promise<Response | null> {
   // GET /api/mcp
   if (pathname === '/api/mcp' && request.method === 'GET') {
     try {

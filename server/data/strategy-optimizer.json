@@ -1,0 +1,154 @@
+{
+  "strategies": [
+    {
+      "id": "default_planning",
+      "name": "默认规划策略",
+      "type": "planning",
+      "rules": [
+        {
+          "id": "rule1",
+          "condition": "简单任务",
+          "action": "直接执行",
+          "priority": 1,
+          "confidence": 0.9,
+          "source": "manual"
+        },
+        {
+          "id": "rule2",
+          "condition": "复杂任务",
+          "action": "分解步骤",
+          "priority": 2,
+          "confidence": 0.8,
+          "source": "manual"
+        }
+      ],
+      "performance": {
+        "totalAttempts": 0,
+        "successCount": 0,
+        "avgDuration": 0,
+        "recentResults": [],
+        "maxRecentResults": 10,
+        "trend": "stable",
+        "lastUpdated": 1779017761763
+      },
+      "conditions": [
+        "planning"
+      ],
+      "createdAt": 1779017761763,
+      "updatedAt": 1779017761763
+    },
+    {
+      "id": "default_execution",
+      "name": "默认执行策略",
+      "type": "execution",
+      "rules": [
+        {
+          "id": "rule2",
+          "condition": "多步执行",
+          "action": "逐步验证",
+          "priority": 2,
+          "confidence": 0.8,
+          "source": "manual"
+        },
+        {
+          "id": "rule-162b2015-ae73-46a0-bced-4740ae4877ad",
+          "condition": "当任务类型为\"execution\"时，执行\"chrome-devtools/chrome\"可成功",
+          "action": "chrome-devtools/chrome",
+          "priority": 1,
+          "confidence": 1,
+          "source": "learned"
+        },
+        {
+          "id": "rule-279e04a6-e98d-473a-9028-aae4e68ba535",
+          "condition": "当任务类型为\"navigation\"时，执行\"chrome-devtools/chrome\"可成功",
+          "action": "chrome-devtools/chrome",
+          "priority": 1,
+          "confidence": 1,
+          "source": "learned"
+        },
+        {
+          "id": "rule-45afb5bc-c189-41de-8f19-e29cf15a0b6c",
+          "condition": "当任务类型为\"navigation\"时，执行\"chrome-devtools/navigate\"可成功",
+          "action": "chrome-devtools/navigate",
+          "priority": 1,
+          "confidence": 1,
+          "source": "learned"
+        },
+        {
+          "id": "rule-b55b5807-1cb1-40bb-b03a-24e559d0f465",
+          "condition": "当任务类型为\"navigation\"时，执行\"chrome-devtools/click\"可成功",
+          "action": "chrome-devtools/click",
+          "priority": 1,
+          "confidence": 1,
+          "source": "learned"
+        },
+        {
+          "id": "rule1",
+          "condition": "单步执行",
+          "action": "顺序执行",
+          "priority": 1,
+          "confidence": 0.9,
+          "source": "manual"
+        }
+      ],
+      "performance": {
+        "totalAttempts": 0,
+        "successCount": 0,
+        "avgDuration": 0,
+        "recentResults": [],
+        "maxRecentResults": 10,
+        "trend": "stable",
+        "lastUpdated": 1779017761763
+      },
+      "conditions": [
+        "execution"
+      ],
+      "createdAt": 1779017761763,
+      "updatedAt": 1779018085752
+    },
+    {
+      "id": "default_recovery",
+      "name": "默认恢复策略",
+      "type": "recovery",
+      "rules": [
+        {
+          "id": "rule1",
+          "condition": "可恢复错误",
+          "action": "自动重试",
+          "priority": 1,
+          "confidence": 0.7,
+          "source": "manual"
+        },
+        {
+          "id": "rule2",
+          "condition": "不可恢复错误",
+          "action": "回退方案",
+          "priority": 2,
+          "confidence": 0.8,
+          "source": "manual"
+        }
+      ],
+      "performance": {
+        "totalAttempts": 6,
+        "successCount": 6,
+        "avgDuration": 4166.666666666667,
+        "recentResults": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "maxRecentResults": 10,
+        "trend": "stable",
+        "lastUpdated": 1779018085752
+      },
+      "conditions": [
+        "recovery"
+      ],
+      "createdAt": 1779017761763,
+      "updatedAt": 1779018085752
+    }
+  ]
+}

@@ -1,9 +1,5 @@
-/**
- * 统一消息发送服务
- * 支持 Telegram、QQ、微信等多平台消息发送
- */
-
 import { logger } from './logger.service'
+import { getConfigDatabase } from './config-database.service'
 
 export interface MessagePayload {
   platform: 'telegram' | 'qq' | 'wechat' | 'feishu' | 'discord' | 'slack' | 'teams' | 'whatsapp'
@@ -23,13 +19,62 @@ interface PlatformSender {
   send(content: string, chatId?: string, parseMode?: MessagePayload['parseMode']): Promise<SendResult>
 }
 
+function getProxyConfig() {
+  try {
+    const configDb = getConfigDatabase()
+    const json = configDb.getAppConfigJson()
+    if (json) {
+      const parsed = JSON.parse(json)
+      return parsed?.settings?.proxy
+    }
+  } catch {
+  }
+  return undefined
+}
+
+async function fetchWithProxy(url: string, options: RequestInit, useProxy: boolean): Promise<Response> {
+  if (!useProxy) {
+    return fetch(url, options)
+  }
+
+  const savedHttpProxy = process.env.HTTP_PROXY
+  const savedHttpsProxy = process.env.HTTPS_PROXY
+
+  const proxyConfig = getProxyConfig()
+  if (proxyConfig?.enabled && proxyConfig.host && proxyConfig.port) {
+    const protocol = proxyConfig.protocol || 'http'
+    const auth = proxyConfig.username && proxyConfig.password
+      ? `${encodeURIComponent(proxyConfig.username)}:${encodeURIComponent(proxyConfig.password)}@`
+      : ''
+    process.env.HTTP_PROXY = `${protocol}://${auth}${proxyConfig.host}:${proxyConfig.port}`
+    process.env.HTTPS_PROXY = `${protocol}://${auth}${proxyConfig.host}:${proxyConfig.port}`
+  }
+
+  try {
+    return await fetch(url, options)
+  } finally {
+    if (savedHttpProxy !== undefined) {
+      process.env.HTTP_PROXY = savedHttpProxy
+    } else {
+      delete process.env.HTTP_PROXY
+    }
+    if (savedHttpsProxy !== undefined) {
+      process.env.HTTPS_PROXY = savedHttpsProxy
+    } else {
+      delete process.env.HTTPS_PROXY
+    }
+  }
+}
+
 class TelegramSender implements PlatformSender {
   private botToken: string
   private defaultChatId: string
+  private proxyEnabled: boolean
 
-  constructor(botToken: string, defaultChatId: string = '') {
+  constructor(botToken: string, defaultChatId: string = '', proxyEnabled: boolean = false) {
     this.botToken = botToken
     this.defaultChatId = defaultChatId
+    this.proxyEnabled = proxyEnabled
   }
 
   async send(content: string, chatId?: string, parseMode?: MessagePayload['parseMode']): Promise<SendResult> {
@@ -47,11 +92,11 @@ class TelegramSender implements PlatformSender {
         body.parse_mode = parseMode
       }
 
-      const response = await fetch(`https://api.telegram.org/bot${this.botToken}/sendMessage`, {
+      const response = await fetchWithProxy(`https://api.telegram.org/bot${this.botToken}/sendMessage`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body)
-      })
+      }, this.proxyEnabled)
 
       if (!response.ok) {
         const err = await response.text()
@@ -72,9 +117,11 @@ class TelegramSender implements PlatformSender {
 
 class QQSender implements PlatformSender {
   private webhook: string
+  private proxyEnabled: boolean
 
-  constructor(webhook: string = '') {
+  constructor(webhook: string = '', proxyEnabled: boolean = false) {
     this.webhook = webhook
+    this.proxyEnabled = proxyEnabled
   }
 
   async send(content: string, _chatId?: string, _parseMode?: MessagePayload['parseMode']): Promise<SendResult> {
@@ -83,14 +130,14 @@ class QQSender implements PlatformSender {
     }
 
     try {
-      const response = await fetch(this.webhook, {
+      const response = await fetchWithProxy(this.webhook, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           msg_type: 'text',
           content
         })
-      })
+      }, this.proxyEnabled)
 
       if (!response.ok) {
         return { ok: false, platform: 'qq', error: `HTTP ${response.status}` }
@@ -105,9 +152,11 @@ class QQSender implements PlatformSender {
 
 class WechatSender implements PlatformSender {
   private webhook: string
+  private proxyEnabled: boolean
 
-  constructor(webhook: string = '') {
+  constructor(webhook: string = '', proxyEnabled: boolean = false) {
     this.webhook = webhook
+    this.proxyEnabled = proxyEnabled
   }
 
   async send(content: string, _chatId?: string, _parseMode?: MessagePayload['parseMode']): Promise<SendResult> {
@@ -116,14 +165,14 @@ class WechatSender implements PlatformSender {
     }
 
     try {
-      const response = await fetch(this.webhook, {
+      const response = await fetchWithProxy(this.webhook, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           msgtype: 'text',
           text: { content }
         })
-      })
+      }, this.proxyEnabled)
 
       if (!response.ok) {
         return { ok: false, platform: 'wechat', error: `HTTP ${response.status}` }
@@ -138,9 +187,11 @@ class WechatSender implements PlatformSender {
 
 class FeishuSender implements PlatformSender {
   private webhook: string
+  private proxyEnabled: boolean
 
-  constructor(webhook: string = '') {
+  constructor(webhook: string = '', proxyEnabled: boolean = false) {
     this.webhook = webhook
+    this.proxyEnabled = proxyEnabled
   }
 
   async send(content: string, _chatId?: string, _parseMode?: MessagePayload['parseMode']): Promise<SendResult> {
@@ -149,14 +200,14 @@ class FeishuSender implements PlatformSender {
     }
 
     try {
-      const response = await fetch(this.webhook, {
+      const response = await fetchWithProxy(this.webhook, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           msg_type: 'text',
           content: { text: content }
         })
-      })
+      }, this.proxyEnabled)
 
       if (!response.ok) {
         return { ok: false, platform: 'feishu', error: `HTTP ${response.status}` }
@@ -172,10 +223,12 @@ class FeishuSender implements PlatformSender {
 class DiscordSender implements PlatformSender {
   private botToken: string
   private defaultChannelId: string
+  private proxyEnabled: boolean
 
-  constructor(botToken: string = '', defaultChannelId: string = '') {
+  constructor(botToken: string = '', defaultChannelId: string = '', proxyEnabled: boolean = false) {
     this.botToken = botToken
     this.defaultChannelId = defaultChannelId
+    this.proxyEnabled = proxyEnabled
   }
 
   async send(content: string, channelId?: string, _parseMode?: MessagePayload['parseMode']): Promise<SendResult> {
@@ -185,14 +238,14 @@ class DiscordSender implements PlatformSender {
 
     try {
       const targetChannelId = channelId || this.defaultChannelId
-      const response = await fetch(`https://discord.com/api/v10/channels/${targetChannelId}/messages`, {
+      const response = await fetchWithProxy(`https://discord.com/api/v10/channels/${targetChannelId}/messages`, {
         method: 'POST',
         headers: {
           'Authorization': `Bot ${this.botToken}`,
           'content-type': 'application/json'
         },
         body: JSON.stringify({ content })
-      })
+      }, this.proxyEnabled)
 
       if (!response.ok) {
         const err = await response.text()
@@ -210,10 +263,12 @@ class DiscordSender implements PlatformSender {
 class SlackSender implements PlatformSender {
   private botToken: string
   private defaultChannelId: string
+  private proxyEnabled: boolean
 
-  constructor(botToken: string = '', defaultChannelId: string = '') {
+  constructor(botToken: string = '', defaultChannelId: string = '', proxyEnabled: boolean = false) {
     this.botToken = botToken
     this.defaultChannelId = defaultChannelId
+    this.proxyEnabled = proxyEnabled
   }
 
   async send(content: string, channelId?: string, _parseMode?: MessagePayload['parseMode']): Promise<SendResult> {
@@ -223,7 +278,7 @@ class SlackSender implements PlatformSender {
 
     try {
       const targetChannelId = channelId || this.defaultChannelId
-      const response = await fetch('https://slack.com/api/chat.postMessage', {
+      const response = await fetchWithProxy('https://slack.com/api/chat.postMessage', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${this.botToken}`,
@@ -233,7 +288,7 @@ class SlackSender implements PlatformSender {
           channel: targetChannelId,
           text: content
         })
-      })
+      }, this.proxyEnabled)
 
       const data = await response.json() as { ok: boolean; error?: string; ts?: string }
       if (!data.ok) {
@@ -249,9 +304,11 @@ class SlackSender implements PlatformSender {
 
 class TeamsSender implements PlatformSender {
   private webhook: string
+  private proxyEnabled: boolean
 
-  constructor(webhook: string = '') {
+  constructor(webhook: string = '', proxyEnabled: boolean = false) {
     this.webhook = webhook
+    this.proxyEnabled = proxyEnabled
   }
 
   async send(content: string, _chatId?: string, _parseMode?: MessagePayload['parseMode']): Promise<SendResult> {
@@ -260,7 +317,7 @@ class TeamsSender implements PlatformSender {
     }
 
     try {
-      const response = await fetch(this.webhook, {
+      const response = await fetchWithProxy(this.webhook, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
@@ -270,7 +327,7 @@ class TeamsSender implements PlatformSender {
           summary: 'Desktop Agent Message',
           sections: [{ activityTitle: 'Desktop Agent', activitySubtitle: '', text: content }]
         })
-      })
+      }, this.proxyEnabled)
 
       if (!response.ok) {
         return { ok: false, platform: 'teams', error: `HTTP ${response.status}` }
@@ -287,11 +344,13 @@ class WhatsAppSender implements PlatformSender {
   private accountSid: string
   private authToken: string
   private fromNumber: string
+  private proxyEnabled: boolean
 
-  constructor(accountSid: string = '', authToken: string = '', fromNumber: string = '') {
+  constructor(accountSid: string = '', authToken: string = '', fromNumber: string = '', proxyEnabled: boolean = false) {
     this.accountSid = accountSid
     this.authToken = authToken
     this.fromNumber = fromNumber
+    this.proxyEnabled = proxyEnabled
   }
 
   async send(content: string, to?: string, _parseMode?: MessagePayload['parseMode']): Promise<SendResult> {
@@ -301,7 +360,7 @@ class WhatsAppSender implements PlatformSender {
 
     try {
       const auth = Buffer.from(`${this.accountSid}:${this.authToken}`).toString('base64')
-      const response = await fetch(
+      const response = await fetchWithProxy(
         `https://api.twilio.com/2010-04-01/Accounts/${this.accountSid}/Messages.json`,
         {
           method: 'POST',
@@ -314,7 +373,8 @@ class WhatsAppSender implements PlatformSender {
             To: to || this.fromNumber,
             Body: content
           })
-        }
+        },
+        this.proxyEnabled
       )
 
       if (!response.ok) {
@@ -352,44 +412,54 @@ class UnifiedMessageService {
   }
 
   updateConfig(config: {
-    telegram?: { botToken?: string; chatId?: string }
-    qq?: { webhook?: string; botId?: string }
-    wechat?: { webhook?: string }
-    feishu?: { webhook?: string }
-    discord?: { botToken?: string; channelId?: string }
-    slack?: { botToken?: string; channelId?: string }
-    teams?: { webhook?: string }
-    whatsapp?: { accountSid?: string; authToken?: string; fromNumber?: string }
+    telegram?: { botToken?: string; chatId?: string; proxyEnabled?: boolean }
+    qq?: { webhook?: string; botId?: string; proxyEnabled?: boolean }
+    wechat?: { webhook?: string; proxyEnabled?: boolean }
+    feishu?: { webhook?: string; proxyEnabled?: boolean }
+    discord?: { botToken?: string; channelId?: string; proxyEnabled?: boolean }
+    slack?: { botToken?: string; channelId?: string; proxyEnabled?: boolean }
+    teams?: { webhook?: string; proxyEnabled?: boolean }
+    whatsapp?: { accountSid?: string; authToken?: string; fromNumber?: string; proxyEnabled?: boolean }
   }) {
     if (config.telegram) {
       this.telegram = new TelegramSender(
         config.telegram.botToken || '',
-        config.telegram.chatId || ''
+        config.telegram.chatId || '',
+        config.telegram.proxyEnabled ?? false
       )
     }
     if (config.qq) {
-      this.qq = new QQSender(config.qq.webhook || '')
+      this.qq = new QQSender(config.qq.webhook || '', config.qq.proxyEnabled ?? false)
     }
     if (config.wechat) {
-      this.wechat = new WechatSender(config.wechat.webhook || '')
+      this.wechat = new WechatSender(config.wechat.webhook || '', config.wechat.proxyEnabled ?? false)
     }
     if (config.feishu) {
-      this.feishu = new FeishuSender(config.feishu.webhook || '')
+      this.feishu = new FeishuSender(config.feishu.webhook || '', config.feishu.proxyEnabled ?? false)
     }
     if (config.discord) {
-      this.discord = new DiscordSender(config.discord.botToken || '', config.discord.channelId || '')
+      this.discord = new DiscordSender(
+        config.discord.botToken || '',
+        config.discord.channelId || '',
+        config.discord.proxyEnabled ?? false
+      )
     }
     if (config.slack) {
-      this.slack = new SlackSender(config.slack.botToken || '', config.slack.channelId || '')
+      this.slack = new SlackSender(
+        config.slack.botToken || '',
+        config.slack.channelId || '',
+        config.slack.proxyEnabled ?? false
+      )
     }
     if (config.teams) {
-      this.teams = new TeamsSender(config.teams.webhook || '')
+      this.teams = new TeamsSender(config.teams.webhook || '', config.teams.proxyEnabled ?? false)
     }
     if (config.whatsapp) {
       this.whatsapp = new WhatsAppSender(
         config.whatsapp.accountSid || '',
         config.whatsapp.authToken || '',
-        config.whatsapp.fromNumber || ''
+        config.whatsapp.fromNumber || '',
+        config.whatsapp.proxyEnabled ?? false
       )
     }
     logger.info('[UnifiedMessage] Config updated')
@@ -404,26 +474,49 @@ class UnifiedMessageService {
       parseMode: parseMode || 'plain'
     })
 
+    let result: SendResult
     switch (platform) {
       case 'telegram':
-        return this.telegram.send(content, chatId, parseMode)
+        result = await this.telegram.send(content, chatId, parseMode)
+        break
       case 'qq':
-        return this.qq.send(content, chatId, parseMode)
+        result = await this.qq.send(content, chatId, parseMode)
+        break
       case 'wechat':
-        return this.wechat.send(content, chatId, parseMode)
+        result = await this.wechat.send(content, chatId, parseMode)
+        break
       case 'feishu':
-        return this.feishu.send(content, chatId, parseMode)
+        result = await this.feishu.send(content, chatId, parseMode)
+        break
       case 'discord':
-        return this.discord.send(content, chatId, parseMode)
+        result = await this.discord.send(content, chatId, parseMode)
+        break
       case 'slack':
-        return this.slack.send(content, chatId, parseMode)
+        result = await this.slack.send(content, chatId, parseMode)
+        break
       case 'teams':
-        return this.teams.send(content, chatId, parseMode)
+        result = await this.teams.send(content, chatId, parseMode)
+        break
       case 'whatsapp':
-        return this.whatsapp.send(content, chatId, parseMode)
+        result = await this.whatsapp.send(content, chatId, parseMode)
+        break
       default:
-        return { ok: false, platform, error: `未知平台: ${platform}` }
+        result = { ok: false, platform, error: `未知平台: ${platform}` }
     }
+
+    if (result.ok) {
+      logger.info('[UnifiedMessage] Message sent successfully', {
+        platform,
+        messageId: result.messageId
+      })
+    } else {
+      logger.error('[UnifiedMessage] Message send failed', {
+        platform,
+        error: result.error
+      })
+    }
+
+    return result
   }
 
   async sendToAll(content: string): Promise<SendResult[]> {

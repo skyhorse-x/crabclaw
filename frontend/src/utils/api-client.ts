@@ -6,7 +6,7 @@
 import { errorHandler, ErrorType } from './error-handler'
 
 // 基础配置
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:17870'
+const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:17871'
 const TIMEOUT = 30000 // 30 秒超时
 
 interface ApiClientOptions {

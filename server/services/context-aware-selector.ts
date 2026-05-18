@@ -5,6 +5,7 @@
 
 import { mcpToolRegistry, type McpToolDefinition, type ToolSelectionResult } from './mcp-tool-registry'
 import { logger } from './logger.service'
+import { PATHS } from '../shared/constants'
 
 /**
  * 选择上下文
@@ -454,7 +455,7 @@ export class ContextAwareSelector {
       if (task.includes('config') || task.includes('设置')) {
         parameters.path = './config.json'
       } else if (task.includes('log') || task.includes('日志')) {
-        parameters.path = './server/logs/app.log'
+        parameters.path = PATHS.SERVER_LOG
       }
     }
     

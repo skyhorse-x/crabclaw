@@ -4,24 +4,9 @@
  */
 
 import { version } from '../../package.json'
+import { successResponse } from '../shared/utils'
 
 const startTime = Date.now()
-
-/**
- * 创建成功响应
- */
-function successResponse<T>(data: T, message?: string): Response {
-  return new Response(JSON.stringify({
-    ok: true,
-    message: message || 'success',
-    data
-  }), {
-    status: 200,
-    headers: {
-      'content-type': 'application/json; charset=utf-8'
-    }
-  })
-}
 
 /**
  * 处理健康检查请求

@@ -108,7 +108,7 @@ class BuiltinToolsService {
 
     this.register({
       name: 'system_info',
-      description: '获取当前系统信息（跨平台兼容）。返回：平台类型、操作系统、CPU信息、内存使用情况、磁盘使用情况、运行时长、网络信息等。不需要任何参数。示例：{"command": "system_info"}',
+      description: '获取当前系统信息（跨平台兼容）。返回：平台类型、操作系统、CPU信息、内存使用情况、磁盘使用情况、运行时长、ADB安装状态和已连接设备列表等。不需要任何参数。如果adb已安装，你可以直接使用shell工具运行adb命令（如adb devices, adb shell等）。示例：{"command": "system_info"}',
       inputSchema: {
         type: 'object',
         properties: {
@@ -139,10 +139,11 @@ class BuiltinToolsService {
             ? `${Math.floor(uptime / 3600)}小时${Math.floor((uptime % 3600) / 60)}分钟`
             : `${Math.floor(uptime / 60)}分钟`
 
-        const [memoryInfo, diskInfo, cpuLoad] = await Promise.all([
+        const [memoryInfo, diskInfo, cpuLoad, adbInfo] = await Promise.all([
           this.getMemoryInfo(),
           this.getDiskInfo(),
-          this.getCpuLoad()
+          this.getCpuLoad(),
+          this.getAdbInfo()
         ])
 
         const hostname = os.hostname()
@@ -162,7 +163,8 @@ class BuiltinToolsService {
             disk: diskInfo,
             uptime: uptimeStr,
             uptime_seconds: uptime,
-            note: 'memory details and disk info use platform-specific commands'
+            adb: adbInfo,
+            note: 'memory details and disk info use platform-specific commands. adb shows adb availability - if installed, you can use shell tool to run adb commands directly'
           }, null, 2)
         }
       }
@@ -220,6 +222,46 @@ class BuiltinToolsService {
       return acc + ((total - idle) / total * 100) / cpus.length
     }, 0)
     return `CPU Load: ${load.toFixed(1)}%`
+  }
+
+  private async getAdbInfo(): Promise<{ installed: boolean; version: string | null; devices: string[]; error: string | null }> {
+    let adbPath: string | null = null
+    try {
+      const { stdout } = await execAsync(process.platform === 'win32' ? 'where adb' : 'which adb')
+      const firstLine = stdout.trim().split('\n')[0].trim()
+      if (firstLine) adbPath = firstLine
+    } catch {}
+
+    if (!adbPath) {
+      return { installed: false, version: null, devices: [], error: 'adb command not found in PATH' }
+    }
+
+    let version: string | null = null
+    try {
+      const { stdout } = await execAsync(`"${adbPath}" version`)
+      const match = stdout.match(/Android Debug Bridge version ([\d.]+)/)
+      version = match ? match[1] : stdout.trim().split('\n')[0] || null
+    } catch {}
+
+    const devices: string[] = []
+    let error: string | null = null
+    try {
+      const { stdout } = await execAsync(`"${adbPath}" devices -l`)
+      const lines = stdout.trim().split('\n').slice(1)
+      for (const line of lines) {
+        const trimmed = line.trim()
+        if (!trimmed || trimmed.startsWith('*')) continue
+        const parts = trimmed.split(/\s+/)
+        if (parts.length >= 2 && parts[1] === 'device') {
+          const modelMatch = trimmed.match(/model:(\S+)/)
+          devices.push(modelMatch ? `${parts[0]} (${modelMatch[1]})` : parts[0])
+        }
+      }
+    } catch (err: any) {
+      error = `adb devices failed: ${err.message}`
+    }
+
+    return { installed: true, version, devices, error }
   }
 
   register(tool: BuiltinTool) {

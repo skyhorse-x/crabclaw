@@ -4,6 +4,7 @@
 
 import * as path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import * as os from 'node:os'
 
 // 路径解析：兼容源码模式和 Bun 编译二进制模式
 // Bun 编译模式下 import.meta.url 解析到 /$bunfs/ 虚拟文件系统，需回退到 process.execPath
@@ -38,14 +39,15 @@ export const PATHS = {
   SERVER_LOG: path.join(SERVER_ROOT, 'logs', 'server.log'),
   BRIDGE_PATH: path.join(SERVER_ROOT, 'bridge', 'action-runner.mjs'),
   MCP_CONFIG_PATH: path.join(SERVER_ROOT, 'mcp-config.json'),
-  WORKSPACE_DIR: path.join(PROJECT_ROOT, 'workspace')
+  WORKSPACE_DIR: path.join(PROJECT_ROOT, 'workspace'),
+  PORT_FILE: path.join(os.tmpdir(), '.crabclaw-port')
 } as const
 
 /**
  * 默认配置
  */
 export const DEFAULTS = {
-  PORT: 17870,
+  PORT: 17871,
   THEME: 'light',
   LANGUAGE: 'zh-CN',
   MODEL_PROVIDER: 'openai',
@@ -55,7 +57,7 @@ export const DEFAULTS = {
 
 export const DEFAULT_CONFIG = {
   settings: {
-    backendPort: 17870,
+    backendPort: 17871,
     theme: 'light',
     language: 'zh-CN',
     activeModelId: '',

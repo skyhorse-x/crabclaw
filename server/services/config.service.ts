@@ -18,6 +18,7 @@ import { PATHS, DEFAULTS, DEFAULT_CONFIG } from '../shared/constants'
 import { ValidationError } from '../middleware/error.middleware'
 import { logger } from './logger.service'
 import { getEncryptionService } from './encryption.service'
+import { getConfigDatabase } from './config-database.service'
 
 /**
  * 配置验证器
@@ -204,6 +205,18 @@ export class ConfigValidator {
       config.settings = {}
     }
 
+    const rawProxy = config.settings.proxy
+    const proxy = rawProxy && typeof rawProxy === 'object'
+      ? {
+          enabled: rawProxy.enabled === true,
+          protocol: typeof rawProxy.protocol === 'string' ? rawProxy.protocol : 'http',
+          host: typeof rawProxy.host === 'string' ? rawProxy.host : '',
+          port: typeof rawProxy.port === 'number' ? rawProxy.port : 0,
+          username: typeof rawProxy.username === 'string' ? rawProxy.username : undefined,
+          password: typeof rawProxy.password === 'string' ? rawProxy.password : undefined
+        }
+      : undefined
+
     const sanitized: AppConfig = {
       settings: {
         backendPort: typeof config.settings.backendPort === 'number' 
@@ -213,7 +226,8 @@ export class ConfigValidator {
         language: config.settings.language ? String(config.settings.language) : DEFAULTS.LANGUAGE,
         activeModelId: config.settings.activeModelId ? String(config.settings.activeModelId) : undefined,
         userDataDir: config.settings.userDataDir ? String(config.settings.userDataDir) : undefined,
-        skillsDir: config.settings.skillsDir ? String(config.settings.skillsDir) : PATHS.SKILLS_DIR
+        skillsDir: config.settings.skillsDir ? String(config.settings.skillsDir) : PATHS.SKILLS_DIR,
+        proxy
       },
       models: Array.isArray(config.models)
         ? config.models.reduce((acc: ModelConfig[], model: any, i: number) => {
@@ -249,7 +263,6 @@ export class ConfigValidator {
  * 配置服务类
  */
 export class ConfigService {
-  private configPath: string
   private skillsDir: string
   private cache: AppConfig | null = null
   private cacheTimestamp: number = 0
@@ -258,23 +271,19 @@ export class ConfigService {
   private saveQueue: Array<{ config: AppConfig; resolve: (value: AppConfig) => void; reject: (error: unknown) => void }> = []
 
   constructor(options: {
-    configPath?: string
     skillsDir?: string
   } = {}) {
-    this.configPath = options.configPath || PATHS.CONFIG_PATH
     this.skillsDir = options.skillsDir || PATHS.SKILLS_DIR
   }
 
   /**
-   * 确保配置目录存在
+   * 确保技能目录存在
    */
   private async ensureConfigDir(): Promise<void> {
-    const configDir = path.dirname(this.configPath)
     try {
-      await mkdir(configDir, { recursive: true })
       await mkdir(this.skillsDir, { recursive: true })
     } catch (error) {
-      logger.error('Failed to create config directories', error)
+      logger.error('Failed to create skills directory', error)
       throw error
     }
   }
@@ -284,15 +293,35 @@ export class ConfigService {
    */
   private async loadConfigFile(): Promise<Partial<AppConfig>> {
     try {
-      const content = await readFile(this.configPath, 'utf8')
-      return JSON.parse(content)
-    } catch (error: any) {
-      if (error.code === 'ENOENT') {
-        logger.debug('Config file not found, will create default')
-        return {}
+      const db = getConfigDatabase()
+      const json = db.getAppConfigJson()
+      if (json) {
+        const parsed = JSON.parse(json)
+        if (parsed && typeof parsed === 'object' && Array.isArray(parsed.models) && parsed.models.length > 0) {
+          return parsed
+        }
       }
-      logger.error('Failed to load config file', error)
-      throw new ValidationError('配置文件格式错误', { error: error.message })
+
+      // 数据库无有效数据，尝试从旧文件迁移
+      logger.info('Migrating config from app-config.json to database')
+      try {
+        const oldContent = await readFile(PATHS.CONFIG_PATH, 'utf8')
+        const oldConfig = JSON.parse(oldContent)
+        if (oldConfig && typeof oldConfig === 'object') {
+          const content = JSON.stringify(oldConfig, null, 2)
+          db.saveAppConfigJson(content)
+          logger.info('Config migrated from file to database', { modelsCount: oldConfig.models?.length })
+          return oldConfig
+        }
+      } catch {
+        logger.debug('No config file to migrate')
+      }
+
+      logger.debug('Config not found in database, will use default')
+      return {}
+    } catch (error: any) {
+      logger.error('Failed to load config from database', error)
+      throw new ValidationError('配置格式错误', { error: error.message })
     }
   }
 
@@ -301,13 +330,13 @@ export class ConfigService {
    */
   private async saveConfigFile(config: AppConfig): Promise<void> {
     try {
-      await this.ensureConfigDir()
+      const db = getConfigDatabase()
       const content = JSON.stringify(config, null, 2)
-      await writeFile(this.configPath, content, 'utf8')
-      logger.info('Config file saved', { path: this.configPath })
+      db.saveAppConfigJson(content)
+      logger.info('Config saved to database')
     } catch (error: any) {
-      logger.error('Failed to save config file', error)
-      throw new Error(`保存配置文件失败：${error.message}`)
+      logger.error('Failed to save config to database', error)
+      throw new Error(`保存配置失败：${error.message}`)
     }
   }
 

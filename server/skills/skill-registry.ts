@@ -149,7 +149,8 @@ export class SkillRegistry implements ISkillRegistry {
   async loadFromDirectory(dirPath: string): Promise<number> {
     try {
       if (!existsSync(dirPath)) {
-        logger.warn('[SkillRegistry] Skills directory not found', { dirPath })
+        logger.info('[SkillRegistry] Skills directory not found, creating it now', { dirPath })
+        await mkdir(dirPath, { recursive: true })
         return 0
       }
 
@@ -208,7 +209,8 @@ export class SkillRegistry implements ISkillRegistry {
           continue
         }
 
-        const skillId = String(skill?.id || entry.name.replace(/\.skill\.json$/i, ''))
+        if (!skill) continue
+        const skillId = String(skill.id || entry.name.replace(/\.skill\.json$/i, ''))
         const skillDir = join(dirPath, skillId)
         const skillMd = join(skillDir, 'SKILL.md')
         const agentsDir = join(skillDir, 'agents')
@@ -258,10 +260,7 @@ export class SkillRegistry implements ISkillRegistry {
     const header = `# ${skill.name}\n\n${skill.description || ''}\n`
     const metaLines = [
       `- id: ${skill.id}`,
-      `- category: ${skill.category}`,
-      `- tags: ${(skill.tags || []).join(', ') || '-'}`,
-      `- triggerPhrases: ${(skill.triggerPhrases || []).join(', ') || '-'}`,
-      `- delayMs: ${skill.delayMs ?? 500}`
+      `- category: ${skill.category || 'browser'}`
     ].join('\n')
     const jsonBlock = JSON.stringify(skill, null, 2)
     return `${header}\n## Metadata\n${metaLines}\n\n## Skill JSON\n\n\`\`\`json\n${jsonBlock}\n\`\`\`\n`

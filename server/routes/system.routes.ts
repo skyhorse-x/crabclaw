@@ -8,7 +8,7 @@ import * as systemHandler from '../handlers/system.handler'
 /**
  * 处理系统路由请求
  */
-export async function handleSystemRoute(pathname: string, request: Request) {
+export async function handleSystemRoute(pathname: string, request: Request): Promise<Response | null> {
   const method = request.method
 
   // GET /api/system/state - 获取系统状态

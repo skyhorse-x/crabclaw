@@ -1,0 +1,177 @@
+{
+  "successPatterns": [
+    {
+      "id": "pat-1f1c2103-de2b-469b-979a-53bf81c7d1a6",
+      "name": "general_pattern_1779017761856",
+      "description": "用于general任务的模式：自动化网页操作...，包含3个步骤",
+      "trigger": {
+        "taskTypes": [
+          "general"
+        ],
+        "keywords": [
+          "自动化网页操作"
+        ],
+        "contextPreconditions": [
+          "浏览器已启动"
+        ]
+      },
+      "structure": {
+        "steps": [
+          {
+            "sequence": 1,
+            "action": "chrome-devtools/navigate",
+            "expectedResult": "成功",
+            "timeout": 5000,
+            "critical": true,
+            "retryable": true
+          },
+          {
+            "sequence": 2,
+            "action": "chrome-devtools/click",
+            "expectedResult": "成功",
+            "timeout": 5000,
+            "critical": false,
+            "retryable": true
+          },
+          {
+            "sequence": 3,
+            "action": "chrome-devtools/input",
+            "expectedResult": "成功",
+            "timeout": 5000,
+            "critical": true,
+            "retryable": true
+          }
+        ],
+        "fallbacks": []
+      },
+      "effectiveness": {
+        "successRate": 1,
+        "avgDuration": 2800,
+        "sampleSize": 2,
+        "lastValidated": 1779018085669,
+        "trend": "stable"
+      },
+      "applicability": {
+        "domains": [
+          "general",
+          "web"
+        ],
+        "limitations": [],
+        "confidence": 0.5
+      }
+    },
+    {
+      "id": "pat-a5ad78d1-7566-42ae-b1c1-02a5e25139b9",
+      "name": "general_pattern_1779017761922",
+      "description": "用于general任务的模式：完整的浏览器自动化任务...，包含3个步骤",
+      "trigger": {
+        "taskTypes": [
+          "general"
+        ],
+        "keywords": [
+          "完整的浏览器自动化任务"
+        ],
+        "contextPreconditions": [
+          "浏览器已启动"
+        ]
+      },
+      "structure": {
+        "steps": [
+          {
+            "sequence": 1,
+            "action": "chrome-devtools/chrome",
+            "expectedResult": "成功",
+            "timeout": 5000,
+            "critical": true,
+            "retryable": true
+          },
+          {
+            "sequence": 2,
+            "action": "chrome-devtools/navigate",
+            "expectedResult": "成功",
+            "timeout": 6000,
+            "critical": false,
+            "retryable": true
+          },
+          {
+            "sequence": 3,
+            "action": "chrome-devtools/click",
+            "expectedResult": "成功",
+            "timeout": 5000,
+            "critical": true,
+            "retryable": true
+          }
+        ],
+        "fallbacks": []
+      },
+      "effectiveness": {
+        "successRate": 1,
+        "avgDuration": 5500,
+        "sampleSize": 2,
+        "lastValidated": 1779018085683,
+        "trend": "stable"
+      },
+      "applicability": {
+        "domains": [
+          "general",
+          "web"
+        ],
+        "limitations": [],
+        "confidence": 0.5
+      }
+    },
+    {
+      "id": "pat-79dba631-749d-4aa0-b3ac-66cc2d15791c",
+      "name": "general_pattern_1779017761970",
+      "description": "用于general任务的模式：学习浏览器操作...，包含2个步骤",
+      "trigger": {
+        "taskTypes": [
+          "general"
+        ],
+        "keywords": [
+          "学习浏览器操作"
+        ],
+        "contextPreconditions": [
+          "浏览器已启动"
+        ]
+      },
+      "structure": {
+        "steps": [
+          {
+            "sequence": 1,
+            "action": "chrome-devtools/chrome",
+            "expectedResult": "成功",
+            "timeout": 5000,
+            "critical": true,
+            "retryable": true
+          },
+          {
+            "sequence": 2,
+            "action": "chrome-devtools/navigate",
+            "expectedResult": "成功",
+            "timeout": 6000,
+            "critical": true,
+            "retryable": true
+          }
+        ],
+        "fallbacks": []
+      },
+      "effectiveness": {
+        "successRate": 1,
+        "avgDuration": 5000,
+        "sampleSize": 2,
+        "lastValidated": 1779018085728,
+        "trend": "stable"
+      },
+      "applicability": {
+        "domains": [
+          "general",
+          "web"
+        ],
+        "limitations": [],
+        "confidence": 0.5
+      }
+    }
+  ],
+  "failurePatterns": []
+}

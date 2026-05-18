@@ -40,6 +40,7 @@ const prefixRouteMap: Map<string, RouteHandler> = new Map([
   ['/api/chat-history', handleChatHistoryRoute],
   ['/api/token-stats', handleChatHistoryRoute],
   ['/api/agents', handleAgentRoute],
+  ['/api/agent-models', handleAgentRoute],
   ['/api/pipelines', handlePipelineRoute],
   ['/api/remote-control', handleRemoteControlRoute],
   ['/api/scheduled-tasks', handleScheduledTasksRoute],

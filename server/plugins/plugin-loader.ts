@@ -52,6 +52,7 @@ export async function loadPlugins(pluginsDir: string): Promise<CrabclawPlugin[]>
       const plugin: CrabclawPlugin = new PluginClass()
       plugins.push(plugin)
     } catch (err: any) {
+      console.error(`[PluginLoader] Failed to load plugin: ${entry}`, err?.message || err)
       continue
     }
   }

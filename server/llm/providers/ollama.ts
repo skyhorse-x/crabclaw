@@ -8,12 +8,10 @@ export class OllamaProvider implements Provider {
   readonly name = 'ollama'
   private readonly baseURL: string
   private readonly defaultModel: string
-  private readonly timeout: number
-
   constructor(config: ProviderConfig) {
     this.baseURL = config.baseURL || 'http://localhost:11434/api'
     this.defaultModel = config.defaultModel || 'llama3.1'
-    this.timeout = config.timeout || 60000
+    void (config.timeout)
   }
 
   async generate(input: LLMRequest): Promise<LLMResponse> {

@@ -43,6 +43,15 @@ export interface Skill {
   steps: any[]
 }
 
+export interface ProxyConfig {
+  enabled: boolean
+  protocol: string
+  host: string
+  port: number
+  username?: string
+  password?: string
+}
+
 export interface AppSettings {
   backendPort: number
   theme: string
@@ -51,6 +60,7 @@ export interface AppSettings {
   userDataDir?: string
   skillsDir?: string
   username?: string
+  proxy?: ProxyConfig
 }
 
 export interface AppConfig {

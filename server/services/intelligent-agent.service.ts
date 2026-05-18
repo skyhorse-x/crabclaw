@@ -6,7 +6,7 @@
 import { logger } from './logger.service'
 import { reflectionService, type ExecutionRecord, type ReflectionResult } from './reflection.service'
 import { experienceStore, type Experience } from './experience-store'
-import { multiAgentCoordinator, type SubTask, type TaskResult } from './multi-agent-coordinator'
+// import { multiAgentCoordinator, type SubTask, type TaskResult } from './multi-agent-coordinator'
 
 export interface EnhancedTaskContext {
   taskId: string

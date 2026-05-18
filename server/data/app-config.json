@@ -1,11 +1,11 @@
 {
   "settings": {
-    "backendPort": 17870,
+    "backendPort": 17871,
     "theme": "light",
     "language": "zh-CN",
     "activeModelId": "model-1778661568804",
-    "userDataDir": "/Users/472733389qq.com/Desktop/project/crabclaw/dist/crabclaw/server",
-    "skillsDir": "/Users/472733389qq.com/Desktop/project/crabclaw/server/data/skills"
+    "userDataDir": "./dist/crabclaw/server",
+    "skillsDir": "./server/data/skills"
   },
   "models": [
     {

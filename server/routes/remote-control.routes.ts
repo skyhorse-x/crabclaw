@@ -8,51 +8,127 @@ import { wsService } from '../services/websocket.service'
 import { unifiedMessageService } from '../services/unified-message.service'
 import { getConfigDatabase, type RemoteControlConfig as DBRRemoteControlConfig } from '../services/config-database.service'
 import { remoteAgentRegistry } from '../agents/remote.agent'
+import { remoteControlLogService } from '../services/remote-control-log.service'
 
 const configDb = getConfigDatabase()
 
 export type RemoteControlConfig = DBRRemoteControlConfig
 
+function maskToken(token: string): string {
+  if (!token || token.length < 8) return '***'
+  return token.slice(0, 4) + '****' + token.slice(-4)
+}
+
 let remoteConfig: RemoteControlConfig = configDb.getRemoteControlConfig()
 
+const TELEGRAM_FETCH_TIMEOUT = 65000
+const TELEGRAM_SEND_TIMEOUT = 10000
+
+let telegramConnectionOk = false
+let lastPollingErrorTime = 0
+let pollingErrorCount = 0
+let telegramPollingTimer: ReturnType<typeof setTimeout> | null = null
+
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs: number = TELEGRAM_FETCH_TIMEOUT): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal, keepalive: true })
+    return response
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+function getProxyConfig() {
+  try {
+    const json = configDb.getAppConfigJson()
+    if (json) {
+      const parsed = JSON.parse(json)
+      return parsed?.settings?.proxy
+    }
+  } catch (e) {
+    logger.warn('[RemoteControl] Failed to parse proxy config', e)
+  }
+  return undefined
+}
+
+async function fetchWithProxy(
+  url: string,
+  options: RequestInit = {},
+  useProxy: boolean,
+  timeoutMs: number = TELEGRAM_FETCH_TIMEOUT
+): Promise<Response> {
+  if (!useProxy) {
+    return fetchWithTimeout(url, options, timeoutMs)
+  }
+
+  const savedHttpProxy = process.env.HTTP_PROXY
+  const savedHttpsProxy = process.env.HTTPS_PROXY
+
+  const proxyConfig = getProxyConfig()
+  if (proxyConfig?.enabled && proxyConfig.host && proxyConfig.port) {
+    const protocol = proxyConfig.protocol || 'http'
+    const auth = proxyConfig.username && proxyConfig.password
+      ? `${encodeURIComponent(proxyConfig.username)}:${encodeURIComponent(proxyConfig.password)}@`
+      : ''
+    process.env.HTTP_PROXY = `${protocol}://${auth}${proxyConfig.host}:${proxyConfig.port}`
+    process.env.HTTPS_PROXY = `${protocol}://${auth}${proxyConfig.host}:${proxyConfig.port}`
+  }
+
+  try {
+    return await fetchWithTimeout(url, options, timeoutMs)
+  } finally {
+    if (savedHttpProxy !== undefined) {
+      process.env.HTTP_PROXY = savedHttpProxy
+    } else {
+      delete process.env.HTTP_PROXY
+    }
+    if (savedHttpsProxy !== undefined) {
+      process.env.HTTPS_PROXY = savedHttpsProxy
+    } else {
+      delete process.env.HTTPS_PROXY
+    }
+  }
+}
+
 // ── Telegram CraBot 接入 ────────────────────────────────────────────────────
-// 注册 Telegram 回复函数：用配置的 chatId 或消息来源 chatId 发送消息
 const telegramAgent = remoteAgentRegistry.get('telegram')
 
 telegramAgent.registerReplier(async (text: string, sender: string) => {
   const token = remoteConfig.telegram?.botToken
   if (!token) return
-  // sender 格式为 "chatId:username"（见下方 broadcastToClients 改造）
   const chatId = sender.split(':')[0] || remoteConfig.telegram?.chatId || ''
   if (!chatId) return
-  await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown' })
-  }).catch((e: any) => logger.error('[CraBot] Telegram 回复失败', e))
+  try {
+    await fetchWithProxy(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown' })
+    }, remoteConfig.telegram.proxyEnabled, TELEGRAM_SEND_TIMEOUT)
+  } catch (e) {
+    logger.warn('[RemoteControl] Telegram send message failed', e)
+  }
 })
 
-// Telegram sendChatAction(typing) 每 4s 刷新（API 5s 过期），任务完成后 stop() 清除定时器
 telegramAgent.registerTypingIndicator((sender: string) => {
   const token = remoteConfig.telegram?.botToken
   const chatId = sender.split(':')[0] || remoteConfig.telegram?.chatId || ''
   if (!token || !chatId) return () => {}
 
   const sendTyping = () => {
-    fetch(`https://api.telegram.org/bot${token}/sendChatAction`, {
+    fetchWithProxy(`https://api.telegram.org/bot${token}/sendChatAction`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ chat_id: chatId, action: 'typing' })
-    }).catch(() => {})
+    }, remoteConfig.telegram.proxyEnabled, TELEGRAM_SEND_TIMEOUT).catch((e) => { logger.warn('[RemoteControl] Send chat action failed', e) })
   }
 
-  sendTyping()  // 立即发一次
+  sendTyping()
   const timer = setInterval(sendTyping, 4000)
-  logger.info(`[CraBot] Telegram typing 开始: chatId=${chatId}`)
 
   return () => {
     clearInterval(timer)
-    logger.info(`[CraBot] Telegram typing 停止: chatId=${chatId}`)
   }
 })
 // ───────────────────────────────────────────────────────────────────────────
@@ -61,14 +137,22 @@ unifiedMessageService.updateConfig({
   telegram: remoteConfig.telegram,
   qq: { webhook: remoteConfig.qq.webhook, botId: remoteConfig.qq.botId },
   wechat: remoteConfig.wechat,
-  feishu: { webhook: remoteConfig.feishu.webhook }
+  feishu: { webhook: remoteConfig.feishu.webhook },
+  discord: remoteConfig.discord,
+  slack: remoteConfig.slack,
+  teams: remoteConfig.teams,
+  whatsapp: remoteConfig.whatsapp
 })
 
+remoteControlLogService.info('system', 'system', '远控配置已加载', `enabled=${remoteConfig.enabled}`)
 logger.info('[RemoteControl] Config loaded from database', { enabled: remoteConfig.enabled })
+
+if (remoteConfig.enabled && remoteConfig.telegram?.enabled && remoteConfig.telegram?.botToken) {
+  startTelegramPolling()
+}
 
 export async function sendTelegramMessage(text: string): Promise<boolean> {
   if (!remoteConfig.telegram.enabled || !remoteConfig.telegram.botToken) {
-    logger.warn('[RemoteControl] Telegram not configured')
     return false
   }
 
@@ -76,24 +160,21 @@ export async function sendTelegramMessage(text: string): Promise<boolean> {
     const token = remoteConfig.telegram.botToken
     const chatId = remoteConfig.telegram.chatId || 'me'
 
-    const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    const response = await fetchWithProxy(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text
-      })
-    })
+      body: JSON.stringify({ chat_id: chatId, text })
+    }, remoteConfig.telegram.proxyEnabled, TELEGRAM_SEND_TIMEOUT)
 
     if (!response.ok) {
-      logger.error('[RemoteControl] Failed to send Telegram message', { status: response.status })
+      const errBody = await response.text().catch(() => '')
+      logger.warn('[RemoteControl] Telegram 发送失败', { status: response.status, body: errBody })
       return false
     }
 
-    logger.info('[RemoteControl] Telegram message sent', { text: text.slice(0, 50) })
     return true
-  } catch (error) {
-    logger.error('[RemoteControl] Telegram send error', error)
+  } catch (error: any) {
+    logger.error('[RemoteControl] Telegram 发送异常', { error: error?.message || String(error) })
     return false
   }
 }
@@ -106,19 +187,45 @@ export function updateRemoteConfig(config: Partial<RemoteControlConfig>) {
   if (config.qq) {
     remoteConfig.qq = { ...remoteConfig.qq, ...config.qq }
   }
+  if (config.wechat) {
+    remoteConfig.wechat = { ...remoteConfig.wechat, ...config.wechat }
+  }
   if (config.feishu) {
     remoteConfig.feishu = { ...remoteConfig.feishu, ...config.feishu }
+  }
+  if (config.discord) {
+    remoteConfig.discord = { ...remoteConfig.discord, ...config.discord }
+  }
+  if (config.slack) {
+    remoteConfig.slack = { ...remoteConfig.slack, ...config.slack }
+  }
+  if (config.teams) {
+    remoteConfig.teams = { ...remoteConfig.teams, ...config.teams }
+  }
+  if (config.whatsapp) {
+    remoteConfig.whatsapp = { ...remoteConfig.whatsapp, ...config.whatsapp }
   }
 
   unifiedMessageService.updateConfig({
     telegram: remoteConfig.telegram,
     qq: { webhook: remoteConfig.qq.webhook, botId: remoteConfig.qq.botId },
     wechat: remoteConfig.wechat,
-    feishu: { webhook: remoteConfig.feishu.webhook }
+    feishu: { webhook: remoteConfig.feishu.webhook },
+    discord: remoteConfig.discord,
+    slack: remoteConfig.slack,
+    teams: remoteConfig.teams,
+    whatsapp: remoteConfig.whatsapp
   })
 
   configDb.saveRemoteControlConfig(remoteConfig)
+  remoteControlLogService.info('config_updated', 'system', '远控配置已更新', `enabled=${remoteConfig.enabled}, telegram=${remoteConfig.telegram.enabled}`)
   logger.info('[RemoteControl] Config updated', { enabled: remoteConfig.enabled })
+
+  if (remoteConfig.enabled && remoteConfig.telegram.enabled && remoteConfig.telegram.botToken) {
+    startTelegramPolling()
+  } else {
+    stopTelegramPolling()
+  }
 }
 
 export function getRemoteConfig(): RemoteControlConfig {
@@ -131,21 +238,23 @@ function broadcastToClients(message: {
   text: string
   sender: string
   timestamp: number
-  chatId?: string  // Telegram chatId，供 CraBot 回复时定向发送
+  chatId?: string
 }) {
   wsService.broadcastAll({ type: 'remote_message', payload: message })
+  remoteControlLogService.info('message_broadcast', message.platform, `收到远控消息: ${message.text.slice(0, 100)}`, `sender=${message.sender}`, message.sender)
   logger.info('[RemoteControl] Message broadcasted', { platform: message.platform, sender: message.sender })
 
-  // 同步转给 CraBot RemoteAgent 处理
   if (message.text) {
-    // sender 格式: "chatId:username"，让 replier 能取到 chatId
     const agentSender = message.chatId ? `${message.chatId}:${message.sender}` : message.sender
     remoteAgentRegistry.get(message.platform as any).receive({
       platform: message.platform as any,
       text: message.text,
       sender: agentSender,
       timestamp: message.timestamp,
-    }).catch((e: any) => logger.error('[CraBot] 转发 RemoteAgent 失败', e))
+    }).catch((e: any) => {
+      remoteControlLogService.error('agent_error', message.platform, `转发 RemoteAgent 失败: ${e.message}`, undefined, message.sender)
+      logger.error('[CraBot] 转发 RemoteAgent 失败', e)
+    })
   }
 }
 
@@ -156,22 +265,48 @@ async function fetchTelegramUpdates(offset?: number): Promise<void> {
   try {
     const token = remoteConfig.telegram.botToken
     const limit = 10
-    const timeout = 0
 
-    let url = `https://api.telegram.org/bot${token}/getUpdates?limit=${limit}&timeout=${timeout}`
+    let url = `https://api.telegram.org/bot${token}/getUpdates?limit=${limit}&timeout=30`
     if (offset !== undefined) {
       url += `&offset=${offset}`
     }
 
-    const response = await fetch(url)
+    logger.info('[RemoteControl] Telegram 轮询请求', { offset, limit })
+    const response = await fetchWithProxy(url, {}, remoteConfig.telegram.proxyEnabled)
+
     if (!response.ok) {
-      logger.error('[RemoteControl] Telegram fetch failed', { status: response.status })
+      const errBody = await response.text().catch(() => '')
+      logger.warn('[RemoteControl] Telegram 轮询 HTTP 错误', { status: response.status, body: errBody })
+      if (telegramConnectionOk) {
+        remoteControlLogService.error('polling_error', 'telegram', `轮询失败 HTTP ${response.status}: ${errBody.slice(0, 100)}`)
+      }
+      telegramConnectionOk = false
+      scheduleNextPolling(true)
       return
     }
 
     const data = await response.json() as { ok: boolean; result: TelegramUpdate[] }
+    logger.info('[RemoteControl] Telegram 轮询响应', { ok: data.ok, updateCount: data.result?.length || 0 })
 
-    if (!data.ok || !data.result.length) return
+    if (!telegramConnectionOk) {
+      telegramConnectionOk = true
+      pollingErrorCount = 0
+      remoteControlLogService.info('polling_start', 'telegram', 'Telegram 轮询连接已恢复')
+      logger.info('[RemoteControl] Telegram 轮询连接已恢复')
+    }
+
+    if (!data.ok) {
+      logger.warn('[RemoteControl] Telegram 轮询返回 ok=false', { data })
+      remoteControlLogService.warn('polling_error', 'telegram', 'Telegram API 返回 ok=false')
+      scheduleNextPolling()
+      return
+    }
+
+    if (!data.result.length) {
+      logger.info('[RemoteControl] Telegram 轮询无新消息')
+      scheduleNextPolling()
+      return
+    }
 
     let nextOffset = 0
 
@@ -182,11 +317,13 @@ async function fetchTelegramUpdates(offset?: number): Promise<void> {
         const username = update.message.from?.username || update.message.from?.first_name || 'Unknown'
 
         if (remoteConfig.telegram.chatId && chatId !== remoteConfig.telegram.chatId) {
+          remoteControlLogService.info('message_ignored', 'telegram', `忽略非指定 chatId 消息: ${text.slice(0, 50)}`, `chatId=${chatId}`, `@${username}`)
           continue
         }
 
         if (text.startsWith(remoteConfig.commandPrefix)) {
           const command = text.slice(remoteConfig.commandPrefix.length).trim()
+          remoteControlLogService.info('message_received', 'telegram', `收到命令: ${command.slice(0, 100)}`, `chatId=${chatId}`, `@${username}`)
           broadcastToClients({
             type: 'remote_message',
             platform: 'telegram',
@@ -195,6 +332,8 @@ async function fetchTelegramUpdates(offset?: number): Promise<void> {
             chatId,
             timestamp: Date.now()
           })
+        } else {
+          remoteControlLogService.info('message_ignored', 'telegram', `忽略非命令消息: ${text.slice(0, 50)}`, `prefix=${remoteConfig.commandPrefix}`, `@${username}`)
         }
       }
 
@@ -203,11 +342,53 @@ async function fetchTelegramUpdates(offset?: number): Promise<void> {
 
     if (nextOffset > 0) {
       setTimeout(() => fetchTelegramUpdates(nextOffset), 100)
+    } else {
+      scheduleNextPolling()
     }
   } catch (error) {
-    logger.error('[RemoteControl] Telegram polling error', error)
-    setTimeout(() => fetchTelegramUpdates(), 5000)
+    const now = Date.now()
+    pollingErrorCount++
+
+    const errMsg = (error as Error).message || String(error)
+    const isSocketClosed = errMsg.includes('socket connection was closed unexpectedly')
+    const isTimeout = errMsg.includes('abort') || errMsg.includes('timeout')
+
+    if (now - lastPollingErrorTime > 60000) {
+      if (isSocketClosed) {
+        if (!telegramConnectionOk && pollingErrorCount <= 3) {
+          remoteControlLogService.warn('polling_error', 'telegram', 'Telegram 连接被意外关闭（网络不稳定或代理问题）')
+          logger.warn('[RemoteControl] Telegram socket 连接被关闭，请检查网络环境')
+        }
+      } else if (isTimeout) {
+        if (!telegramConnectionOk && pollingErrorCount <= 3) {
+          remoteControlLogService.warn('polling_error', 'telegram', 'Telegram 连接超时（无法访问 Telegram 服务器）')
+          logger.warn('[RemoteControl] Telegram 连接超时，请检查网络环境')
+        }
+      } else {
+        remoteControlLogService.error('polling_error', 'telegram', `轮询异常: ${errMsg.slice(0, 200)}`)
+        logger.error('[RemoteControl] Telegram polling error', errMsg)
+      }
+      lastPollingErrorTime = now
+    }
+
+    telegramConnectionOk = false
+    scheduleNextPolling(true)
   }
+}
+
+function scheduleNextPolling(hasError: boolean = false): void {
+  if (telegramPollingTimer) {
+    clearTimeout(telegramPollingTimer)
+  }
+
+  let delay: number
+  if (hasError) {
+    delay = Math.min(30000 + pollingErrorCount * 5000, 120000)
+  } else {
+    delay = 2000
+  }
+
+  telegramPollingTimer = setTimeout(() => fetchTelegramUpdates(), delay)
 }
 
 interface TelegramUpdate {
@@ -220,12 +401,15 @@ interface TelegramUpdate {
   }
 }
 
-let telegramPollingTimer: ReturnType<typeof setTimeout> | null = null
-
 export function startTelegramPolling(): void {
   if (telegramPollingTimer) {
     clearTimeout(telegramPollingTimer)
+    telegramPollingTimer = null
   }
+  telegramConnectionOk = false
+  pollingErrorCount = 0
+  remoteControlLogService.info('polling_start', 'telegram', '开始 Telegram 消息轮询')
+  logger.info('[RemoteControl] 开始 Telegram 消息轮询')
   fetchTelegramUpdates()
 }
 
@@ -234,6 +418,10 @@ export function stopTelegramPolling(): void {
     clearTimeout(telegramPollingTimer)
     telegramPollingTimer = null
   }
+  telegramConnectionOk = false
+  pollingErrorCount = 0
+  remoteControlLogService.info('polling_stop', 'telegram', '停止 Telegram 消息轮询')
+  logger.info('[RemoteControl] 停止 Telegram 消息轮询')
 }
 
 async function handleTelegramWebhook(body: unknown): Promise<Response> {
@@ -248,12 +436,16 @@ async function handleTelegramWebhook(body: unknown): Promise<Response> {
       const text = update.message.text
       const username = update.message.from?.username || update.message.from?.first_name || 'Unknown'
 
+      remoteControlLogService.info('webhook_received', 'telegram', `收到 Webhook 消息: ${text.slice(0, 100)}`, `chatId=${chatId}`, `@${username}`)
+
       if (remoteConfig.telegram.chatId && chatId !== remoteConfig.telegram.chatId) {
+        remoteControlLogService.info('message_ignored', 'telegram', `Webhook 忽略非指定 chatId`, `chatId=${chatId}`, `@${username}`)
         return new Response('ignored', { status: 200 })
       }
 
       if (text.startsWith(remoteConfig.commandPrefix)) {
         const command = text.slice(remoteConfig.commandPrefix.length).trim()
+        remoteControlLogService.info('message_received', 'telegram', `Webhook 收到命令: ${command.slice(0, 100)}`, `chatId=${chatId}`, `@${username}`)
         broadcastToClients({
           type: 'remote_message',
           platform: 'telegram',
@@ -262,10 +454,13 @@ async function handleTelegramWebhook(body: unknown): Promise<Response> {
           chatId,
           timestamp: Date.now()
         })
+      } else {
+        remoteControlLogService.info('message_ignored', 'telegram', `Webhook 忽略非命令消息`, `prefix=${remoteConfig.commandPrefix}`, `@${username}`)
       }
     }
     return new Response('ok', { status: 200 })
   } catch (error) {
+    remoteControlLogService.error('webhook_error', 'telegram', `Webhook 处理异常: ${(error as Error).message}`)
     logger.error('[RemoteControl] Telegram webhook error', error)
     return new Response('error', { status: 500 })
   }
@@ -282,8 +477,11 @@ async function handleQQWebhook(body: unknown): Promise<Response> {
       const text = String(qqBody.message)
       const username = qqBody.sender?.nickname || String(qqBody.user_id) || 'Unknown'
 
+      remoteControlLogService.info('webhook_received', 'qq', `收到 Webhook 消息: ${text.slice(0, 100)}`, undefined, username)
+
       if (text.startsWith(remoteConfig.commandPrefix)) {
         const command = text.slice(remoteConfig.commandPrefix.length).trim()
+        remoteControlLogService.info('message_received', 'qq', `收到命令: ${command.slice(0, 100)}`, undefined, username)
         broadcastToClients({
           type: 'remote_message',
           platform: 'qq',
@@ -291,10 +489,13 @@ async function handleQQWebhook(body: unknown): Promise<Response> {
           sender: username,
           timestamp: Date.now()
         })
+      } else {
+        remoteControlLogService.info('message_ignored', 'qq', `忽略非命令消息`, `prefix=${remoteConfig.commandPrefix}`, username)
       }
     }
     return new Response('ok', { status: 200 })
   } catch (error) {
+    remoteControlLogService.error('webhook_error', 'qq', `Webhook 处理异常: ${(error as Error).message}`)
     logger.error('[RemoteControl] QQ webhook error', error)
     return new Response('error', { status: 500 })
   }
@@ -316,8 +517,11 @@ async function handleFeishuWebhook(body: unknown): Promise<Response> {
       const text = typeof content === 'string' ? content : String(content.text || '')
       const username = feishuBody.sender?.sender_id?.open_id || feishuBody.open_id || 'Unknown'
 
+      remoteControlLogService.info('webhook_received', 'feishu', `收到 Webhook 消息: ${text.slice(0, 100)}`, undefined, username)
+
       if (text.startsWith(remoteConfig.commandPrefix)) {
         const command = text.slice(remoteConfig.commandPrefix.length).trim()
+        remoteControlLogService.info('message_received', 'feishu', `收到命令: ${command.slice(0, 100)}`, undefined, username)
         broadcastToClients({
           type: 'remote_message',
           platform: 'feishu',
@@ -325,10 +529,13 @@ async function handleFeishuWebhook(body: unknown): Promise<Response> {
           sender: username,
           timestamp: Date.now()
         })
+      } else {
+        remoteControlLogService.info('message_ignored', 'feishu', `忽略非命令消息`, `prefix=${remoteConfig.commandPrefix}`, username)
       }
     }
     return new Response('ok', { status: 200 })
   } catch (error) {
+    remoteControlLogService.error('webhook_error', 'feishu', `Webhook 处理异常: ${(error as Error).message}`)
     logger.error('[RemoteControl] Feishu webhook error', error)
     return new Response('error', { status: 500 })
   }
@@ -391,23 +598,58 @@ export async function handleRemoteControlRoute(pathname: string, request: Reques
   if (pathname === '/api/remote-control/config' && request.method === 'GET') {
     return new Response(JSON.stringify({
       enabled: remoteConfig.enabled,
+      proxyEnabled: remoteConfig.proxyEnabled,
       commandPrefix: remoteConfig.commandPrefix,
       verifyCode: remoteConfig.verifyCode,
       telegram: {
         enabled: remoteConfig.telegram.enabled,
-        botToken: remoteConfig.telegram.botToken,
-        chatId: remoteConfig.telegram.chatId
+        botToken: maskToken(remoteConfig.telegram.botToken),
+        chatId: remoteConfig.telegram.chatId,
+        proxyEnabled: remoteConfig.telegram.proxyEnabled
       },
       qq: {
         enabled: remoteConfig.qq.enabled,
         botId: remoteConfig.qq.botId,
-        webhook: remoteConfig.qq.webhook
+        webhook: remoteConfig.qq.webhook,
+        proxyEnabled: remoteConfig.qq.proxyEnabled
+      },
+      wechat: {
+        enabled: remoteConfig.wechat.enabled,
+        webhook: remoteConfig.wechat.webhook,
+        proxyEnabled: remoteConfig.wechat.proxyEnabled
       },
       feishu: {
         enabled: remoteConfig.feishu.enabled,
         appId: remoteConfig.feishu.appId,
-        appSecret: remoteConfig.feishu.appSecret,
-        webhook: remoteConfig.feishu.webhook
+        appSecret: maskToken(remoteConfig.feishu.appSecret),
+        webhook: remoteConfig.feishu.webhook,
+        proxyEnabled: remoteConfig.feishu.proxyEnabled
+      },
+      discord: {
+        enabled: remoteConfig.discord.enabled,
+        botToken: maskToken(remoteConfig.discord.botToken),
+        channelId: remoteConfig.discord.channelId,
+        proxyEnabled: remoteConfig.discord.proxyEnabled
+      },
+      slack: {
+        enabled: remoteConfig.slack.enabled,
+        botToken: maskToken(remoteConfig.slack.botToken),
+        channelId: remoteConfig.slack.channelId,
+        proxyEnabled: remoteConfig.slack.proxyEnabled
+      },
+      teams: {
+        enabled: remoteConfig.teams.enabled,
+        appId: remoteConfig.teams.appId,
+        appSecret: maskToken(remoteConfig.teams.appSecret),
+        webhook: remoteConfig.teams.webhook,
+        proxyEnabled: remoteConfig.teams.proxyEnabled
+      },
+      whatsapp: {
+        enabled: remoteConfig.whatsapp.enabled,
+        accountSid: maskToken(remoteConfig.whatsapp.accountSid),
+        authToken: maskToken(remoteConfig.whatsapp.authToken),
+        fromNumber: remoteConfig.whatsapp.fromNumber,
+        proxyEnabled: remoteConfig.whatsapp.proxyEnabled
       }
     }), {
       status: 200,
@@ -415,16 +657,10 @@ export async function handleRemoteControlRoute(pathname: string, request: Reques
     })
   }
 
-  if (pathname === '/api/remote-control/config' && request.method === 'POST') {
+  if (pathname === '/api/remote-control/config' && (request.method === 'POST' || request.method === 'PUT')) {
     try {
       const body = await request.json() as Partial<RemoteControlConfig>
       updateRemoteConfig(body)
-
-      if (body.telegram?.enabled && body.telegram?.botToken) {
-        startTelegramPolling()
-      } else {
-        stopTelegramPolling()
-      }
 
       return new Response(JSON.stringify({ ok: true }), {
         status: 200,
@@ -459,6 +695,21 @@ export async function handleRemoteControlRoute(pathname: string, request: Reques
     } catch (error) {
       return new Response(JSON.stringify({ ok: false, error: String(error) }), {
         status: 400,
+        headers: { 'content-type': 'application/json' }
+      })
+    }
+  }
+
+  if (pathname === '/api/remote-control/logs' && request.method === 'GET') {
+    try {
+      const logs = remoteControlLogService.getLogs()
+      return new Response(JSON.stringify(logs), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      })
+    } catch (error) {
+      return new Response(JSON.stringify({ ok: false, error: String(error) }), {
+        status: 500,
         headers: { 'content-type': 'application/json' }
       })
     }

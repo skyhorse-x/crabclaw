@@ -8,9 +8,11 @@ import { getConfigService } from '../services/config.service'
 import { disconnectAllMcp } from '../services/mcp.service'
 import { skillRegistry } from '../skills/skill-registry'
 import { taskScheduler } from '../services/task-scheduler.service'
+import { proxyService } from '../services/proxy.service'
 import { PATHS } from '../shared/constants'
 import { initPlugins } from '../plugins/plugin-loader'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const TASK_TIMERS = new Map<string, ReturnType<typeof setInterval>>()
 
@@ -31,6 +33,9 @@ export async function bootstrap() {
       tasksCount: config.tasks.length 
     })
 
+    // 初始化代理配置
+    proxyService.apply(config.settings.proxy)
+
     // 2. 加载本地技能
     logger.debug('Loading local skills from directory...')
     const skillsDir = config.settings?.skillsDir || PATHS.SKILLS_DIR
@@ -40,7 +45,8 @@ export async function bootstrap() {
 
     // 3. 加载插件
     logger.debug('Loading plugins...')
-    const pluginsDir = path.join(process.cwd(), 'server', 'plugins')
+    const __dirname = path.dirname(fileURLToPath(import.meta.url))
+    const pluginsDir = path.resolve(__dirname, '..', 'plugins')
     await initPlugins(pluginsDir, logger)
 
     // 4. 初始化 MCP 连接（如果有配置）
@@ -67,26 +73,26 @@ export async function bootstrap() {
  * 应用任务调度
  */
 function applyTaskSchedules(config: any) {
-  // 清除现有定时器
   for (const timer of TASK_TIMERS.values()) {
     clearInterval(timer)
   }
   TASK_TIMERS.clear()
 
-  // 为启用的任务设置定时器
   for (const task of config.tasks) {
     if (!task.enabled || task.intervalMinutes <= 0) continue
 
-    // 如果配置为启动时运行，则立即运行一次
     if (task.runOnStartup) {
       logger.info(`Running task on startup: ${task.name}`)
-      // 这里会由 server.ts 中的任务执行器处理
+      taskScheduler.executeTask(task).catch((err: any) => {
+        logger.error(`Task ${task.name} startup execution failed`, err)
+      })
     }
 
-    // 设置定时器
     const timer = setInterval(() => {
       logger.debug(`Executing scheduled task: ${task.name}`)
-      // 这里会由 server.ts 中的任务执行器处理
+      taskScheduler.executeTask(task).catch((err: any) => {
+        logger.error(`Task ${task.name} execution failed`, err)
+      })
     }, task.intervalMinutes * 60 * 1000)
 
     TASK_TIMERS.set(task.id, timer)
@@ -114,7 +120,10 @@ export async function gracefulShutdown() {
 
     // 3. 清除所有任务定时器
     logger.debug('Clearing task timers...')
-    // 这里会由 server.ts 处理
+    for (const timer of TASK_TIMERS.values()) {
+      clearInterval(timer)
+    }
+    TASK_TIMERS.clear()
 
     // 4. 关闭日志服务
     logger.debug('Stopping logger...')

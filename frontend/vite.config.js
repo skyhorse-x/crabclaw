@@ -10,7 +10,7 @@ function getBackendPort() {
       return fs.readFileSync(portFile, "utf-8").trim()
     }
   } catch {}
-  return process.env.VITE_BACKEND_PORT || "17870"
+  return process.env.VITE_BACKEND_PORT || "17871"
 }
 
 export default defineConfig(({ mode }) => {

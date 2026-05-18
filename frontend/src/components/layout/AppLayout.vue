@@ -44,20 +44,39 @@
     </aside>
 
     <main class="main-content">
+      <div v-if="pageTitle" class="page-header">
+        <h2>{{ pageTitle }}</h2>
+      </div>
       <router-view />
     </main>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { Fold, ChatDotRound, User, Connection, Star, Timer, Monitor, Setting } from '@element-plus/icons-vue'
 
 const { t } = useI18n()
 const router = useRouter()
+const route = useRoute()
 const sidebarCollapsed = ref(false)
+
+const routeTitleMap: Record<string, string> = {
+  '/': 'navChat',
+  '/agents': 'navAgents',
+  '/mcp': 'navMcp',
+  '/skills': 'navSkills',
+  '/tasks': 'navTasks',
+  '/control': 'controlPanelTitle',
+  '/settings': 'navSettings'
+}
+
+const pageTitle = computed(() => {
+  const key = routeTitleMap[route.path]
+  return key ? t(key) : ''
+})
 
 function toggleSidebar() {
   sidebarCollapsed.value = !sidebarCollapsed.value
@@ -149,5 +168,15 @@ function toggleSidebar() {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+
+.page-header {
+  padding: 24px 24px 0;
+}
+
+.page-header h2 {
+  font-size: 24px;
+  font-weight: 600;
+  margin: 0;
 }
 </style>

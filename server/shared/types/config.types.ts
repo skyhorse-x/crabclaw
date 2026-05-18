@@ -27,6 +27,15 @@ export interface ModelConfig {
 /**
  * 应用设置
  */
+export interface ProxyConfig {
+  enabled: boolean
+  protocol: string
+  host: string
+  port: number
+  username?: string
+  password?: string
+}
+
 export interface AppSettings {
   backendPort: number
   theme: string
@@ -34,6 +43,7 @@ export interface AppSettings {
   activeModelId?: string
   userDataDir?: string
   skillsDir?: string
+  proxy?: ProxyConfig
 }
 
 /**

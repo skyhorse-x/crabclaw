@@ -7,7 +7,8 @@ import { logger } from '../services/logger.service'
 import { createId } from '../shared/utils'
 import { readFile, writeFile, mkdir } from 'fs/promises'
 import { existsSync } from 'fs'
-import { join } from 'path'
+import { join, dirname } from 'path'
+import { PATHS } from '../shared/constants'
 import type {
   SuccessPattern,
   FailurePattern,
@@ -26,7 +27,7 @@ export class PatternLibrary {
   private initialized: boolean = false
 
   private constructor() {
-    this.storagePath = join(process.cwd(), 'data', 'pattern-library.json')
+    this.storagePath = join(PATHS.DATA_DIR, 'pattern-library.json')
   }
 
   static getInstance(): PatternLibrary {
@@ -42,7 +43,7 @@ export class PatternLibrary {
     }
 
     try {
-      const dir = this.storagePath.substring(0, this.storagePath.lastIndexOf('/'))
+      const dir = dirname(this.storagePath)
       if (!existsSync(dir)) {
         await mkdir(dir, { recursive: true })
       }

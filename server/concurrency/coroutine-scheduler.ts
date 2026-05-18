@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * MiniMonkey 协程调度器实现
  * @description 轻量级并发系统，支持 20+ 并发任务，提供优秀的可控性

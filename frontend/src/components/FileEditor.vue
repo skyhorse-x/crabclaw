@@ -108,7 +108,7 @@ onUnmounted(() => {
 })
 
 function buildApiUrl(path: string): string {
-  const port = location.port === '4173' ? '17870' : location.port
+  const port = location.port === '4173' ? '17871' : location.port
   return `http://${location.hostname}:${port}${path}`
 }
 

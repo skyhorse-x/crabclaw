@@ -119,7 +119,7 @@ export class LLMGateway {
     }
   ): Promise<string> {
     const response = await this.generate({
-      messages,
+      messages: messages as any,
       model: options?.model,
       temperature: options?.temperature,
       max_tokens: options?.max_tokens,
@@ -142,7 +142,7 @@ export class LLMGateway {
     }
   ): Promise<{ text: string; toolCalls?: any[] }> {
     const response = await this.generate({
-      messages,
+      messages: messages as any,
       tools,
       model: options?.model,
       temperature: options?.temperature,

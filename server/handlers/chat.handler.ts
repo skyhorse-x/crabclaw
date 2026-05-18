@@ -13,6 +13,7 @@ import type { SkillConfig } from '../shared/types'
 import { HTTP } from '../shared/constants'
 import { buildToolProgressMessage } from './chat-progress'
 import { memoryManager } from '../memory/memory-manager'
+import { sanitizeJson, tryRepairJsonText } from '../agent'
 
 const sharedMemoryManager = memoryManager
 
@@ -1465,6 +1466,16 @@ function parseAgentEnvelope(reply: string): AgentEnvelope | null {
     if (!candidates.includes(obj)) candidates.push(obj)
   }
 
+  // 添加经过修复的候选字符串（sanitizeJson / tryRepairJsonText）
+  for (const rawCandidate of [text, ...candidates]) {
+    const repaired = tryRepairJsonText(rawCandidate)
+    if (repaired && !candidates.includes(repaired)) candidates.push(repaired)
+    const sanitized = sanitizeJson(rawCandidate)
+    if (sanitized && !candidates.includes(sanitized)) candidates.push(sanitized)
+    const repairedSanitized = tryRepairJsonText(sanitized)
+    if (repairedSanitized && !candidates.includes(repairedSanitized)) candidates.push(repairedSanitized)
+  }
+
   for (const candidate of candidates) {
     try {
       const parsed = JSON.parse(candidate)
@@ -1486,6 +1497,33 @@ function parseAgentEnvelope(reply: string): AgentEnvelope | null {
       // try next candidate
     }
   }
+  // 最后兜底：在修复后的完整文本中搜索有效的 type 字段
+  try {
+    const repairedFull = tryRepairJsonText(text)
+    if (repairedFull) {
+      const looseMatch = repairedFull.match(/"type"\s*:\s*"(plan|action|actions|message|done|error)"/i)
+      if (looseMatch) {
+        const matchedType = looseMatch[1] as AgentResponseType
+        const sanitizedFull = sanitizeJson(repairedFull)
+        if (sanitizedFull) {
+          try {
+            const parsed = JSON.parse(sanitizedFull)
+            if (parsed && typeof parsed === 'object') {
+              return {
+                type: matchedType,
+                data: (parsed.data && typeof parsed.data === 'object') ? parsed.data : {}
+              }
+            }
+          } catch {
+            // 无法解析修复后的内容
+          }
+        }
+      }
+    }
+  } catch {
+    // 兜底处理失败
+  }
+
   void logger.warn('[AI] Agent envelope parse failed', {
     reply: summarizeForLog(text, 900)
   })
@@ -1550,7 +1588,7 @@ export function ensureReadableText(text: string): string {
 
   const balancedCandidates = parseCandidates
     .map((candidate) => tryBalanceJsonObject(candidate))
-    .filter((candidate): candidate is string => Boolean(candidate) && !parseCandidates.includes(candidate))
+    .filter((candidate): candidate is string => Boolean(candidate) && !parseCandidates.includes(candidate as string))
   parseCandidates.unshift(...balancedCandidates)
 
   for (const candidate of parseCandidates) {
@@ -1748,7 +1786,13 @@ function buildAgentFollowupPrompt(
     `你上一轮输出（摘要）：${previousEnvelopeSummary}`,
     toolResultSummary ? `工具执行结果：${toolResultSummary}` : '',
     extraSummary ? extraSummary : '',
-    '请继续推进任务，只输出一个 JSON 对象。',
+    '请继续推进任务。',
+    '⚠️ 重要：你的回复必须是且只能是一个 JSON 对象，格式必须严格符合以下之一：',
+    '  - 推进任务：{"type":"action","data":{"tool":"mcp","name":"工具名","input":{...}}}',
+    '  - 批量执行：{"type":"actions","data":{"steps":[{"tool":"mcp","name":"工具1","input":{}},{"tool":"mcp","name":"工具2","input":{}}]}}',
+    '  - 直接回答：{"type":"message","data":{"content":"你的回答"}}',
+    '  - 任务完成：{"type":"done","data":{"result":"执行结果"}}',
+    '⚠️ 绝对禁止输出任何 JSON 之外的文字、Markdown、代码块、表情符号或自然语言。',
     '如果后续多个步骤不依赖彼此返回结果，优先用 type="actions" 批量输出所有步骤，减少来回次数。',
     '如果任务未完成且步骤有依赖，用 type="action" 输出单步。',
     '只有全部完成后才输出 type="done"。'
@@ -2500,7 +2544,21 @@ export async function* handleChatStream(
             actionInput = { ...rawInput }
           } else if (typeof rawInput === 'string' && rawInput.trim()) {
             // AI 有时会把 input 双重 JSON 编码成字符串，尝试解析
-            try { actionInput = JSON.parse(rawInput) } catch { actionInput = {} }
+            try { actionInput = JSON.parse(rawInput) } catch {
+              const repaired = tryRepairJsonText(rawInput)
+              if (repaired) {
+                try { actionInput = JSON.parse(repaired) } catch {
+                  const sanitized = sanitizeJson(repaired)
+                  if (sanitized) {
+                    try { actionInput = JSON.parse(sanitized) } catch { actionInput = {} }
+                  } else {
+                    actionInput = {}
+                  }
+                }
+              } else {
+                actionInput = {}
+              }
+            }
           }
           void logger.info('[AI] Agent action', {
             turn,
@@ -2636,7 +2694,7 @@ export async function* handleChatStream(
               finalSystemPrompt,
               buildAgentFollowupPrompt(message, agentEnvelope, {
                 toolResult: lastToolResultText,
-                extra: `${buildRuntimeStateHint(runtimeState)}\n你在重复打开同一页面。禁止再次 new_page/navigate_page 到相同 URL，请直接执行后续步骤。`
+                extra: `${buildRuntimeStateHint(runtimeState)}\n你在重复打开同一页面。禁止再次 new_page/navigate_page 到相同 URL，请直接执行后续步骤。\n请只输出一个 JSON 对象，不要输出任何其他文字。示例：{"type":"action","data":{"tool":"mcp","name":"take_snapshot","input":{}}}`
               }),
               conversationHistory,
               abortSignal
@@ -2666,7 +2724,7 @@ export async function* handleChatStream(
               finalSystemPrompt,
               buildAgentFollowupPrompt(message, agentEnvelope, {
                 toolResult: lastToolResultText,
-                extra: `${buildRuntimeStateHint(runtimeState)}\n你在重复 take_snapshot。禁止继续快照，请改为输入关键词并提交搜索。`
+                extra: `${buildRuntimeStateHint(runtimeState)}\n你在重复 take_snapshot。禁止继续快照，请改为输入关键词并提交搜索。\n请只输出一个 JSON 对象，不要输出任何其他文字。示例：{"type":"action","data":{"tool":"mcp","name":"evaluate_script","input":{"function":"()=>document.title"}}}`
               }),
               conversationHistory,
               abortSignal
@@ -2690,7 +2748,7 @@ export async function* handleChatStream(
               finalSystemPrompt,
               buildAgentFollowupPrompt(message, agentEnvelope, {
                 toolResult: lastToolResultText,
-                extra: `${buildRuntimeStateHint(runtimeState)}\n你在重复同一 action。禁止再次输出相同 action，请输出下一步不同且可推进任务的 action。`
+                extra: `${buildRuntimeStateHint(runtimeState)}\n你在重复同一 action。禁止再次输出相同 action，请输出下一步不同且可推进任务的 action。\n请只输出一个 JSON 对象，不要输出任何其他文字。示例：{"type":"action","data":{"tool":"mcp","name":"list_pages","input":{}}}`
               }),
               conversationHistory,
               abortSignal

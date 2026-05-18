@@ -3,10 +3,10 @@
  * 处理登录、登出、Token 刷新等认证相关请求
  */
 
+import { randomBytes } from 'node:crypto'
 import { readJsonBody } from '../shared/utils'
 import { getAuthService } from '../middleware/auth.middleware'
 import { logger } from '../services/logger.service'
-import { getEncryptionService } from '../services/encryption.service'
 
 /**
  * 简单的用户凭证存储（生产环境应该使用数据库）
@@ -14,20 +14,23 @@ import { getEncryptionService } from '../services/encryption.service'
 const USERS_DB = new Map<string, { password: string; permissions: string[] }>()
 
 // 初始化默认管理员账户
-const DEFAULT_ADMIN_PASSWORD = process.env.DEFAULT_ADMIN_PASSWORD || 'admin123'
+const DEFAULT_ADMIN_PASSWORD = process.env.DEFAULT_ADMIN_PASSWORD || randomBytes(16).toString('hex')
 USERS_DB.set('admin', {
   password: DEFAULT_ADMIN_PASSWORD,
   permissions: ['read', 'write', 'admin']
 })
+const DEFAULT_TEST_USER_PASSWORD = process.env.DEFAULT_TEST_USER_PASSWORD || randomBytes(12).toString('hex')
 USERS_DB.set('testuser', {
-  password: process.env.DEFAULT_TEST_USER_PASSWORD || 'password123',
+  password: DEFAULT_TEST_USER_PASSWORD,
   permissions: ['read', 'write']
 })
+
+logger.info('[Auth] Default admin password: ' + DEFAULT_ADMIN_PASSWORD + ' (set DEFAULT_ADMIN_PASSWORD env to change)')
 
 /**
  * 处理认证路由请求
  */
-export async function handleAuthRoute(pathname: string, request: Request) {
+export async function handleAuthRoute(pathname: string, request: Request): Promise<Response | null> {
   const authService = getAuthService()
 
   // POST /api/auth/login - 用户登录

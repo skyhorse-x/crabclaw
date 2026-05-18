@@ -47,7 +47,7 @@ export class MultiAgentCoordinator {
   /**
    * 分解任务为子任务
    */
-  async decomposeTask(goal: string, availableTools: string[]): Promise<SubTask[]> {
+  async decomposeTask(goal: string, _availableTools: string[]): Promise<SubTask[]> {
     const subTasks: SubTask[] = []
 
     const hasFileOperation = goal.includes('文件') || goal.includes('创建') || goal.includes('写入')

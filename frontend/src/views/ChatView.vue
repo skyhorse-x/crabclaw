@@ -1,6 +1,5 @@
 <template>
-  <AppLayout>
-    <div class="chat-container">
+  <div class="chat-container">
       <div class="chat-messages" ref="chatContainer">
         <div v-if="currentConversation.messages.length === 0" class="chat-empty">
           <div class="empty-icon"></div>
@@ -93,13 +92,11 @@
         </div>
       </div>
     </div>
-  </AppLayout>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import AppLayout from '@/components/layout/AppLayout.vue'
 import { useWebSocket, type ChatChunk, type CausalNode, type ErrorDetail, type LearningFeedback } from '@/composables/useWebSocket'
 
 const { t } = useI18n()

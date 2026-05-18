@@ -1,96 +1,164 @@
 #!/usr/bin/env node
-/**
- * CrabClaw 开发模式启动脚本（跨平台）
- * 由 neu run 通过 devCommand 调用
- * 职责：启动后端（随机端口）+ 前端 dev server
- * Neutralino 自己等 devUrl 可用后打开窗口
- */
 
 import { spawn, execSync } from 'child_process'
-import fs from 'fs'
+import net from 'net'
 import path from 'path'
 import { fileURLToPath } from 'url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
-const PORT_FILE = path.join(ROOT, 'server', '.port')
-const FRONTEND_DEV_PORT = 5173
 
-function sleep(ms) {
-  return new Promise(r => setTimeout(r, ms))
+const PORTS = { BACKEND: 17871, FRONTEND: 5173 }
+const TIMEOUT = 20000 // 20秒足够
+const isWin = process.platform === 'win32'
+const isNeuMode = process.argv.includes('--neu')
+
+// 简洁的日志
+const log = {
+  info: (msg) => console.log(`\x1b[36m›\x1b[0m ${msg}`),
+  ok: (msg) => console.log(`\x1b[32m✓\x1b[0m ${msg}`),
+  err: (msg) => console.error(`\x1b[31m✗\x1b[0m ${msg}`)
 }
 
-async function waitFile(filePath, timeoutMs = 15000) {
+// 核心：端口检测（300ms超时足够）
+function isPortOpen(port) {
+  return new Promise((resolve) => {
+    const socket = net.createConnection(port, '127.0.0.1')
+    const timer = setTimeout(() => { socket.destroy(); resolve(false) }, 300)
+    socket.on('connect', () => { clearTimeout(timer); socket.destroy(); resolve(true) })
+    socket.on('error', () => { clearTimeout(timer); resolve(false) })
+  })
+}
+
+// 等待端口就绪（轮询间隔100ms）
+async function waitForPort(port) {
   const start = Date.now()
-  while (Date.now() - start < timeoutMs) {
-    if (fs.existsSync(filePath)) return true
-    await sleep(300)
+  while (Date.now() - start < TIMEOUT) {
+    if (await isPortOpen(port)) return true
+    await new Promise(r => setTimeout(r, 100))
   }
   return false
 }
 
-function run(cmd, args, cwd, label) {
-  const proc = spawn(cmd, args, {
-    cwd,
-    stdio: ['inherit', 'inherit', 'pipe'],
-    shell: process.platform === 'win32',
-  })
-  proc.stderr?.on('data', (data) => {
-    const text = data.toString()
-    // 过滤 MCP SDK 的 EPIPE 噪音
-    if (text.includes('EPIPE') || text.includes('write EPIPE') || text.includes('Error: write EPIPE')) return
-    process.stderr.write(text)
-  })
-  proc.on('error', err => {
-    console.error(`[${label}] Failed to start:`, err.message)
-    process.exit(1)
-  })
-  return proc
-}
-
-function killPort(port) {
+// 清理端口（只杀实际占用的进程）
+function freePort(port) {
   try {
-    if (process.platform === 'win32') {
-      const result = execSync(`netstat -ano | findstr :${port}`, { encoding: 'utf-8' })
-      const pids = [...new Set(result.trim().split('\n').map(l => l.trim().split(/\s+/).pop()).filter(Boolean))]
-      for (const pid of pids) {
-        try { execSync(`taskkill /PID ${pid} /F`, { stdio: 'ignore' }) } catch {}
-      }
+    if (isWin) {
+      const output = execSync(`netstat -ano | findstr :${port} | findstr LISTENING`, { 
+        encoding: 'utf-8', 
+        stdio: ['pipe', 'pipe', 'ignore'] 
+      })
+      const pids = new Set(output.split('\n').map(line => {
+        const match = line.trim().split(/\s+/).pop()
+        return match && /^\d+$/.test(match) ? match : null
+      }).filter(Boolean))
+      
+      pids.forEach(pid => {
+        try {
+          execSync(`taskkill /PID ${pid} /F`, { stdio: 'ignore' })
+          log.info(`Freed port ${port} (PID: ${pid})`)
+        } catch (e) {
+          // 进程可能已退出，忽略
+        }
+      })
     } else {
       execSync(`lsof -ti:${port} | xargs kill -9`, { stdio: 'ignore' })
     }
-  } catch {}
-}
-
-for (const f of [PORT_FILE]) {
-  try { fs.unlinkSync(f) } catch {}
-}
-
-killPort(FRONTEND_DEV_PORT)
-
-console.log('[dev] Starting backend (Bun)...')
-const backendProc = run('bun', ['--env-file=server/.env', 'run', 'server/main.ts'], ROOT, 'backend')
-
-if (!await waitFile(PORT_FILE, 10000)) {
-  console.error('[dev] Backend failed to write .port within 10s')
-  backendProc.kill()
-  process.exit(1)
-}
-
-const backendPort = fs.readFileSync(PORT_FILE, 'utf-8').trim()
-console.log(`[dev] Backend on port ${backendPort}`)
-
-console.log(`[dev] Starting frontend on port ${FRONTEND_DEV_PORT}...`)
-console.log(`[dev] Frontend will proxy /api and /ws to backend on port ${backendPort}`)
-
-const frontendProc = run('npm', ['run', 'frontend:dev'], ROOT, 'frontend')
-
-function shutdown() {
-  for (const p of [frontendProc, backendProc]) {
-    try { p.kill() } catch {}
+  } catch {
+    // 端口未被占用，正常情况
   }
+}
+
+// 启动进程（简化版本）
+function start(cmd, args, name) {
+  log.info(`Starting ${name}...`)
+  const proc = spawn(cmd, args, { cwd: ROOT, shell: isWin, stdio: 'pipe' })
+  
+  // 只输出错误和关键信息
+  proc.stderr?.on('data', (d) => process.stderr.write(d.toString()))
+  proc.stdout?.on('data', (d) => {
+    const msg = d.toString()
+    if (msg.includes('ready') || msg.includes('VITE')) 
+      log.ok(`${name}: ${msg.split('\n')[0].slice(0, 80)}`)
+  })
+  
+  return proc
+}
+
+// 清理函数
+let procs = []
+function cleanup() {
+  if (procs.length === 0) return
+  log.info('Stopping services...')
+  procs.forEach(p => {
+    try {
+      if (isWin) execSync(`taskkill /PID ${p.pid} /T /F`, { stdio: 'ignore' })
+      else p.kill('SIGTERM')
+    } catch {}
+  })
+  log.ok('Done')
   process.exit(0)
 }
 
-process.on('SIGINT', shutdown)
-process.on('SIGTERM', shutdown)
+// 主函数
+async function main() {
+  console.log('\n\x1b[36m CrabClaw Dev Server\x1b[0m\n')
+  
+  process.on('SIGINT', cleanup)
+  process.on('SIGTERM', cleanup)
+  
+  // 快速检查后端是否已运行
+  if (await isPortOpen(PORTS.BACKEND)) {
+    log.info('Backend already running')
+    const frontend = start('npm', ['run', 'frontend:dev'], 'Frontend')
+    procs = [frontend]
+    
+    if (await waitForPort(PORTS.FRONTEND)) {
+      log.ok(`Frontend: http://localhost:${PORTS.FRONTEND}`)
+    }
+    
+    if (isNeuMode) {
+      const neu = start('npx', ['@neutralinojs/neu', 'run'], 'Neutralino')
+      procs.push(neu)
+    }
+    
+    await new Promise(() => {})
+    return
+  }
+  
+  // 清理端口
+  log.info('Cleaning ports...')
+  freePort(PORTS.BACKEND)
+  freePort(PORTS.FRONTEND)
+  
+  // 并行启动前后端
+  log.info('Starting services...')
+  const frontend = start('npm', ['run', 'frontend:dev'], 'Frontend')
+  const backend = start('bun', ['--env-file=server/.env', 'server/main.ts'], 'Backend')
+  procs = [frontend, backend]
+  
+  // 等待两者就绪
+  const [frontendReady, backendReady] = await Promise.all([
+    waitForPort(PORTS.FRONTEND),
+    waitForPort(PORTS.BACKEND)
+  ])
+  
+  if (!frontendReady) log.err('Frontend timeout')
+  if (!backendReady) log.err('Backend timeout')
+  
+  console.log(`\n\x1b[32m✓ Frontend\x1b[0m  http://localhost:${PORTS.FRONTEND}`)
+  console.log(`\x1b[32m✓ Backend\x1b[0m   http://localhost:${PORTS.BACKEND}\n`)
+  
+  if (isNeuMode) {
+    const neu = start('npx', ['@neutralinojs/neu', 'run'], 'Neutralino')
+    procs.push(neu)
+  }
+  
+  log.info('Press Ctrl+C to stop')
+  await new Promise(() => {})
+}
+
+main().catch(e => {
+  log.err(e.message)
+  process.exit(1)
+})

@@ -7,6 +7,7 @@ import { logger } from './logger.service'
 import { readFile, writeFile, mkdir } from 'fs/promises'
 import { existsSync } from 'fs'
 import { join } from 'path'
+import { PATHS } from '../shared/constants'
 
 export interface Experience {
   id: string
@@ -36,7 +37,7 @@ export class ExperienceStore {
   private initialized: boolean = false
 
   private constructor() {
-    this.storagePath = join(process.cwd(), 'data', 'experience-store.json')
+    this.storagePath = join(PATHS.DATA_DIR, 'experience-store.json')
   }
 
   static getInstance(): ExperienceStore {

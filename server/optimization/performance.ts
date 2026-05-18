@@ -265,7 +265,7 @@ export class BatchProcessor<T, R> {
       callbacks.forEach((cb, i) => {
         cb.resolve(results[i])
       })
-    } catch (error) {
+    } catch (error: any) {
       callbacks.forEach(cb => {
         cb.reject(error)
       })
@@ -500,7 +500,7 @@ export class BackgroundWorker {
         this.worker.postMessage({ taskId, data })
       } else {
         // Node.js 环境使用 worker_threads
-        this.processInNode(data).then(resolve).catch(reject)
+        this.processInNode(data).then((r: any) => resolve(r)).catch((e: any) => reject(e))
       }
     })
   }

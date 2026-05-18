@@ -8,7 +8,7 @@ import { learningController, ExperienceSearchResult } from '../learning'
 import type { ExecutionRecord as LearningExecutionRecord } from '../learning/types'
 import type { ExecutionRecord } from './reflection.service'
 import type { EnhancedStep } from './intelligent-agent.service'
-import type { Experience } from './experience-store'
+// import type { Experience } from './experience-store'
 
 export interface LearningInsights {
   relevantExperiences: ExperienceSearchResult[]

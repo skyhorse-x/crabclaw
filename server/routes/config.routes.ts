@@ -4,6 +4,7 @@
  */
 
 import { getConfigService } from '../services/config.service'
+import { proxyService } from '../services/proxy.service'
 import { logger } from '../services/logger.service'
 
 /**
@@ -22,7 +23,7 @@ const configService = getConfigService()
 /**
  * 处理 Config 路由请求
  */
-export async function handleConfigRoute(pathname: string, request: Request) {
+export async function handleConfigRoute(pathname: string, request: Request): Promise<Response | null> {
   // GET /api/config
   if (pathname === '/api/config' && request.method === 'GET') {
     try {
@@ -83,12 +84,17 @@ export async function handleConfigRoute(pathname: string, request: Request) {
           ...current.settings,
           ...(body.settings || {})
         },
-        models: Array.isArray(body.models) ? body.models : current.models,
-        skills: Array.isArray(body.skills) ? body.skills : current.skills,
-        tasks: Array.isArray(body.tasks) ? body.tasks : current.tasks
+        models: Array.isArray(body.models) && body.models.length > 0 ? body.models : current.models,
+        skills: Array.isArray(body.skills) && body.skills.length > 0 ? body.skills : current.skills,
+        tasks: Array.isArray(body.tasks) && body.tasks.length > 0 ? body.tasks : current.tasks
       }
 
       await configService.saveConfig(mergedConfig)
+
+      if (body.settings) {
+        proxyService.apply(mergedConfig.settings.proxy)
+      }
+
       const config = await configService.getConfig()
       return new Response(JSON.stringify({
         ok: true,

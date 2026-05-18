@@ -222,7 +222,7 @@ export class McpDiscoveryService {
     try {
       // 简单的健康检查：尝试获取工具列表
       const { mcpService } = await import('./mcp.service')
-      const tools = await mcpService.getTools(serverId)
+      await mcpService.getTools()
       
       const responseTime = Date.now() - startTime
       

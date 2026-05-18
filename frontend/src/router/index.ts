@@ -1,8 +1,8 @@
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHashHistory } from 'vue-router'
 import ChatView from '../views/ChatView.vue'
 
 const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHashHistory(),
   routes: [
     {
       path: '/',
@@ -13,6 +13,11 @@ const router = createRouter({
       path: '/agents',
       name: 'agents',
       component: () => import('../views/AgentsView.vue')
+    },
+    {
+      path: '/pipeline',
+      name: 'pipeline',
+      component: () => import('../views/PipelineView.vue')
     },
     {
       path: '/mcp',

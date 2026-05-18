@@ -8,7 +8,8 @@ import { logger } from '../services/logger.service'
 import { createId } from '../shared/utils'
 import { readFile, writeFile, mkdir } from 'fs/promises'
 import { existsSync } from 'fs'
-import { join } from 'path'
+import { join, dirname } from 'path'
+import { PATHS } from '../shared/constants'
 import type {
   Strategy,
   StrategyRule,
@@ -32,7 +33,7 @@ export class StrategyOptimizer {
   private maxRecentResults: number = 10
 
   private constructor() {
-    this.storagePath = join(process.cwd(), 'data', 'strategy-optimizer.json')
+    this.storagePath = join(PATHS.DATA_DIR, 'strategy-optimizer.json')
   }
 
   static getInstance(): StrategyOptimizer {
@@ -48,7 +49,7 @@ export class StrategyOptimizer {
     }
 
     try {
-      const dir = this.storagePath.substring(0, this.storagePath.lastIndexOf('/'))
+      const dir = dirname(this.storagePath)
       if (!existsSync(dir)) {
         await mkdir(dir, { recursive: true })
       }
@@ -69,7 +70,7 @@ export class StrategyOptimizer {
       logger.info('[StrategyOptimizer] Initialized successfully')
     } catch (error) {
       logger.error('[StrategyOptimizer] Initialize failed', error)
-      this.initialized = true
+      this.initialized = false
     }
   }
 
@@ -511,7 +512,7 @@ export class StrategyOptimizer {
   private async suggestRuleImprovements(strategy: Strategy): Promise<StrategyRule[]> {
     const improvements: StrategyRule[] = []
 
-    const failedRules = strategy.rules.filter(r =>
+    const failedRules = strategy.rules.filter(_r =>
       strategy.performance.recentResults.slice(-5).every(r => !r)
     )
 

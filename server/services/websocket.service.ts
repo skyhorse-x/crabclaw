@@ -20,7 +20,7 @@ try {
       }
     }
   }
-} catch (_) {}
+} catch (_) { logger.warn('[WebSocket] Failed to patch abortHandshake', _) }
 
 export interface WSClient {
   id: string
@@ -65,7 +65,7 @@ class WebSocketService {
           host: request.headers.host,
           error
         })
-        try { socket.destroy() } catch (_) {}
+        try { socket.destroy() } catch (_) { logger.warn('[WebSocket] Socket destroy error', _) }
         return
       }
 
@@ -78,20 +78,20 @@ class WebSocketService {
             upgradeHeader,
             hasWebSocketKey: Boolean(wsKey)
           })
-          try { socket.destroy() } catch (_) {}
+          try { socket.destroy() } catch (_) { logger.warn('[WebSocket] Socket destroy error', _) }
           return
         }
 
         if (!socket || socket.destroyed || !socket.writable) {
-          try { socket.destroy() } catch (_) {}
+          try { socket.destroy() } catch (_) { logger.warn('[WebSocket] Socket destroy error', _) }
           return
         }
 
         socket.removeAllListeners('error')
-        socket.on('error', () => {})
+        socket.on('error', (e: Error) => { logger.warn('[WebSocket] Socket error', e) })
 
         if (!this.wss) {
-          try { socket.destroy() } catch (_) {}
+          try { socket.destroy() } catch (_) { logger.warn('[WebSocket] Socket destroy error', _) }
           return
         }
 
@@ -99,7 +99,7 @@ class WebSocketService {
           this.wss.handleUpgrade(request, socket, head, (ws: WebSocket) => {
             if (!ws) {
               logger.warn('[WebSocket] handleUpgrade callback received empty ws instance', { path: url?.pathname })
-              try { socket.destroy() } catch (_) {}
+              try { socket.destroy() } catch (_) { logger.warn('[WebSocket] Socket destroy error', _) }
               return
             }
             this.wss?.emit('connection', ws, request)
@@ -114,10 +114,10 @@ class WebSocketService {
               hasWebSocketKey: Boolean(request.headers['sec-websocket-key'])
             }
           })
-          try { socket.destroy() } catch (_) {}
+          try { socket.destroy() } catch (_) { logger.warn('[WebSocket] Socket destroy error', _) }
         }
       } else {
-        try { socket.destroy() } catch (_) {}
+        try { socket.destroy() } catch (_) { logger.warn('[WebSocket] Socket destroy error', _) }
       }
     })
 

@@ -134,7 +134,7 @@ export class ModelRouter {
   async listModels(): Promise<any[]> {
     const allModels: any[] = []
 
-    for (const [name, provider] of this.providers) {
+    for (const [_name, provider] of this.providers) {
       try {
         const models = await provider.listModels?.()
         if (models) {

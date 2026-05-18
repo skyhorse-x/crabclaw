@@ -8,7 +8,6 @@ import { logger } from '../services/logger.service'
 import type { 
   Task, 
   TaskStatus, 
-  TaskPriority, 
   TaskHandler, 
   TaskContext,
   TaskQueueConfig,

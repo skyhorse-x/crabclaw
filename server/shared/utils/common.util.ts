@@ -18,6 +18,13 @@ export function formatTime(date: Date = new Date()): string {
 }
 
 /**
+ * 获取当前时间戳（毫秒）
+ */
+export function getNow(): number {
+  return Date.now()
+}
+
+/**
  * 延迟执行
  */
 export function sleep(ms: number): Promise<void> {

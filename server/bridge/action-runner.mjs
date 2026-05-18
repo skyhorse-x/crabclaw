@@ -5,22 +5,14 @@ import os from "node:os"
 import path from "node:path"
 import open from "open"
 
-// 尝试导入 robotjs，如果失败则使用降级方案
-let robot
-try {
-  robot = require("robotjs")
-} catch (error) {
-  console.warn("警告: robotjs 模块加载失败，部分功能将不可用")
-  // 创建一个空的 robot 对象，避免后续代码出错
-  robot = {
-    getScreenSize: () => ({ width: 1920, height: 1080 }),
-    getMousePos: () => ({ x: 0, y: 0 }),
-    moveMouseSmooth: () => {},
-    mouseClick: () => {},
-    typeString: () => {},
-    keyTap: () => {},
-    scrollMouse: () => {}
-  }
+let robot = {
+  getScreenSize: () => ({ width: 1920, height: 1080 }),
+  getMousePos: () => ({ x: 0, y: 0 }),
+  moveMouseSmooth: () => {},
+  mouseClick: () => {},
+  typeString: () => {},
+  keyTap: () => {},
+  scrollMouse: () => {}
 }
 
 let screenshot

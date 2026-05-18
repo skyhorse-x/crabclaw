@@ -3,7 +3,7 @@ import { getChatHistoryService } from '../services/chat-history.service'
 import { logger } from '../services/logger.service'
 import { getConfigService } from '../services/config.service'
 
-export async function handleChatHistoryRoute(pathname: string, request: Request) {
+export async function handleChatHistoryRoute(pathname: string, request: Request): Promise<Response | null> {
   const configService = getConfigService()
   const config = await configService.getConfig()
   const configuredUserDataDir = config.settings?.userDataDir

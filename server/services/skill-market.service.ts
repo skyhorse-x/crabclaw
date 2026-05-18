@@ -121,6 +121,8 @@ export class SkillMarketService {
   private dbPath: string
   private sourceUrl: string
   private refreshIntervalMs: number
+  private nextSyncAfter = 0
+  private consecutiveFailures = 0
 
   constructor(_userDataDir?: string) {
     this.dbPath = getUnifiedDbPath()
@@ -259,16 +261,28 @@ export class SkillMarketService {
 
     if (!shouldRefresh) return
 
+    // 远程失败回退，force 可以绕过
+    if (!force && Date.now() < this.nextSyncAfter) {
+      logger.debug('[SkillMarket] Sync skipped (backoff period)')
+      return
+    }
+
     try {
       const skills = await this.fetchRemoteSkills()
       this.replaceAllSkills(skills)
+      this.consecutiveFailures = 0
+      this.nextSyncAfter = 0
       logger.info('[SkillMarket] Remote market synced', { total: skills.length, dbPath: this.dbPath })
-    } catch (error) {
+    } catch (error: any) {
+      this.consecutiveFailures++
+      const backoffMs = Math.min(60000 * Math.pow(2, this.consecutiveFailures - 1), 3600000)
+      this.nextSyncAfter = Date.now() + backoffMs
+
       if (count > 0) {
-        logger.warn('[SkillMarket] Remote sync failed, using cached data', { error })
+        logger.debug('[SkillMarket] Remote sync failed, using cached data', { error: error?.message || error, nextRetryInMs: backoffMs })
         return
       }
-      logger.error('[SkillMarket] Remote sync failed', { error })
+      logger.warn('[SkillMarket] Remote sync failed (no cached data)', { error: error?.message || error, nextRetryInMs: backoffMs })
     }
   }
 
