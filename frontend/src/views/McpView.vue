@@ -96,10 +96,9 @@ import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Star } from '@element-plus/icons-vue'
+import { apiClient } from '../utils/api-client'
 
 const { t } = useI18n()
-
-const apiBase = ref("")
 
 const mcpServers = ref<any[]>([])
 const mcpLoading = ref(false)
@@ -107,26 +106,15 @@ const mcpInstallDialogVisible = ref(false)
 const mcpConfigJson = ref("")
 const mcpInstalling = ref(false)
 
-function buildApiUrl(path: string): string {
-  const normalizedPath = path.startsWith('/') ? path : `/${path}`
-  return `${apiBase.value}${normalizedPath}`
-}
-
 async function fetchMcpServers() {
   mcpLoading.value = true
   try {
-    const res = await fetch(buildApiUrl('/api/mcp'))
-    const data = await res.json()
-    if (data.ok) {
-      mcpServers.value = Array.isArray(data.servers) ? data.servers : []
-    } else {
-      mcpServers.value = []
-      ElMessage.error(data.error || t('mcpLoadFailed'))
-    }
-  } catch (e) {
+    const data = await apiClient.get('/api/mcp') as any
+    mcpServers.value = Array.isArray(data.servers) ? data.servers : []
+  } catch (e: any) {
     console.error("Failed to fetch MCP servers:", e)
     mcpServers.value = []
-    ElMessage.error(t('networkError'))
+    ElMessage.error(e?.message || t('mcpLoadFailed'))
   } finally {
     mcpLoading.value = false
   }
@@ -160,21 +148,12 @@ async function confirmInstallMcpServer() {
 
   mcpInstalling.value = true
   try {
-    const res = await fetch(buildApiUrl('/api/mcp/install'), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ config })
-    })
-    const data = await res.json()
-    if (data.ok) {
-      mcpInstallDialogVisible.value = false
-      ElMessage.success(data.message)
-      fetchMcpServers()
-    } else {
-      ElMessage.error(data.error)
-    }
-  } catch (e) {
-    ElMessage.error(t('installFailed'))
+    const data = await apiClient.post('/api/mcp/install', { config }) as any
+    mcpInstallDialogVisible.value = false
+    ElMessage.success(data.message)
+    fetchMcpServers()
+  } catch (e: any) {
+    ElMessage.error(e?.message || t('installFailed'))
   } finally {
     mcpInstalling.value = false
   }
@@ -189,18 +168,9 @@ async function uninstallMcpServer(server: any) {
       type: "warning"
     })
 
-    const res = await fetch(buildApiUrl('/api/mcp/uninstall'), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: server.id })
-    })
-    const data = await res.json()
-    if (data.ok) {
-      ElMessage.success(data.message)
-      fetchMcpServers()
-    } else {
-      ElMessage.error(data.error)
-    }
+    const data = await apiClient.post('/api/mcp/uninstall', { id: server.id }) as any
+    ElMessage.success(data.message)
+    fetchMcpServers()
   } catch (err: any) {
     if (err !== 'cancel' && err?.message !== 'cancel') {
       ElMessage.error(String(err?.message || '卸载失败'))

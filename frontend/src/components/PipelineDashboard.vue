@@ -212,6 +212,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { apiClient } from '../utils/api-client'
 
 interface PipelineStep {
   id: string
@@ -276,24 +277,21 @@ const generateId = () => `${Date.now()}-${Math.random().toString(36).substr(2, 9
 
 async function fetchPipelines() {
   try {
-    const res = await fetch('/api/pipelines')
-    const data = await res.json()
+    const data = await apiClient.get('/api/pipelines') as any
     pipelines.value = Array.isArray(data) ? data : []
   } catch { /* ignore */ }
 }
 
 async function fetchAgents() {
   try {
-    const res = await fetch('/api/agents')
-    const data = await res.json()
+    const data = await apiClient.get('/api/agents') as any
     agents.value = Array.isArray(data) ? data.map((a: any) => ({ id: a.id, name: a.name })) : []
   } catch { /* ignore */ }
 }
 
 async function fetchLogs(pipelineId: string) {
   try {
-    const res = await fetch(`/api/pipelines/${pipelineId}/logs`)
-    const data = await res.json()
+    const data = await apiClient.get(`/api/pipelines/${pipelineId}/logs`) as any
     runLogs.value = Array.isArray(data) ? data : []
   } catch { /* ignore */ }
 }
@@ -392,18 +390,10 @@ async function saveForm() {
       steps: form.value.steps.map((s, i) => ({ ...s, order: i }))
     }
     if (editingPipeline.value) {
-      await fetch(`/api/pipelines/${editingPipeline.value.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      })
+      await apiClient.put(`/api/pipelines/${editingPipeline.value.id}`, body)
       ElMessage.success('流水线已更新')
     } else {
-      await fetch('/api/pipelines', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      })
+      await apiClient.post('/api/pipelines', body)
       ElMessage.success('流水线已创建')
     }
     showForm.value = false
@@ -418,30 +408,21 @@ async function saveForm() {
 async function runPipeline(id: string) {
   running.value = true
   try {
-    const res = await fetch(`/api/pipelines/${id}/run`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ input: runInput.value })
-    })
-    const data = await res.json()
-    if (!res.ok) {
-      ElMessage.error(data?.error || '启动失败')
-      return
-    }
+    await apiClient.post(`/api/pipelines/${id}/run`, { input: runInput.value })
     ElMessage.success('流水线已启动')
     await fetchPipelines()
     const updated = pipelines.value.find(p => p.id === id)
     if (updated) detailPipeline.value = { ...updated }
     startPoll()
-  } catch {
-    ElMessage.error('启动失败')
+  } catch (e: any) {
+    ElMessage.error(e?.message || '启动失败')
   } finally {
     running.value = false
   }
 }
 
 async function stopPipeline(id: string) {
-  await fetch(`/api/pipelines/${id}/stop`, { method: 'POST' })
+  await apiClient.post(`/api/pipelines/${id}/stop`)
   await fetchPipelines()
   const updated = pipelines.value.find(p => p.id === id)
   if (updated) detailPipeline.value = { ...updated }
@@ -449,7 +430,7 @@ async function stopPipeline(id: string) {
 }
 
 async function approve(id: string) {
-  await fetch(`/api/pipelines/${id}/approve`, { method: 'POST' })
+  await apiClient.post(`/api/pipelines/${id}/approve`)
   await fetchPipelines()
   const updated = pipelines.value.find(p => p.id === id)
   if (updated) detailPipeline.value = { ...updated }
@@ -460,7 +441,7 @@ async function confirmDelete(pl: Pipeline) {
   await ElMessageBox.confirm(`确定删除流水线「${pl.name}」吗？`, '确认删除', {
     confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning'
   })
-  await fetch(`/api/pipelines/${pl.id}`, { method: 'DELETE' })
+  await apiClient.delete(`/api/pipelines/${pl.id}`)
   ElMessage.success('已删除')
   await fetchPipelines()
 }

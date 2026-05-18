@@ -52,6 +52,7 @@ export function createHttpServer(
         port,
         error: err.message
       })
+      process.exit(1)
     } else {
       logger.error('HTTP server error', err)
     }
@@ -69,18 +70,7 @@ export function createHttpServer(
     }
   })
 
-  // 尝试监听，如果端口被占用则尝试下一个端口
-  function tryListen(currentPort: number) {
-    server.once('error', (err: any) => {
-      if (err?.code === 'EADDRINUSE') {
-        logger.warn(`Port ${currentPort} in use, trying port ${currentPort + 1}`)
-        server.removeAllListeners('error')
-        tryListen(currentPort + 1)
-      }
-    })
-    server.listen(currentPort)
-  }
-  tryListen(port)
+  server.listen(port)
 
   // 获取实际监听的端口
   function getActualPort(): number {
@@ -120,17 +110,23 @@ async function readBody(req: any): Promise<Buffer[]> {
 async function writeWebResponse(response: Response, res: ServerResponse): Promise<void> {
   res.statusCode = response.status
   response.headers.forEach((value, key) => {
-    res.setHeader(key, value)
+    // skip transfer-encoding, Node.js will set it correctly
+    if (key.toLowerCase() !== 'transfer-encoding') {
+      res.setHeader(key, value)
+    }
   })
 
   if (response.body) {
+    const chunks: Buffer[] = []
     const reader = response.body.getReader()
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
-      res.write(value)
+      chunks.push(Buffer.from(value))
     }
-    res.end()
+    const body = Buffer.concat(chunks)
+    res.setHeader('content-length', body.length)
+    res.end(body)
   } else {
     res.end()
   }

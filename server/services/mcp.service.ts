@@ -128,13 +128,19 @@ async function connectMcpServer(serverId: string, config: McpServerConfig): Prom
       ? await buildFilesystemArgs(Array.isArray(config.args) ? [...config.args] : [])
       : (Array.isArray(config.args) ? config.args : [])
 
+    // Windows 上 npx/node 需要使用 .cmd 后缀，否则 spawn 找不到可执行文件
+    const isWin = process.platform === 'win32'
+    const resolvedCommand = isWin && (config.command === 'npx' || config.command === 'node' || config.command === 'npm')
+      ? `${config.command}.cmd`
+      : config.command
+
     logger.debug(`[MCP] Connecting to ${serverId}`, {
-      command: config.command,
+      command: resolvedCommand,
       argsCount: resolvedArgs.length
     })
 
     const transport = new StdioClientTransport({
-      command: config.command,
+      command: resolvedCommand,
       args: resolvedArgs,
       env: mergedEnv as Record<string, string>
     })

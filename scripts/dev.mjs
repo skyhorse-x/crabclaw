@@ -8,7 +8,8 @@ import { fileURLToPath } from 'url'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 
-const PORTS = { BACKEND: 17871, FRONTEND: 5173 }
+const PORTS = { BACKEND: 17870, FRONTEND: 5173 }
+let actualFrontendPort = PORTS.FRONTEND
 const TIMEOUT = 20000 // 20秒足够
 const isWin = process.platform === 'win32'
 const isNeuMode = process.argv.includes('--neu')
@@ -73,15 +74,20 @@ function freePort(port) {
 function start(cmd, args, name) {
   log.info(`Starting ${name}...`)
   const proc = spawn(cmd, args, { cwd: ROOT, shell: isWin, stdio: 'pipe' })
-  
-  // 只输出错误和关键信息
+
   proc.stderr?.on('data', (d) => process.stderr.write(d.toString()))
   proc.stdout?.on('data', (d) => {
     const msg = d.toString()
-    if (msg.includes('ready') || msg.includes('VITE')) 
+    if (msg.includes('ready') || msg.includes('VITE')) {
       log.ok(`${name}: ${msg.split('\n')[0].slice(0, 80)}`)
+      // 感知 Vite 实际监听端口（strictPort:false 时可能不是 5173）
+      if (name === 'Frontend') {
+        const portMatch = msg.match(/localhost:(\d+)/)
+        if (portMatch) actualFrontendPort = parseInt(portMatch[1], 10)
+      }
+    }
   })
-  
+
   return proc
 }
 
@@ -137,16 +143,16 @@ async function main() {
   const backend = start('bun', ['--env-file=server/.env', 'server/main.ts'], 'Backend')
   procs = [frontend, backend]
   
-  // 等待两者就绪
+  // 等待两者就绪（前端先等 5173，若 Vite 换端口由 stdout 解析更新）
   const [frontendReady, backendReady] = await Promise.all([
     waitForPort(PORTS.FRONTEND),
     waitForPort(PORTS.BACKEND)
   ])
-  
+
   if (!frontendReady) log.err('Frontend timeout')
   if (!backendReady) log.err('Backend timeout')
-  
-  console.log(`\n\x1b[32m✓ Frontend\x1b[0m  http://localhost:${PORTS.FRONTEND}`)
+
+  console.log(`\n\x1b[32m✓ Frontend\x1b[0m  http://localhost:${actualFrontendPort}`)
   console.log(`\x1b[32m✓ Backend\x1b[0m   http://localhost:${PORTS.BACKEND}\n`)
   
   if (isNeuMode) {

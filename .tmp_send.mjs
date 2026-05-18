@@ -1,4 +1,7 @@
-const BASE = 'http://localhost:17871'
+import fs from 'node:fs'
+import path from 'node:path'
+const _port = (() => { try { return fs.readFileSync(path.resolve(import.meta.dirname, 'server/.port'), 'utf-8').trim() } catch { return '17870' } })()
+const BASE = `http://localhost:${_port}`
 
 async function callApi(apiPath, body) {
   const res = await fetch(BASE + apiPath, {

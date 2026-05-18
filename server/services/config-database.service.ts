@@ -23,6 +23,7 @@ export interface RemoteControlConfig {
     botId: string
     webhook: string
     proxyEnabled: boolean
+    appSecret: string
   }
   wechat: {
     enabled: boolean
@@ -168,6 +169,36 @@ export class ConfigDatabaseService {
         // 列已存在则忽略
       }
     }
+    // 迁移：为已有数据库添加 qq_app_secret 列
+    try {
+      this.db.exec("ALTER TABLE remote_control_config ADD COLUMN qq_app_secret TEXT DEFAULT ''")
+    } catch {
+      // 列已存在则忽略
+    }
+    // 迁移：为已有数据库添加 discord/slack/teams/whatsapp 列
+    const platformColumns = [
+      'discord_enabled INTEGER DEFAULT 0',
+      "discord_bot_token TEXT DEFAULT ''",
+      "discord_channel_id TEXT DEFAULT ''",
+      'slack_enabled INTEGER DEFAULT 0',
+      "slack_bot_token TEXT DEFAULT ''",
+      "slack_channel_id TEXT DEFAULT ''",
+      'teams_enabled INTEGER DEFAULT 0',
+      "teams_app_id TEXT DEFAULT ''",
+      "teams_app_secret TEXT DEFAULT ''",
+      "teams_webhook TEXT DEFAULT ''",
+      'whatsapp_enabled INTEGER DEFAULT 0',
+      "whatsapp_account_sid TEXT DEFAULT ''",
+      "whatsapp_auth_token TEXT DEFAULT ''",
+      "whatsapp_from_number TEXT DEFAULT ''",
+    ]
+    for (const colDef of platformColumns) {
+      try {
+        this.db.exec(`ALTER TABLE remote_control_config ADD COLUMN ${colDef}`)
+      } catch {
+        // 列已存在则忽略
+      }
+    }
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS conversations (
@@ -223,7 +254,8 @@ export class ConfigDatabaseService {
         enabled: Boolean(row.qq_enabled),
         botId: row.qq_bot_id || '',
         webhook: row.qq_webhook || '',
-        proxyEnabled: Boolean(row.qq_proxy_enabled)
+        proxyEnabled: Boolean(row.qq_proxy_enabled),
+        appSecret: row.qq_app_secret || ''
       },
       wechat: {
         enabled: Boolean(row.wechat_enabled),
@@ -272,7 +304,7 @@ export class ConfigDatabaseService {
         INSERT OR REPLACE INTO remote_control_config (
           id, enabled, proxy_enabled, command_prefix, verify_code,
           telegram_enabled, telegram_bot_token, telegram_chat_id, telegram_proxy_enabled,
-          qq_enabled, qq_bot_id, qq_webhook, qq_proxy_enabled,
+          qq_enabled, qq_bot_id, qq_webhook, qq_proxy_enabled, qq_app_secret,
           wechat_enabled, wechat_webhook, wechat_proxy_enabled,
           feishu_enabled, feishu_app_id, feishu_app_secret, feishu_webhook, feishu_proxy_enabled,
           discord_enabled, discord_bot_token, discord_channel_id, discord_proxy_enabled,
@@ -280,7 +312,7 @@ export class ConfigDatabaseService {
           teams_enabled, teams_app_id, teams_app_secret, teams_webhook, teams_proxy_enabled,
           whatsapp_enabled, whatsapp_account_sid, whatsapp_auth_token, whatsapp_from_number, whatsapp_proxy_enabled,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         1,
         config.enabled ? 1 : 0,
@@ -295,6 +327,7 @@ export class ConfigDatabaseService {
         config.qq.botId,
         config.qq.webhook,
         config.qq.proxyEnabled ? 1 : 0,
+        config.qq.appSecret || '',
         config.wechat.enabled ? 1 : 0,
         config.wechat.webhook,
         config.wechat.proxyEnabled ? 1 : 0,
@@ -472,7 +505,7 @@ export class ConfigDatabaseService {
       commandPrefix: '/agent',
       verifyCode: '',
       telegram: { enabled: false, botToken: '', chatId: '', proxyEnabled: false },
-      qq: { enabled: false, botId: '', webhook: '', proxyEnabled: false },
+      qq: { enabled: false, botId: '', webhook: '', proxyEnabled: false, appSecret: '' },
       wechat: { enabled: false, webhook: '', proxyEnabled: false },
       feishu: { enabled: false, appId: '', appSecret: '', webhook: '', proxyEnabled: false },
       discord: { enabled: false, botToken: '', channelId: '', proxyEnabled: false },

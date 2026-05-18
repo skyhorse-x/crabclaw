@@ -77,6 +77,9 @@
               <el-form-item :label="t('controlBotId')">
                 <el-input v-model="remoteControlConfig.qq.botId" />
               </el-form-item>
+              <el-form-item :label="t('controlAppSecret')">
+                <el-input v-model="remoteControlConfig.qq.appSecret" type="password" show-password />
+              </el-form-item>
               <el-form-item :label="t('controlWebhook')">
                 <el-input v-model="remoteControlConfig.qq.webhook" />
               </el-form-item>
@@ -384,8 +387,11 @@ import { computed, ref, reactive, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { List, Refresh, Delete, Loading as LoadingIcon } from '@element-plus/icons-vue'
+import { useApiBase } from '../composables/useApiBase'
+import { apiClient } from '../utils/api-client'
 
 const { t } = useI18n()
+const { buildApiUrl } = useApiBase()
 
 interface RemoteControlConfig {
   enabled: boolean
@@ -403,6 +409,7 @@ interface RemoteControlConfig {
     botId: string
     webhook: string
     proxyEnabled: boolean
+    appSecret: string
   }
   wechat: {
     enabled: boolean
@@ -460,7 +467,8 @@ function createDefaultRemoteControlConfig(): RemoteControlConfig {
       enabled: false,
       botId: '',
       webhook: '',
-      proxyEnabled: false
+      proxyEnabled: false,
+      appSecret: ''
     },
     wechat: {
       enabled: false,
@@ -503,12 +511,6 @@ function createDefaultRemoteControlConfig(): RemoteControlConfig {
   }
 }
 
-const BASE_API_URL = import.meta.env.VITE_API_BASE_URL || ''
-
-function buildApiUrl(path: string): string {
-  const normalizedPath = path.startsWith('/') ? path : `/${path}`
-  return `${BASE_API_URL}${normalizedPath}`
-}
 
 const remoteControlConfig = reactive<RemoteControlConfig>(createDefaultRemoteControlConfig())
 const remoteControlWebhookUrl = computed(() => buildApiUrl('/api/remote-control/hook'))
@@ -641,12 +643,9 @@ function updateLogStats() {
 async function loadLogs() {
   loadingLogs.value = true
   try {
-    const res = await fetch(buildApiUrl('/api/remote-control/logs'))
-    if (res.ok) {
-      const data = await res.json()
-      logs.value = Array.isArray(data) ? data : []
-      updateLogStats()
-    }
+    const data = await apiClient.get('/api/remote-control/logs') as any
+    logs.value = Array.isArray(data) ? data : []
+    updateLogStats()
   } catch {
     console.error('Failed to load logs')
   } finally {
@@ -665,16 +664,15 @@ async function clearLogs() {
       cancelButtonText: '取消',
       type: 'warning'
     })
-    const res = await fetch(buildApiUrl('/api/remote-control/logs'), { method: 'DELETE' })
-    if (res.ok) {
-      logs.value = []
-      logStats.value = { total: 0, byLevel: {}, byPlatform: {} }
-      ElMessage.success('日志已清空')
-    } else {
+    await apiClient.delete('/api/remote-control/logs')
+    logs.value = []
+    logStats.value = { total: 0, byLevel: {}, byPlatform: {} }
+    ElMessage.success('日志已清空')
+  } catch (e: any) {
+    // 用户取消操作，或请求失败
+    if (e?.message && e.message !== 'cancel') {
       ElMessage.error('清空日志失败')
     }
-  } catch {
-    // 用户取消操作
   }
 }
 
@@ -750,14 +748,8 @@ function disconnectWebSocket() {
 
 // 配置加载
 function loadRemoteControlConfig() {
-  fetch(buildApiUrl('/api/remote-control/config'))
-    .then(res => {
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const ct = res.headers.get('content-type') || ''
-      if (!ct.includes('application/json')) throw new Error(`Unexpected content-type: ${ct}`)
-      return res.json()
-    })
-    .then(data => {
+  apiClient.get('/api/remote-control/config')
+    .then((data: any) => {
       if (data.enabled !== undefined) {
         remoteControlConfig.enabled = Boolean(data.enabled)
       }
@@ -783,6 +775,7 @@ function loadRemoteControlConfig() {
         remoteControlConfig.qq.botId = String(data.qq.botId || '')
         remoteControlConfig.qq.webhook = String(data.qq.webhook || '')
         remoteControlConfig.qq.proxyEnabled = Boolean(data.qq.proxyEnabled)
+        remoteControlConfig.qq.appSecret = String(data.qq.appSecret || '')
       }
 
       if (data.wechat) {
@@ -863,7 +856,8 @@ function saveRemoteControlConfig() {
       enabled: remoteControlConfig.qq.enabled,
       botId: remoteControlConfig.qq.botId,
       webhook: remoteControlConfig.qq.webhook,
-      proxyEnabled: remoteControlConfig.qq.proxyEnabled
+      proxyEnabled: remoteControlConfig.qq.proxyEnabled,
+      appSecret: remoteControlConfig.qq.appSecret
     },
     wechat: {
       enabled: remoteControlConfig.wechat.enabled,
@@ -905,11 +899,7 @@ function saveRemoteControlConfig() {
     }
   }
 
-  fetch(buildApiUrl('/api/remote-control/config'), {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload)
-  }).catch(() => {})
+  apiClient.post('/api/remote-control/config', payload).catch(() => {})
 
   ElMessage.success(t('controlSaved'))
 }
@@ -919,23 +909,14 @@ async function sendTestToTelegram() {
   if (!telegramTestMessage.value.trim()) return
   sendingToTelegram.value = true
   try {
-    const res = await fetch(buildApiUrl('/api/remote-control/send'), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        platform: 'telegram',
-        content: telegramTestMessage.value
-      })
+    await apiClient.post('/api/remote-control/send', {
+      platform: 'telegram',
+      content: telegramTestMessage.value
     })
-    const data = await res.json()
-    if (data.ok) {
-      ElMessage.success('发送成功')
-      telegramTestMessage.value = ''
-    } else {
-      ElMessage.error(data.error || '发送失败')
-    }
-  } catch {
-    ElMessage.error('发送失败')
+    ElMessage.success('发送成功')
+    telegramTestMessage.value = ''
+  } catch (e: any) {
+    ElMessage.error(e?.message || '发送失败')
   } finally {
     sendingToTelegram.value = false
   }
@@ -944,9 +925,8 @@ async function sendTestToTelegram() {
 // 个人微信功能
 async function fetchWechatStatus() {
   try {
-    const res = await fetch(buildApiUrl('/api/plugins/wechat-bot/status'))
-    const data = await res.json()
-    if (data.ok && data.accounts) {
+    const data = await apiClient.get('/api/plugins/wechat-bot/status') as any
+    if (data.accounts) {
       wechatAccounts.value = data.accounts
     }
   } catch {}
@@ -957,9 +937,8 @@ async function startWechatLogin() {
   wechatQrCodeUrl.value = ''
   wechatLoginStatus.value = 'idle'
   try {
-    const res = await fetch(buildApiUrl('/api/plugins/wechat-bot/login'), { method: 'POST' })
-    const data = await res.json()
-    if (data.ok && data.qrcodeUrl) {
+    const data = await apiClient.post('/api/plugins/wechat-bot/login') as any
+    if (data.qrcodeUrl) {
       wechatQrCodeUrl.value = data.qrcodeUrl
       wechatLoginSession.value = data.session
       wechatLoginStatus.value = 'waiting'
@@ -967,8 +946,8 @@ async function startWechatLogin() {
     } else {
       ElMessage.error(data.error || '获取二维码失败')
     }
-  } catch {
-    ElMessage.error('登录请求失败')
+  } catch (e: any) {
+    ElMessage.error(e?.message || '登录请求失败')
   } finally {
     wechatLoginLoading.value = false
   }
@@ -978,9 +957,8 @@ function startWechatLoginPolling(session: string) {
   stopWechatLoginPolling()
   wechatPollingTimer = setInterval(async () => {
     try {
-      const res = await fetch(buildApiUrl(`/api/plugins/wechat-bot/check-login?session=${session}`))
-      const data = await res.json()
-      if (data.ok && data.status === 'success') {
+      const data = await apiClient.get(`/api/plugins/wechat-bot/check-login?session=${session}`) as any
+      if (data.status === 'success') {
         wechatLoginStatus.value = 'success'
         stopWechatLoginPolling()
         await fetchWechatStatus()
@@ -1011,20 +989,11 @@ async function sendTestToWechat() {
   if (!wechatTestMessage.value.trim()) return
   wechatSending.value = true
   try {
-    const res = await fetch(buildApiUrl('/api/plugins/wechat-bot/send'), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ content: wechatTestMessage.value })
-    })
-    const data = await res.json()
-    if (data.ok) {
-      ElMessage.success('发送成功')
-      wechatTestMessage.value = ''
-    } else {
-      ElMessage.error(data.error || '发送失败')
-    }
-  } catch {
-    ElMessage.error('发送失败')
+    await apiClient.post('/api/plugins/wechat-bot/send', { content: wechatTestMessage.value })
+    ElMessage.success('发送成功')
+    wechatTestMessage.value = ''
+  } catch (e: any) {
+    ElMessage.error(e?.message || '发送失败')
   } finally {
     wechatSending.value = false
   }
@@ -1032,20 +1001,11 @@ async function sendTestToWechat() {
 
 async function logoutWechatAccount(wxid: string) {
   try {
-    const res = await fetch(buildApiUrl('/api/plugins/wechat-bot/logout'), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ wxid })
-    })
-    const data = await res.json()
-    if (data.ok) {
-      ElMessage.success('已登出')
-      await fetchWechatStatus()
-    } else {
-      ElMessage.error(data.error || '登出失败')
-    }
-  } catch {
-    ElMessage.error('登出失败')
+    await apiClient.post('/api/plugins/wechat-bot/logout', { wxid })
+    ElMessage.success('已登出')
+    await fetchWechatStatus()
+  } catch (e: any) {
+    ElMessage.error(e?.message || '登出失败')
   }
 }
 

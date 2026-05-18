@@ -15,13 +15,6 @@ export {
 } from './tools/index'
 export type { ITool, IToolRegistry } from './tools/index'
 
-// ==================== 任务规划 ====================
-export { 
-  taskPlanner,
-  TaskPlanner 
-} from './planner/index'
-export type { TaskPlan, TaskStep, PlanningResult } from './planner/index'
-
 // ==================== 记忆系统 ====================
 export { 
   memoryManager,

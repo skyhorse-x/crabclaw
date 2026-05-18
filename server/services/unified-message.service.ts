@@ -83,7 +83,10 @@ class TelegramSender implements PlatformSender {
     }
 
     try {
-      const targetChatId = chatId || this.defaultChatId || 'me'
+      const targetChatId = chatId || this.defaultChatId
+      if (!targetChatId) {
+        return { ok: false, platform: 'telegram', error: 'chat_id 未配置，请在设置中填写 Chat ID' }
+      }
       const body: Record<string, unknown> = {
         chat_id: targetChatId,
         text: content
@@ -413,7 +416,7 @@ class UnifiedMessageService {
 
   updateConfig(config: {
     telegram?: { botToken?: string; chatId?: string; proxyEnabled?: boolean }
-    qq?: { webhook?: string; botId?: string; proxyEnabled?: boolean }
+    qq?: { webhook?: string; botId?: string; proxyEnabled?: boolean; appSecret?: string }
     wechat?: { webhook?: string; proxyEnabled?: boolean }
     feishu?: { webhook?: string; proxyEnabled?: boolean }
     discord?: { botToken?: string; channelId?: string; proxyEnabled?: boolean }

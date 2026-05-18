@@ -433,12 +433,14 @@ function scrollToBottom() {
 }
 
 .message.user .message-avatar {
-  background: #667eea;
+  background: linear-gradient(135deg, #3b82f6, #6366f1);
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.35);
   color: #fff;
 }
 
 .message.assistant .message-avatar {
-  background: #10b981;
+  background: linear-gradient(135deg, #10b981, #059669);
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.35);
   color: #fff;
 }
 

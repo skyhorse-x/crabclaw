@@ -786,6 +786,8 @@ import FileEditor from "./components/FileEditor.vue"
 import hljs from "highlight.js"
 import { useVoiceInput } from "./composables/useVoiceInput"
 import { useWebSocket } from "./composables/useWebSocket"
+import { useApiBase } from "./composables/useApiBase"
+import { apiClient } from "./utils/api-client"
 import AgentOffice3D from "./components/AgentOffice3D.vue"
 import { ArrowDown,
   ArrowLeftBold,
@@ -828,7 +830,7 @@ import { ArrowDown,
   WarningFilled,
 } from "@element-plus/icons-vue"
 
-const apiBase = ref("")
+const { apiBase, discoverBackend } = useApiBase()
 
 const router = useRouter()
 const route = useRoute()
@@ -894,7 +896,7 @@ function closeFileEditor() {
 }
 
 function buildFileApiUrl(path: string): string {
-  const backendPort = config.value.settings.backendPort || 17871
+  const backendPort = config.value.settings.backendPort || 17870
   const port = location.port === '4173' ? backendPort : location.port
   return `http://${location.hostname}:${port}${path}`
 }
@@ -1094,7 +1096,7 @@ interface Conversation {
 
 const config = ref<AppConfig>({
   settings: { 
-    backendPort: 17871, 
+    backendPort: 17870, 
     theme: "light",
     language: "zh-CN",
     activeModelId: "",
@@ -1141,6 +1143,7 @@ interface RemoteControlConfig {
     botId: string
     webhook: string
     proxyEnabled: boolean
+    appSecret: string
   }
   wechat: {
     enabled: boolean
@@ -1199,7 +1202,8 @@ function createDefaultRemoteControlConfig(): RemoteControlConfig {
       enabled: false,
       botId: '',
       webhook: '',
-      proxyEnabled: false
+      proxyEnabled: false,
+      appSecret: ''
     },
     wechat: {
       enabled: false,
@@ -1964,8 +1968,7 @@ const agents = ref<{ id: string; name: string; avatar: string; isBuiltIn?: boole
 
 async function loadAgentList() {
   try {
-    const res = await fetch(buildApiUrl('/api/agents'))
-    const data = await res.json()
+    const data = await apiClient.get('/api/agents') as any
     const remotes = Array.isArray(data) ? data : []
     agents.value = [
       { id: 'builtin-bot', name: 'CraBot', avatar: '🤖', isBuiltIn: true },
@@ -1982,8 +1985,7 @@ async function loadAgentList() {
 
 async function loadAgentData() {
   try {
-    const res = await fetch(buildApiUrl('/api/agents'))
-    const data = await res.json()
+    const data = await apiClient.get('/api/agents') as any
     const remotes = Array.isArray(data) ? data : []
     agents.value = [
       { id: 'builtin-bot', name: 'CraBot', avatar: '🤖', isBuiltIn: true },
@@ -2732,8 +2734,7 @@ const skillPagination = ref({ total: 0, totalPages: 0, hasMore: false })
 async function fetchMcpServers() {
   mcpLoading.value = true
   try {
-    const res = await fetch(buildApiUrl('/api/mcp'))
-    const data = await res.json()
+    const data = await apiClient.get('/api/mcp') as any
     if (data.ok) {
       mcpServers.value = Array.isArray(data.servers) ? data.servers : []
       const toolMap = data.tools && typeof data.tools === 'object' ? data.tools : {}
@@ -2952,6 +2953,7 @@ function loadRemoteControlConfig() {
           remoteControlConfig.qq.enabled = Boolean(data.qq.enabled)
           remoteControlConfig.qq.botId = String(data.qq.botId || '')
           remoteControlConfig.qq.webhook = String(data.qq.webhook || '')
+          remoteControlConfig.qq.appSecret = String(data.qq.appSecret || '')
           remoteControlConfig.qq.proxyEnabled = Boolean(data.qq.proxyEnabled)
         }
 
@@ -3205,7 +3207,8 @@ function saveRemoteControlConfig() {
         enabled: remoteControlConfig.qq.enabled,
         botId: remoteControlConfig.qq.botId,
         webhook: remoteControlConfig.qq.webhook,
-        proxyEnabled: remoteControlConfig.qq.proxyEnabled
+        proxyEnabled: remoteControlConfig.qq.proxyEnabled,
+        appSecret: remoteControlConfig.qq.appSecret
       },
       wechat: {
         enabled: remoteControlConfig.wechat.enabled,
@@ -3681,26 +3684,6 @@ function buildApiUrl(path: string): string {
   return `${apiBase.value}${normalizedPath}`
 }
 
-function getBackendCandidates(): string[] {
-  const candidates: string[] = []
-
-  // 开发环境 Vite 代理（最快，无网络延迟）
-  if (typeof window !== 'undefined' && window.location?.origin?.startsWith('http')) {
-    const originPort = parseInt(window.location.port)
-    if ([4173, 5173].includes(originPort)) {
-      candidates.push(window.location.origin)
-    }
-  }
-
-  // 已知后端端口，127.0.0.1 优先（避免 localhost DNS 解析延迟）
-  const port = config.value?.settings?.backendPort || 17871
-  const ports = Array.from(new Set([port, 17871]))
-  for (const p of ports) {
-    candidates.push(`http://127.0.0.1:${p}`)
-  }
-
-  return candidates
-}
 
 async function bootstrap() {
   loading.bootstrap = true
@@ -3731,7 +3714,7 @@ async function loadConfig() {
     const data = response?.data?.config
     config.value = {
       settings: {
-        backendPort: data?.settings?.backendPort ?? 17871,
+        backendPort: data?.settings?.backendPort ?? 17870,
         theme: data?.settings?.theme ?? "light",
         language: data?.settings?.language ?? "zh-CN",
         activeModelId: data?.settings?.activeModelId ?? "",
@@ -3859,7 +3842,7 @@ async function sendChat(
       .map(m => ({ role: m.role, text: m.text }))
     
     if (!chatWs.isConnected.value) {
-      chatWs.connect(`ws://${window.location.hostname}:${config.value.settings.backendPort || 17871}/ws`)
+      chatWs.connect(`ws://${window.location.hostname}:${config.value.settings.backendPort || 17870}/ws`)
       await new Promise(resolve => setTimeout(resolve, 1000))
     }
 
@@ -4791,7 +4774,11 @@ onMounted(async () => {
     isInitializing.value = false
   }, 15000)
 
-  // Phase 1: 等待后端就绪（bootstrap 包含 loadConfig，确认后端 API 可用）
+  // Phase 1: 探活后端，确定 apiBase（打包模式需要绝对地址）
+  await discoverBackend()
+  initProgress.value = 20
+
+  // Phase 2: 等待后端就绪（bootstrap 包含 loadConfig，确认后端 API 可用）
   // 启动画面消失速度取决于后端启动速度
   await bootstrap()
   initProgress.value = 60
@@ -4812,7 +4799,7 @@ onMounted(async () => {
     loadRemoteControlConfig()
   ]).then(() => {
     // 所有后台任务完成后，建立 WebSocket 连接
-    chatWs.connect(`ws://${window.location.hostname}:${config.value.settings.backendPort || 17871}/ws`)
+    chatWs.connect(`ws://${window.location.hostname}:${config.value.settings.backendPort || 17870}/ws`)
   }).catch(() => {
     // WebSocket 连接失败不影响主界面
   })

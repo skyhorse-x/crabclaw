@@ -50,6 +50,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onUnmounted } from 'vue'
 import { Document, CircleCheck, Close } from '@element-plus/icons-vue'
+import { apiClient } from '../utils/api-client'
 
 const MIN_PANEL_WIDTH = 280
 const MAX_PANEL_WIDTH = 800
@@ -107,28 +108,18 @@ onUnmounted(() => {
   document.removeEventListener('mouseup', stopResize)
 })
 
-function buildApiUrl(path: string): string {
-  const port = location.port === '4173' ? '17871' : location.port
-  return `http://${location.hostname}:${port}${path}`
-}
-
 async function loadFile(filePath: string) {
   loading.value = true
   currentFile.value = null
   try {
-    const res = await fetch(buildApiUrl('/api/file/read?path=' + encodeURIComponent(filePath)))
-    const data = await res.json()
-    if (data.ok) {
-      currentFile.value = { name: data.name, path: data.path, ext: data.ext }
-      editorContent.value = data.content
-      originalContent.value = data.content
-      hasChanges.value = false
-      saveStatus.value = null
-      await nextTick()
-      editorRef.value?.focus()
-    } else {
-      saveStatus.value = { text: '读取失败: ' + (data.error || ''), type: 'error' }
-    }
+    const data = await apiClient.get('/api/file/read?path=' + encodeURIComponent(filePath)) as any
+    currentFile.value = { name: data.name, path: data.path, ext: data.ext }
+    editorContent.value = data.content
+    originalContent.value = data.content
+    hasChanges.value = false
+    saveStatus.value = null
+    await nextTick()
+    editorRef.value?.focus()
   } catch (err: any) {
     saveStatus.value = { text: '读取失败: ' + err.message, type: 'error' }
   } finally {
@@ -140,20 +131,11 @@ async function saveFile() {
   if (!currentFile.value || !hasChanges.value) return
   saveStatus.value = { text: '保存中...', type: 'saving' }
   try {
-    const res = await fetch(buildApiUrl('/api/file/write'), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ path: currentFile.value.path, content: editorContent.value })
-    })
-    const data = await res.json()
-    if (data.ok) {
-      originalContent.value = editorContent.value
-      hasChanges.value = false
-      saveStatus.value = { text: '✅ 已保存', type: 'success' }
-      setTimeout(() => { saveStatus.value = null }, 2000)
-    } else {
-      saveStatus.value = { text: '保存失败: ' + (data.error || ''), type: 'error' }
-    }
+    await apiClient.post('/api/file/write', { path: currentFile.value.path, content: editorContent.value })
+    originalContent.value = editorContent.value
+    hasChanges.value = false
+    saveStatus.value = { text: '✅ 已保存', type: 'success' }
+    setTimeout(() => { saveStatus.value = null }, 2000)
   } catch (err: any) {
     saveStatus.value = { text: '保存失败: ' + err.message, type: 'error' }
   }

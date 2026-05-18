@@ -105,6 +105,7 @@ export interface RemoteControlConfig {
     enabled: boolean
     botId: string
     webhook: string
+    appSecret: string
   }
   wechat: {
     enabled: boolean

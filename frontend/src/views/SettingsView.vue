@@ -4,7 +4,7 @@
         <el-tab-pane :label="t('basicSettings')" name="basic">
           <el-form label-position="top">
             <el-form-item :label="t('backendAddress')">
-              <el-input v-model="config.settings.backendPort" placeholder="17871" />
+              <el-input v-model="config.settings.backendPort" :placeholder="String(__BACKEND_PORT__)" />
             </el-form-item>
             <el-form-item :label="t('skillsDir')">
               <el-input v-model="config.settings.skillsDir" :placeholder="t('skillsDirPlaceholder')" />
@@ -227,7 +227,7 @@
 import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { EditPen, Delete, Plus } from '@element-plus/icons-vue'
-import { apiClient } from '@/utils/api-client'
+import { apiClient } from '../utils/api-client'
 
 const locales = {
   'zh-CN': {
@@ -398,7 +398,7 @@ const t = (key: string) => {
 
 const config = ref<AppConfig>({
   settings: {
-    backendPort: 17871,
+    backendPort: __BACKEND_PORT__,
     theme: 'light',
     language: 'zh-CN',
     activeModelId: '',
@@ -488,10 +488,10 @@ function applyTheme() {
 async function loadConfig() {
   try {
     const response = await apiClient.get('/api/config') as any
-    const data = response?.data?.config
+    const data = response?.data
     config.value = {
       settings: {
-        backendPort: data?.settings?.backendPort ?? 17871,
+        backendPort: data?.settings?.backendPort ?? __BACKEND_PORT__,
         theme: data?.settings?.theme ?? 'light',
         language: data?.settings?.language ?? 'zh-CN',
         activeModelId: data?.settings?.activeModelId ?? '',
@@ -509,9 +509,8 @@ async function loadConfig() {
 
 async function persistConfig(message?: string) {
   try {
-    const response = await apiClient.put('/api/config', config.value as any) as any
-    const displayMessage = response?.message || message || t('saveSuccess')
-    ElMessage.success(displayMessage)
+    const response = await apiClient.put('/api/config', config.value as unknown as Record<string, unknown>) as any
+    ElMessage.success(response.message || message || t('saveSuccess'))
   } catch (error: any) {
     ElMessage.error(String(error.message || error || t('saveFailed')))
   }
@@ -520,7 +519,7 @@ async function persistConfig(message?: string) {
 async function loadTokenStats() {
   try {
     const response = await apiClient.get('/api/token-stats') as any
-    if (response?.ok && response?.data) {
+    if (response?.data) {
       tokenStats.totalPrompt = response.data.totalPrompt || 0
       tokenStats.totalCompletion = response.data.totalCompletion || 0
       tokenStats.totalTokens = response.data.totalTokens || 0
@@ -533,16 +532,12 @@ async function loadTokenStats() {
 
 async function saveChatStorageDirectory() {
   try {
-    const response = await apiClient.put('/api/chat-history/config', {
-      userDataDir: chatStorageConfig.currentUserDataDir
-    } as any) as any
-
+    const response = await apiClient.put('/api/chat-history/config', { userDataDir: chatStorageConfig.currentUserDataDir }) as any
     const data = response?.data || {}
     chatStorageConfig.platform = String(data.platform || chatStorageConfig.platform || '')
     chatStorageConfig.defaultUserDataDir = String(data.defaultUserDataDir || chatStorageConfig.defaultUserDataDir || '')
     chatStorageConfig.currentUserDataDir = String(data.currentUserDataDir || chatStorageConfig.currentUserDataDir || '')
     config.value.settings.userDataDir = chatStorageConfig.currentUserDataDir
-
     ElMessage.success(t('dataDirectorySaved'))
   } catch (error: any) {
     ElMessage.error(String(error.message || error))

@@ -1,1 +1,14 @@
-[]
+[
+  {
+    "id": "lmem-5cebf88c-a29f-488d-bf3b-a24a1b43a526",
+    "content": "{\"location\":\"做什么\",\"name\":\"否有大文件\"}",
+    "type": "long",
+    "createdAt": 1779083068035,
+    "lastAccessedAt": 1779083068035,
+    "accessCount": 0,
+    "metadata": {
+      "type": "user_profile",
+      "updatedAt": 1779083068035
+    }
+  }
+]

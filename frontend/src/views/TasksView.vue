@@ -158,11 +158,10 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Loading as LoadingIcon } from '@element-plus/icons-vue'
+import { apiClient } from '../utils/api-client'
 
 const { t } = useI18n()
 const router = useRouter()
-
-const apiBase = ref('')
 
 interface ScheduledTask {
   id: string
@@ -205,11 +204,6 @@ const runningPlanCount = computed(() =>
   currentPlan.value.filter((step: any) => Boolean(step?.active) && !step?.completed).length
 )
 
-function buildApiUrl(path: string): string {
-  const normalizedPath = path.startsWith('/') ? path : `/${path}`
-  return `${apiBase.value}${normalizedPath}`
-}
-
 function formatInterval(ms?: number): string {
   if (!ms) return '-'
   const minutes = Math.round(ms / 60000)
@@ -227,11 +221,8 @@ function formatTime(ts?: number): string {
 async function loadScheduledTasks() {
   scheduledTasksLoading.value = true
   try {
-    const res = await fetch(buildApiUrl('/api/scheduled-tasks'))
-    const data = await res.json()
-    if (data.ok) {
-      scheduledTasks.value = data.tasks
-    }
+    const data = await apiClient.get('/api/scheduled-tasks') as any
+    scheduledTasks.value = data.tasks
   } catch (err) {
     console.error('加载定时任务失败:', err)
   } finally {
@@ -246,11 +237,8 @@ async function loadTaskLogs(taskId?: string) {
     if (taskId) {
       url += `?taskId=${taskId}`
     }
-    const res = await fetch(buildApiUrl(url))
-    const data = await res.json()
-    if (data.ok) {
-      taskLogs.value = data.logs
-    }
+    const data = await apiClient.get(url) as any
+    taskLogs.value = data.logs
   } catch (err) {
     console.error('加载任务日志失败:', err)
   } finally {
@@ -293,19 +281,12 @@ async function clearTaskLogs() {
   }
 
   try {
-    const res = await fetch(buildApiUrl('/api/scheduled-tasks'), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        action: 'clear_logs',
-        taskId: selectedTaskId.value
-      })
+    await apiClient.post('/api/scheduled-tasks', {
+      action: 'clear_logs',
+      taskId: selectedTaskId.value
     })
-    const data = await res.json()
-    if (data.ok) {
-      taskLogs.value = []
-      ElMessage.success(t('taskLogsCleared'))
-    }
+    taskLogs.value = []
+    ElMessage.success(t('taskLogsCleared'))
   } catch (err) {
     console.error('清空任务日志失败:', err)
     ElMessage.error(t('taskLogsClearFailed'))
@@ -372,26 +353,19 @@ function cancelEditTask() {
 async function saveScheduledTask() {
   if (!editingTask.value) return
   try {
-    const res = await fetch(buildApiUrl('/api/scheduled-tasks'), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        action: 'update',
-        id: editingTask.value.id,
-        updates: {
-          name: editingTask.value.name,
-          intervalMs: editingTask.value.intervalMs,
-          enabled: editingTask.value.enabled,
-          toolName: editingTask.value.toolName,
-          toolInput: editingTask.value.toolInput
-        }
-      })
+    await apiClient.post('/api/scheduled-tasks', {
+      action: 'update',
+      id: editingTask.value.id,
+      updates: {
+        name: editingTask.value.name,
+        intervalMs: editingTask.value.intervalMs,
+        enabled: editingTask.value.enabled,
+        toolName: editingTask.value.toolName,
+        toolInput: editingTask.value.toolInput
+      }
     })
-    const data = await res.json()
-    if (data.ok) {
-      editingTask.value = null
-      await loadScheduledTasks()
-    }
+    editingTask.value = null
+    await loadScheduledTasks()
   } catch (err) {
     console.error('保存任务失败:', err)
   }
@@ -400,15 +374,8 @@ async function saveScheduledTask() {
 async function toggleScheduledTask(id: string, enabled: boolean) {
   const action = enabled ? 'enable' : 'disable'
   try {
-    const res = await fetch(buildApiUrl('/api/scheduled-tasks'), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ action, id })
-    })
-    const data = await res.json()
-    if (data.ok) {
-      await loadScheduledTasks()
-    }
+    await apiClient.post('/api/scheduled-tasks', { action, id })
+    await loadScheduledTasks()
   } catch (err) {
     console.error('切换定时任务状态失败:', err)
   }
@@ -416,15 +383,8 @@ async function toggleScheduledTask(id: string, enabled: boolean) {
 
 async function deleteScheduledTask(id: string) {
   try {
-    const res = await fetch(buildApiUrl('/api/scheduled-tasks'), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ action: 'delete', id })
-    })
-    const data = await res.json()
-    if (data.ok) {
-      await loadScheduledTasks()
-    }
+    await apiClient.post('/api/scheduled-tasks', { action: 'delete', id })
+    await loadScheduledTasks()
   } catch (err) {
     console.error('删除定时任务失败:', err)
   }

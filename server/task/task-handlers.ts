@@ -6,7 +6,6 @@
 import { logger } from '../services/logger.service'
 import { toolRegistry } from '../tools/tool-registry'
 import { skillRegistry } from '../skills/skill-registry'
-import { taskPlanner } from '../planner/task-planner'
 import type { TaskHandler, TaskContext } from './task.types'
 
 /**

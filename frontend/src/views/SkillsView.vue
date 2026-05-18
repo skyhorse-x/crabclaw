@@ -136,10 +136,9 @@ import { ref, reactive, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { Plus, MoreFilled, CircleCheckFilled } from '@element-plus/icons-vue'
+import { apiClient } from '../utils/api-client'
 
 const { t } = useI18n()
-
-const apiBase = ref('')
 
 const skillMarket = ref<any[]>([])
 const skillLoading = ref(false)
@@ -201,7 +200,7 @@ interface AppConfig {
 
 const config = ref<AppConfig>({
   settings: {
-    backendPort: 17871,
+    backendPort: __BACKEND_PORT__,
     theme: "light",
     language: "zh-CN",
     activeModelId: "",
@@ -213,28 +212,17 @@ const config = ref<AppConfig>({
   skills: []
 })
 
-function buildApiUrl(path: string): string {
-  const normalizedPath = path.startsWith('/') ? path : `/${path}`
-  return `${apiBase.value}${normalizedPath}`
-}
-
 async function fetchSkillMarket(page: number = 1) {
   skillLoading.value = true
   try {
-    const res = await fetch(buildApiUrl(`/api/skill-market?page=${page}&pageSize=${skillPageSize.value}`))
-    const data = await res.json()
-    if (data.ok) {
-      skillMarket.value = Array.isArray(data.skills) ? data.skills : []
-      skillPagination.value = data.pagination || { total: 0, totalPages: 0, hasMore: false }
-      skillCurrentPage.value = page
-    } else {
-      skillMarket.value = []
-      ElMessage.error(data.error || t('skillLoadFailed'))
-    }
-  } catch (e) {
+    const data = await apiClient.get(`/api/skill-market?page=${page}&pageSize=${skillPageSize.value}`) as any
+    skillMarket.value = Array.isArray(data.skills) ? data.skills : []
+    skillPagination.value = data.pagination || { total: 0, totalPages: 0, hasMore: false }
+    skillCurrentPage.value = page
+  } catch (e: any) {
     console.error("Failed to fetch skill market:", e)
     skillMarket.value = []
-    ElMessage.error(t('networkError'))
+    ElMessage.error(e?.message || t('skillLoadFailed'))
   } finally {
     skillLoading.value = false
   }
@@ -251,21 +239,12 @@ function showSkillDetail(skill: any) {
 
 async function installSkill(skill: any) {
   try {
-    const res = await fetch(buildApiUrl('/api/skill-market/install'), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: skill.id })
-    })
-    const data = await res.json()
-    if (data.ok) {
-      ElMessage.success(data.message)
-      fetchSkillMarket(skillCurrentPage.value)
-      loadConfig()
-    } else {
-      ElMessage.error(data.error)
-    }
-  } catch (e) {
-    ElMessage.error(t('installFailed'))
+    const data = await apiClient.post('/api/skill-market/install', { id: skill.id }) as any
+    ElMessage.success(data.message)
+    fetchSkillMarket(skillCurrentPage.value)
+    loadConfig()
+  } catch (e: any) {
+    ElMessage.error(e?.message || t('installFailed'))
   }
 }
 
@@ -277,21 +256,12 @@ async function installSkillFromDetail() {
 
 async function uninstallSkill(skill: any) {
   try {
-    const res = await fetch(buildApiUrl('/api/skill-market/uninstall'), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: skill.id })
-    })
-    const data = await res.json()
-    if (data.ok) {
-      ElMessage.success(data.message)
-      fetchSkillMarket(skillCurrentPage.value)
-      loadConfig()
-    } else {
-      ElMessage.error(data.error)
-    }
-  } catch (e) {
-    ElMessage.error("卸载失败")
+    const data = await apiClient.post('/api/skill-market/uninstall', { id: skill.id }) as any
+    ElMessage.success(data.message)
+    fetchSkillMarket(skillCurrentPage.value)
+    loadConfig()
+  } catch (e: any) {
+    ElMessage.error(e?.message || "卸载失败")
   }
 }
 
@@ -326,13 +296,12 @@ async function createSkill() {
 
 async function loadConfig() {
   try {
-    const res = await fetch(buildApiUrl('/api/config'))
-    const result = await res.json()
+    const result = await apiClient.get('/api/config') as any
     const data = result?.data?.config
     if (data) {
       config.value = {
         settings: {
-          backendPort: data?.settings?.backendPort ?? 17871,
+          backendPort: data?.settings?.backendPort ?? __BACKEND_PORT__,
           theme: data?.settings?.theme ?? "light",
           language: data?.settings?.language ?? "zh-CN",
           activeModelId: data?.settings?.activeModelId ?? "",
@@ -351,12 +320,7 @@ async function loadConfig() {
 
 async function persistConfig(message = t('saveSuccess')) {
   try {
-    const res = await fetch(buildApiUrl('/api/config'), {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(config.value)
-    })
-    const result = await res.json()
+    const result = await apiClient.put('/api/config', config.value as unknown as Record<string, unknown>) as any
     const displayMessage = result?.message || message || t('saveSuccess')
     ElMessage.success(displayMessage)
   } catch (error: any) {

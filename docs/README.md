@@ -44,9 +44,15 @@
 
 | 文档 | 说明 |
 |------|------|
-| [部署指南](../DEPLOYMENT_GUIDE.md) | 生产环境部署步骤 |
-| [安全配置指南](../SECURITY_CONFIG_GUIDE.md) | 安全加固配置 |
-| [桥接使用指南](../BRIDGE_USAGE_GUIDE.md) | 桥接系统使用说明 |
+| [部署指南](DEPLOYMENT_GUIDE.md) | 生产环境部署步骤 |
+| [安全配置指南](SECURITY_CONFIG_GUIDE.md) | 安全加固配置 |
+| [桥接使用指南](BRIDGE_USAGE_GUIDE.md) | 桥接系统使用说明 |
+
+### 6. 📡 API 文档
+
+| 文档 | 说明 |
+|------|------|
+| [远程控制 API](REMOTE_CONTROL_API.md) | Telegram/QQ/飞书等远控接口、消息过滤规则、开发约束 |
 
 ---
 

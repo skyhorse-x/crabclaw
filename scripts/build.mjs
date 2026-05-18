@@ -11,6 +11,15 @@ import path from 'path'
 
 const distDir = path.resolve('dist/crabclaw')
 
+// 清理无平台后缀的旧版残留二进制（如 crabclaw-server、crabclaw-server.exe）
+for (const stale of ['crabclaw-server', 'crabclaw-server.exe']) {
+  const stalePath = path.join(distDir, stale)
+  if (fs.existsSync(stalePath)) {
+    fs.rmSync(stalePath)
+    console.log(`[build] 清理残留文件: ${stale}`)
+  }
+}
+
 // 5 个编译目标（与 Neutralino 命名风格对齐）
 const targets = [
   { label: 'win_x64',   target: 'bun-windows-x64',   ext: '.exe' },
@@ -64,15 +73,27 @@ echo [launcher] 等待后端就绪...
 setlocal enabledelayedexpansion
 set WAIT_COUNT=0
 :waitLoop
-if !WAIT_COUNT! gtr 20 (
+if !WAIT_COUNT! gtr 30 (
     echo [launcher] 后端启动超时，请检查日志
     pause
     exit /b 1
 )
 set /a WAIT_COUNT+=1
->nul 2>&1 powershell -Command "try { $r = Invoke-WebRequest -Uri 'http://127.0.0.1:17870/api/health' -TimeoutSec 2; if ($r.StatusCode -eq 200) { exit 0 } else { exit 1 } } catch { exit 1 }" && (
-    echo [launcher] 后端已就绪
-    goto :launch
+
+rem 优先用 curl（Windows 10 1803+ 内置），回退到 PowerShell
+where curl >nul 2>&1
+if %errorlevel% equ 0 (
+    curl -sf --connect-timeout 2 --max-time 3 "http://127.0.0.1:17870/api/health" >nul 2>&1
+    if %errorlevel% equ 0 (
+        echo [launcher] 后端已就绪
+        goto :launch
+    )
+) else (
+    powershell -NoProfile -NonInteractive -Command "try { $r = Invoke-WebRequest -Uri 'http://127.0.0.1:17870/api/health' -TimeoutSec 2 -UseBasicParsing; exit 0 } catch { exit 1 }" >nul 2>&1
+    if %errorlevel% equ 0 (
+        echo [launcher] 后端已就绪
+        goto :launch
+    )
 )
 >nul 2>&1 timeout /t 1 /nobreak
 goto :waitLoop
@@ -113,8 +134,8 @@ case "$ARCH" in
     ;;
 esac
 
-BACKEND="$DIR/crabclaw-server-${OS_LABEL}_${ARCH_LABEL}"
-NEUTRALINO="$DIR/crabclaw-${OS_LABEL}_${ARCH_LABEL}"
+BACKEND="$DIR/crabclaw-server-\${OS_LABEL}_\${ARCH_LABEL}"
+NEUTRALINO="$DIR/crabclaw-\${OS_LABEL}_\${ARCH_LABEL}"
 
 if [ ! -f "$BACKEND" ]; then
   echo "[launcher] 错误: 未找到后端程序 $BACKEND"
@@ -161,5 +182,52 @@ const shPath = path.join(distDir, 'start.sh')
 fs.writeFileSync(shPath, shContent, 'utf-8')
 fs.chmodSync(shPath, 0o755)
 console.log('[build] 已生成 start.sh')
+
+// 4. 生成 macOS .app bundle（双击即可启动，内部调用 start.sh）
+console.log('[build] 生成 macOS .app bundle...')
+
+const appBundle = path.join(distDir, 'crabclaw.app')
+const appMacOS = path.join(appBundle, 'Contents', 'MacOS')
+const appResources = path.join(appBundle, 'Contents', 'Resources')
+fs.mkdirSync(appMacOS, { recursive: true })
+fs.mkdirSync(appResources, { recursive: true })
+
+// Info.plist
+const plist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>
+  <string>crabclaw</string>
+  <key>CFBundleDisplayName</key>
+  <string>crabclaw</string>
+  <key>CFBundleIdentifier</key>
+  <string>com.study.crabclaw</string>
+  <key>CFBundleVersion</key>
+  <string>2.0.0</string>
+  <key>CFBundleExecutable</key>
+  <string>launcher</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>10.15</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+</dict>
+</plist>`
+fs.writeFileSync(path.join(appBundle, 'Contents', 'Info.plist'), plist, 'utf-8')
+
+// launcher 脚本：从 .app/Contents/MacOS 找到 dist/crabclaw 目录运行 start.sh
+const launcherSh = `#!/bin/bash
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BUNDLE_DIR="$(cd "\${SCRIPT_DIR}/../../.." && pwd)"
+exec "\${BUNDLE_DIR}/start.sh"
+`
+const launcherPath = path.join(appMacOS, 'launcher')
+fs.writeFileSync(launcherPath, launcherSh, 'utf-8')
+fs.chmodSync(launcherPath, 0o755)
+
+console.log(`[build] 已生成 ${appBundle}`)
+console.log('[build] macOS 用户可双击 crabclaw.app 启动，也可直接运行 start.sh')
 
 console.log('\n[build] 全部编译完成')

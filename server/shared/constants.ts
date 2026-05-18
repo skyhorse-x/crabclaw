@@ -40,14 +40,14 @@ export const PATHS = {
   BRIDGE_PATH: path.join(SERVER_ROOT, 'bridge', 'action-runner.mjs'),
   MCP_CONFIG_PATH: path.join(SERVER_ROOT, 'mcp-config.json'),
   WORKSPACE_DIR: path.join(PROJECT_ROOT, 'workspace'),
-  PORT_FILE: path.join(os.tmpdir(), '.crabclaw-port')
+  PORT_FILE: path.join(SERVER_ROOT, '.port')
 } as const
 
 /**
  * 默认配置
  */
 export const DEFAULTS = {
-  PORT: 17871,
+  PORT: 17870,
   THEME: 'light',
   LANGUAGE: 'zh-CN',
   MODEL_PROVIDER: 'openai',
@@ -57,7 +57,7 @@ export const DEFAULTS = {
 
 export const DEFAULT_CONFIG = {
   settings: {
-    backendPort: 17871,
+    backendPort: 17870,
     theme: 'light',
     language: 'zh-CN',
     activeModelId: '',

@@ -1,116 +1,270 @@
 # Desktop Agent Studio — AI Agent 设计文档
 
+> **本文件是最高优先级约束文件。** 任何代码修改必须先阅读本文件，违反任何规则视为任务失败。
+
 ## 项目简介
 
-你是一个专业的工程师，负责开发和修复：Desktop Agent Studio（CrabClaw / HelixAgent）是一个**专业级跨平台桌面 AI Agent 平台**，采用 **Neutralinojs（桌面壳）+ Bun（后端运行时）+ Vue 3（前端）** 的全栈架构。
+Desktop Agent Studio（CrabClaw）是一个**专业级跨平台桌面 AI Agent 平台**，采用 **Neutralinojs（桌面壳）+ Bun（后端运行时）+ Vue 3（前端）** 的全栈架构。
 
 ### 技术栈
 
-| 层级         | 技术选型                            | 说明                            |
-| :--------- | :------------------------------ | :---------------------------- |
-| **桌面壳**    | Neutralinojs v6.5.0             | 轻量级跨平台桌面框架，打包后体积小             |
-| **后端运行时**  | Bun                             | 高性能 JS/TS 运行时，同时作为包管理器、测试运行器  |
-| **后端语言**   | TypeScript (ES2022/ESNext)      | 严格模式，路径别名（`@/*` → `server/*`） |
-| **前端框架**   | Vue 3 + Vite 7                  | Composition API               |
-| **UI 组件库** | Element Plus 2.x                | 中后台组件库                        |
-| **路由**     | Vue Router 5                    | 前端路由                          |
-| **国际化**    | vue-i18n 11                     | 多语言支持                         |
-| **MCP 协议** | @modelcontextprotocol/sdk v1.27 | 标准模型上下文协议                     |
-| **数据库**    | Bun:SQLite                      | 内置 SQLite 数据库                 |
-| **测试**     | Vitest 4                        | 单元测试                          |
-| **代码规范**   | ESLint + Prettier               | TypeScript 严格检查               |
+| 层级 | 技术选型 | 说明 |
+| :--- | :--- | :--- |
+| **桌面壳** | Neutralinojs v6.5.0 | 轻量级跨平台桌面框架 |
+| **后端运行时** | Bun | 高性能 JS/TS 运行时 |
+| **后端语言** | TypeScript (ES2022/ESNext) | 严格模式，路径别名 `@/*` → `server/*` |
+| **前端框架** | Vue 3 + Vite 7 | Composition API + `<script setup lang="ts">` |
+| **UI 组件库** | Element Plus 2.x | 中后台组件库 |
+| **路由** | Vue Router 5 | 前端路由 |
+| **国际化** | vue-i18n 11 | 多语言，所有用户可见文本必须通过 `t()` 引用 |
+| **MCP 协议** | @modelcontextprotocol/sdk v1.27 | 标准模型上下文协议 |
+| **数据库** | Bun:SQLite（`server/data.db`） | 内置 SQLite，统一数据库文件 |
+| **测试** | Vitest 4 | 单元测试，命令：`bun test` |
 
-### 核心架构
-
-项目采用**四层架构**设计：
+### 核心架构（四层）
 
 ```
 ┌─────────────────────────────────────┐
 │  Presentation Layer（展示层）        │
 │  Vue 3 + Element Plus               │
-│  ChatView | AgentsView | TasksView  │
+│  ChatView | ControlView | TasksView │
 ├─────────────────────────────────────┤
 │  Service Layer（服务层）             │
-│  Agent Service | Task Service       │
-│  Skill Service | LLM Service        │
+│  UnifiedMessage | TaskScheduler     │
+│  MCP | Config | RemoteControl       │
 ├─────────────────────────────────────┤
 │  Core Layer（核心层）               │
-│  Task Planner | Tool Registry       │
-│  Memory Manager | Bridge            │
+│  ChatHandler | RemoteAgent          │
+│  Bridge | Encryption                │
 ├─────────────────────────────────────┤
-│  Learning Layer（学习层）           │
-│  Experience Graph | Pattern Library │
-│  Strategy Optimizer | Reflection    │
+│  Data Layer（数据层）               │
+│  SQLite (data.db) | app-config.json │
 └─────────────────────────────────────┘
 ```
 
-### 核心功能模块
+---
 
-| 模块           | 说明                                                                          |
-| :----------- | :-------------------------------------------------------------------------- |
-| **Agent 系统** | 5 种 Agent 类型：Base（基类）、MCP（工具执行）、System（协调）、Intelligent MCP（智能选择）、Remote（远程） |
-| **LLM 网关**   | 统一 API 层，支持 OpenAI/Anthropic/Ollama，带路由、限流、成本估算                             |
-| **记忆系统**     | 双模记忆：短期（对话上下文）+ 长期（SQLite 持久化 + 语义搜索）                                       |
-| **学习系统**     | 4 大能力：经验图谱、模式库、策略优化器、深度反思                                                   |
-| **MCP 协议**   | 集成 6 个 MCP 服务器：filesystem、memory、shell、fetch、chrome-devtools、github         |
-| **技能系统**     | JSON 定义可复用技能，支持热加载、步骤编排                                                     |
-| **任务调度**     | 定时/周期任务，基于 Bun:SQLite 持久化                                                   |
-| **插件系统**     | 模块化热插拔，自定义路由注册                                                              |
+## 文件结构
 
-### API 路由一览
+```
+crabclaw/
+├── server/
+│   ├── agents/               # Agent 实现
+│   │   ├── remote.agent.ts   # 远程控制 Agent（Telegram 等）
+│   │   └── ...
+│   ├── handlers/             # 请求处理器
+│   │   ├── chat.handler.ts   # 聊天主逻辑（最复杂）
+│   │   └── chat-progress.ts  # MCP 工具进度消息
+│   ├── routes/               # API 路由（每模块一文件）
+│   │   ├── remote-control.routes.ts
+│   │   ├── config.routes.ts
+│   │   └── ...
+│   ├── services/             # 业务服务
+│   │   ├── config-database.service.ts  # SQLite 统一数据库
+│   │   ├── unified-message.service.ts  # 多平台消息发送
+│   │   ├── remote-control-log.service.ts
+│   │   └── ...
+│   ├── shared/
+│   │   └── constants.ts      # 路径/默认值/系统提示词
+│   └── data/
+│       ├── app-config.json   # 模型/技能/任务配置（JSON）
+│       └── skills/           # 技能目录
+├── frontend/                 # Vue 3 前端
+│   └── src/views/
+│       ├── ControlView.vue   # 远程控制面板
+│       └── ...
+├── workspace/                # 用户项目默认保存目录
+├── docs/                     # 技术文档
+│   ├── REMOTE_CONTROL_API.md # 远程控制 API 文档
+│   └── DEPLOYMENT_GUIDE.md
+└── AGENTS.md                 # 本文件（最高优先级）
+```
 
-统一前缀匹配路由，共计 **16+ 个路由模块**：
+---
 
-| 路由前缀                     | 功能              |
-| :----------------------- | :-------------- |
-| `/health`, `/api/health` | 健康检查            |
-| `/status`, `/api/status` | 状态检查            |
-| `/api/mcp`               | MCP 工具管理        |
-| `/api/system`            | 系统管理            |
-| `/api/config`            | 配置管理            |
-| `/api/agents`            | Agent CRUD      |
-| `/api/chat-history`      | 聊天历史 + Token 统计 |
-| `/api/pipelines`         | 流水线管理           |
-| `/api/skill-market`      | 技能市场            |
-| `/api/bridge`            | 桥接系统            |
-| `/api/auth`              | 认证              |
-| `/api/remote-control`    | 远程控制            |
-| `/api/scheduled-tasks`   | 定时任务            |
-| `/api/file`              | 文件编辑器           |
-| 插件路由                     | 动态注册            |
+## API 路由总览
 
-***
+服务器默认端口 **17870**（`server/.env` 中 `PORT=17870`）。
+
+| 路由前缀 | 文件 | 功能 |
+| :--- | :--- | :--- |
+| `/health`, `/api/health` | health.routes.ts | 健康检查 |
+| `/api/config` | config.routes.ts | 全局配置读写 |
+| `/api/chat-history` | chat-history.routes.ts | 聊天历史 + Token 统计 |
+| `/api/mcp` | mcp.routes.ts | MCP 工具管理 |
+| `/api/agents` | agent.routes.ts | Agent CRUD |
+| `/api/skill-market` | skill-market.routes.ts | 技能市场 |
+| `/api/bridge` | bridge.routes.ts | 桌面自动化桥接 |
+| `/api/auth` | auth.routes.ts | 认证 |
+| `/api/remote-control` | remote-control.routes.ts | 远程控制（见详细文档） |
+| `/api/scheduled-tasks` | scheduled-tasks.routes.ts | 定时任务 |
+| `/api/file` | file-editor.routes.ts | 文件读写 |
+| `/api/system` | system.routes.ts | 系统状态 |
+| `/api/pipelines` | pipeline.routes.ts | 流水线编排 |
+
+> 详细的远程控制 API 见 [docs/REMOTE_CONTROL_API.md](docs/REMOTE_CONTROL_API.md)
+
+---
+
+## Agent 通信协议（Agent Envelope JSON）
+
+每次 LLM 回复**必须**是一个合法的 JSON 对象：
+
+```json
+{ "type": "message | plan | action | actions | done | error", "data": {} }
+```
+
+| type | 用途 |
+| :--- | :--- |
+| `message` | 直接文字回复，无需工具 |
+| `plan` | 复杂任务拆解为步骤列表 |
+| `action` | 调用单个 MCP 工具 |
+| `actions` | 批量顺序调用 MCP 工具 |
+| `done` | 任务完成，返回最终结果 |
+| `error` | 执行失败，返回错误信息 |
+
+### action 格式
+
+```json
+{
+  "type": "action",
+  "data": {
+    "tool": "mcp",
+    "name": "chrome-devtools/new_page",
+    "input": { "url": "https://www.example.com" }
+  }
+}
+```
+
+---
+
+## MCP 工具体系
+
+### 可用 MCP 服务器
+
+| 服务器 | 主要工具 | 说明 |
+| :--- | :--- | :--- |
+| `filesystem` | read_file, write_file, create_directory | 文件系统操作 |
+| `shell` | shell_execute | 执行 Shell 命令（跨平台） |
+| `fetch` | fetch_readable, fetch_html | 抓取网页/HTTP 请求 |
+| `memory` | search_nodes, create_entities | 知识图谱长期记忆 |
+| `chrome-devtools` | new_page, navigate_page, select_page, take_snapshot, click, fill | 浏览器控制 |
+| `github` | — | GitHub API（需配置 token） |
+
+### 浏览器操作规则（不可违反）
+
+1. **打开网站** → 直接 `new_page {url}`，**禁止**先打开百度再搜索
+2. **已打开的页面** → 先 `list_pages` 确认，用 `select_page` 切换（`pageId` 必须是**数字**，不能是字符串）
+3. **`evaluate_script`** → 必须传 `function` 字段（箭头函数体）
+4. **导航超时**（"Navigation timeout"）→ 属于正常现象，立即输出 `type="done"`，**禁止**重试
+5. **`new_page` 返回页面列表**（"## Pages ..."）→ 立即输出 `type="done"`，不再继续操作
+6. **每次对话都是全新任务** → 不要参考上一轮的浏览器操作历史
+
+### 跨平台 Shell 规范
+
+| 操作 | macOS / Linux | Windows |
+| :-- | :--- | :--- |
+| 内存 | `vm_stat` / `free -m` | `systeminfo` |
+| CPU | `uptime` | `wmic cpu get loadpercentage` |
+| 磁盘 | `df -h` | `wmic logicaldisk get size,freespace` |
+| 进程 | `ps aux` | `tasklist` |
+
+### 路径规范
+
+| 场景 | 路径 |
+| :--- | :--- |
+| 用户创建项目 | `workspace/<项目名>/` |
+| 未指定路径的单文件 | `workspace/` |
+| 用户明确说"桌面" | `~/Desktop/` |
+
+- 所有路径使用**绝对路径**，禁止 `~` 或 `$HOME`
+
+---
+
+## 执行约束
+
+- 简单问题 → 直接 `message`，禁止调工具
+- 单步能完成 → 禁止拆多步骤
+- 工具失败后 → 禁止重复调用相同工具
+- 未通过工具获取的数据 → 禁止编造
+
+---
+
+## 远程控制模块关键约束
+
+> 修改 `remote-control.routes.ts` 或 `remote.agent.ts` 时必须遵守。
+
+### Telegram 轮询规则
+
+1. **禁止在 `fetch()` 中使用 `keepalive: true`** — 长轮询（timeout=30s）与 Bun 的连接池不兼容，会导致 404
+2. **`parse_mode` 必须使用 `MarkdownV2`** — 转义函数（`sanitizeRemoteText`）用的是 MarkdownV2 规则，必须匹配
+3. **404 处理** — 先用 `getMe` 验证 token，token 有效则视为临时网络错误重试，不得直接设 `telegramPermanentError = true`
+4. **轮询调度** — 统一通过 `scheduleNextPolling(hasError, nextOffset)` 调度，**禁止**用裸 `setTimeout(() => fetchTelegramUpdates(offset), 100)` 绕过（会导致调度链断裂）
+5. **代理配置缓存** — `getProxyConfig()` 已有 30 秒内存缓存，禁止在轮询热路径中直接读 SQLite
+
+### 消息过滤规则
+
+- **私聊消息**（`chat.type === 'private'`）→ 直接放行，无论发送者是谁
+- **群组消息**（`group / supergroup / channel`）→ 只接受配置的 `chatId` 对应的群，其他群忽略
+- **chatId 字段语义**：用于"主动推送"的默认目标 + 群组消息白名单，**不用于过滤私聊**
+
+### 回复规则
+
+- 回复发给**消息来源的 chatId**（`sender.split(':')[0]`），不固定用配置的 chatId
+- `chatId` 配置为空时，`sendTelegramMessage()` 直接返回 false，不发送
+
+### 文本转义
+
+`sanitizeRemoteText()` 在 `remote.agent.ts` 中对 Telegram 回复做 MarkdownV2 转义：
+```
+/([_*[\]()~`>#+\-=|{}.!])/g → \$1
+```
+发送时必须对应使用 `parse_mode: 'MarkdownV2'`，否则反斜杠会直接显示。
+
+---
+
+## 数据库约束
+
+- 统一数据库文件：`server/data.db`（由 `getUnifiedDbPath()` 确定）
+- Remote Control 配置存在 `remote_control_config` 表（id=1 单行）
+- App 配置（模型/技能/任务）存在 `config` 表，key=`app_config`，value 为 JSON 字符串
+- 聊天记录存在 `conversations` + `messages` 表
+- **禁止**在 `app-config.json` 文件中存储运行时状态，该文件仅作历史兼容
+
+---
+
+## 模型配置
+
+在 `server/data/app-config.json` 的 `models` 数组中配置：
+
+```json
+{
+  "id": "my-model",
+  "name": "模型显示名",
+  "provider": "openrouter | bytedance | custom | zhipu",
+  "modelName": "模型 API 名称",
+  "apiBaseUrl": "https://...",
+  "apiKeyEncrypted": "加密后的 Key（由前端加密存储）"
+}
+```
+
+`settings.activeModelId` 指定当前激活的模型 ID。
+
+---
 
 ## 多角色代理系统
 
-执行开发任务时，5 个角色按流水线顺序激活。每个角色有独立的工作范围和输出标准，**严禁越界代劳**。
-
-### 激活条件
-
-| 场景           | 行为                           |
-| :----------- | :--------------------------- |
-| 简单问答（无需代码改动） | 跳过所有角色，直接 `message` 回复       |
-| 单文件/单函数修改    | 跳过产品经理和UI，直接 前端/后端工程师 → 审查专家 |
-| 跨文件/新功能开发    | 5 角色全流水线激活                   |
+执行开发任务时，5 个角色按流水线顺序激活，**严禁越界代劳**。
 
 ```
-[简单问答] → 直接回复
+[简单问答]  → 直接回复
 [单文件修改] → 工程师(实现) → 审查专家(验收)
-[新功能开发] → 产品经理(规划) → UI设计师(设计) → 前端工程师(实现) → 后端工程师(实现) → 代码审查专家(验收)
+[新功能开发] → 产品经理 → UI设计师 → 前端工程师 → 后端工程师 → 代码审查专家
 ```
-
-***
 
 ### 产品经理
 
 **职责**：需求分析 → 任务拆解 → 输出执行计划
-
-**工作规范**：
-
-- 分析用户需求的真实意图，识别隐藏需求
-- 将复杂需求拆解为独立可执行的最小任务单元
-- 每个任务单元必须有明确的**完成标准**（AC）
-- 标记任务的前置依赖关系
 
 **输出格式**：
 
@@ -122,316 +276,119 @@
 - 前置依赖：无 / 任务 X
 ```
 
-**禁止行为**：
-
-- 禁止跳过该角色直接开始写代码
-- 禁止输出模糊的"优化/改进"类无验收标准的需求
-
-***
+**禁止**：跳过该角色直接写代码；输出无验收标准的模糊需求。
 
 ### UI 设计师
 
 **职责**：界面设计 → 交互确认 → 输出设计规范
 
-**工作规范**：
-
-- 基于产品经理的任务计划，确定每个界面元素的尺寸、颜色、间距、交互行为
-- 复用项目中已有的 Element Plus 组件和样式约定，不引入新设计体系
-- 确保设计符合项目的视觉一致性（主题色、字号、圆角等）
-
-**输出说明**：
-
-- 如果是纯后端任务，该角色直接 pass
-- 如果是前端改动，输出改动涉及的组件名称和样式变量
-
-***
+- 复用已有 Element Plus 组件，不引入新设计体系
+- 纯后端任务直接 pass
 
 ### 前端工程师
-
-**职责**：Vue 3 组件实现 → 响应式布局 → API 对接
 
 **技术约束**：
 
 - 框架：Vue 3 Composition API + `<script setup lang="ts">`
-- 组件库：Element Plus 2.x
-- 图标库：`@element-plus/icons-vue`
-- 样式方案：`<style scoped>` 局部样式
+- 组件库：Element Plus 2.x，图标：`@element-plus/icons-vue`
+- 样式：`<style scoped>` 局部样式，禁止内联 `style`
 - 国际化：所有用户可见文本必须通过 `t()` 函数引用
-
-**代码标准**：
-
-- 模板中禁止内联 `style`，统一使用 class 绑定
 - `v-for` 必须提供 `:key`
-- 所有异步操作必须有错误处理（`try/catch` 或 `.catch()`）
-- 禁止在 `watch` 中写空函数体
+- 所有异步操作必须有错误处理
 - 禁止使用 `document.execCommand`（已废弃）
-
-***
 
 ### 后端工程师
 
-**职责**：API 实现 → 业务逻辑 → 数据持久化
-
 **技术约束**：
 
-- 运行时：Bun
-- 语言：TypeScript（严格模式）
-- HTTP 响应必须使用 `shared/utils/http.util.ts` 中的 `json()`/`successResponse()`/`errorResponse()`
-- 路径处理必须使用 `path.join()`，禁止字符串拼接
-
-**代码标准**：
-
+- 运行时：Bun；语言：TypeScript 严格模式
+- HTTP 响应使用 `shared/utils/http.util.ts` 的工具函数
+- 路径处理使用 `path.join()`，**禁止**字符串拼接
 - 每个新 API 必须注册到 `server/routes/index.ts`
-- 请求 body 解析必须使用 `http.util.ts` 的 `readJsonBody()`
-- ID 生成必须使用 `common.util.ts` 的 `createId()`
-- 延迟等待必须使用 `common.util.ts` 的 `sleep()`
-- 禁止在 catch 块中写空逻辑
-
-***
+- ID 生成使用 `common.util.ts` 的 `createId()`
+- **禁止**在 catch 块中写空逻辑
 
 ### 代码审查专家
 
-**职责**：改动审计 → 质量验收 → 输出审查报告
+逐项检查，**有一项不通过则驳回**：
 
-审查严格按照 **P0-P5 审查维度表**（见"代码审查规范"章节）逐项执行，重点关注：
-
-1. 改动是否超出任务范围，有无顺手修改的无关代码
+1. 改动是否超出任务范围
 2. 是否有 `@ts-nocheck`、`@ts-ignore`、`as any` 新增
-3. 每个 `await` 是否有对应的 `try/catch` 或 `.catch()`
-4. 是否使用 `path.join()` 而非字符串模板
+3. 每个 `await` 是否有 `try/catch` 或 `.catch()`
+4. 是否使用 `path.join()` 而非字符串拼接
 5. 是否复用已有公共工具而非重新实现
 6. 前端请求路径/参数/响应与后端是否一致
 7. 是否有未被引用的变量、函数、导入
 
-**有一项不通过则驳回修改，打回给对应工程师修复。**
+---
 
-***
-
-## 严格模式规则
-
-以下规则对所有角色具有最高优先级，违反任何一条视为任务失败。
+## 严格模式规则（最高优先级）
 
 ### 零兜底代码
 
-- 禁止写入任何形式的**兜底/占位/实例代码**：空函数、TODO 注释、占位 console.log、mock 数据、默认返回值
-- 禁止使用 `// TODO`、`// FIXME`、`// 后续优化` 等延迟承诺标签
-- 禁止在 `catch` 块中写 `// do nothing` 或空语句
+- 禁止空函数、TODO 注释、占位 console.log、mock 数据
+- 禁止 `// TODO`、`// FIXME`、`// 后续优化`
+- 禁止 `catch` 块中写 `// do nothing` 或空语句
 
 ### 零假设原则
 
 - 禁止猜测 API 响应结构 — 必须先查看后端实际返回格式
-- 禁止猜测函数行为 — 必须先阅读函数定义和调用方
-- 禁止猜测类型定义 — 必须先查看 `shared/types/` 或组件 props 定义
+- 禁止猜测函数行为 — 必须先阅读函数定义
+- 禁止猜测类型定义 — 必须先查看类型声明
 
 ### 零复制粘贴
 
-- 禁止复制一段代码后仅做微小改动（如改个变量名）— 应提取为共享函数
-- 发现已有功能重复时，必须优先复用，不得新增重复实现
+- 禁止复制代码后仅做微小改动 — 应提取为共享函数
+- 发现功能重复时，必须优先复用
 
-***
+---
 
 ## 精准代码修改规范
 
 ### 先阅读，后修改
 
-- **修改任何文件前，必须先阅读该文件的全部内容**
-- **阅读相邻文件** — 改一个函数前，先看它被哪些地方调用
-- **确认调用链无副作用后再动手**
+- **修改任何文件前，必须先阅读该文件全部内容**
+- 阅读相邻文件 — 改一个函数前，先看被哪些地方调用
+- 确认调用链无副作用后再动手
 
 ### 最小修改范围
 
-- **只修改目标行，不碰无关代码** — 不改缩进、引号、分号、空行
-- **禁止"顺手优化"** — 不重构、不重命名、不调整风格
-- **禁止"顺便修复"** — 发现其他问题单独记录，不混在本次改动中
-- 命名风格（camelCase / PascalCase / snake\_case）沿用原有约定
-- 已有导入语句即使未使用也不删除
+- **只修改目标行，不碰无关代码**
+- 禁止"顺手优化" — 不重构、不重命名、不调整风格
+- 禁止"顺便修复" — 发现其他问题单独记录
 
 ### 不动注释
 
 - 禁止添加任何注释（包括 TODO、说明、标记）
 - 禁止删除或修改已有注释
 
-### 精准定位
-
-- 使用搜索工具精确找到目标行号
-- 确认上下文后再修改，一次只改一个逻辑块
-
-### 修改后验证
-
-每次修改完成按以下顺序执行：
+### 修改后验证顺序
 
 ```
-① 目标一致性审查 → ② Diff 审查 → ③ 类型检查 → ④ 测试运行 → ⑤ 构建验证
+① 目标一致性审查 → ② Diff 审查 → ③ 类型检查（npx tsc --noEmit）
+→ ④ 测试运行（bun test）→ ⑤ 前端构建（bun run frontend:build）
 ```
-
-**① 目标一致性审查**：回读被修改的文件，逐行确认修改内容是否完整覆盖了修复目标。如果发现遗漏或偏差，立即补充修复，直到修改内容与需求完全一致为止。在确认一致之前，不允许进入下一步验证。
-
-**② Diff 审查**：确认修改范围没有超出任务要求（禁止顺手修复无关代码），没有引入空函数、TODO 注释、mock 数据等兜底代码。
-
-**③ TypeScript 类型检查必须通过**（`npx tsc --noEmit`），零错误零警告。
-**④ 所有测试必须通过**（`bun test`），不能跳过或忽略失败项。
-**⑤ 前端构建必须通过**（`bun run frontend:build`），零错误。
 
 #### 前后端联调检查
 
-当修改同时涉及前端和后端时，额外检查：
+当修改同时涉及前后端时：
 
 1. API URL 路径与后端路由前缀完全匹配
 2. 前端传参与后端期望的参数名/类型一致
 3. 后端返回结构与前端解析结构一致
 4. WebSocket 事件名和 payload 结构前后端一致
 
-***
+---
 
 ## 代码审查规范
 
-审查由内置 `code-review` 技能驱动，在**代码审查专家**角色输出最终报告。
-
 ### 审查维度与优先级
 
-| 级别     | 维度    | 核心检查项                        | 违规标准                          |
-| :----- | :---- | :--------------------------- | :---------------------------- |
-| **P0** | 架构与设计 | 单一职责、模块边界、循环依赖               | 文件超 1000 行含多职责，或显式循环依赖        |
-| **P1** | 精简与去重 | 功能重复实现、冗余包装函数、死代码            | 同一功能在 ≥3 个文件中各自实现             |
-| **P2** | 命名一致性 | 同一概念统一命名、命名准确反映行为            | 同一概念有 ≥3 种不同命名                |
-| **P3** | 类型安全  | `@ts-nocheck` 清理、`as any` 消除 | 存在 `@ts-nocheck` 或多个 `as any` |
-| **P4** | 错误处理  | 未捕获 Promise、无兜底逻辑            | 存在未 catch 的异步调用               |
-| **P5** | 性能与安全 | 敏感信息日志、路径穿越                  | API Key 输出到日志                 |
-
-### 审查输出模板
-
-```markdown
-## [P级别] 问题类别 — 文件名
-
-### 问题描述
-（1-2 句话说明问题及具体位置）
-
-### 风险等级
-P0 ~ P5
-
-### 改进建议
-（具体可执行的操作，必要时附带代码示例）
-
-### 预期收益
-（量化：如"消除 3 处重复实现，减少约 40 行代码"）
-```
-
-> 完整审查系统提示词见 `server/data/skills/code-review/SKILL.md`
-
-***
-
-## Agent 通信协议
-
-每次 LLM 回复必须是一个合法 JSON 对象：
-
-```json
-{ "type": "message | plan | action | actions | done | error", "data": {} }
-```
-
-### 响应类型
-
-| type                 | 用途                 |
-| :------------------- | :----------------- |
-| `message`            | 直接文字回复，无需工具        |
-| `plan`               | 复杂任务拆解为步骤列表        |
-| `action` / `actions` | 调用 MCP 工具（单个/批量顺序） |
-| `done`               | 任务完成，返回最终结果        |
-| `error`              | 执行失败，返回错误信息        |
-
-***
-
-## 执行约束
-
-- 简单问题 → 直接 `message`，禁止调工具
-- 单步能完成 → 禁止拆多步骤
-- 工具失败后 → 禁止重复调用相同工具
-- 未通过工具获取的数据 → 禁止编造
-
-***
-
-## MCP 工具体系
-
-### 可用 MCP 服务器
-
-| 服务器               | 能力                                                |
-| :---------------- | :------------------------------------------------ |
-| `filesystem`      | 读写文件、创建目录、搜索文件                                    |
-| `shell`           | 执行 Shell 命令（跨平台）                                  |
-| `fetch`           | 抓取网页内容、HTTP 请求                                    |
-| `memory`          | 知识图谱读写（长期记忆）                                      |
-| `chrome-devtools` | 浏览器控制：打开页面、截图、点击、输入、执行脚本                          |
-| `github`          | GitHub API 操作（需配置 `GITHUB_PERSONAL_ACCESS_TOKEN`） |
-
-### 工具调用格式
-
-```json
-{
-  "type": "action",
-  "data": {
-    "tool": "chrome-devtools",
-    "name": "new_page",
-    "input": { "url": "https://www.example.com" }
-  }
-}
-```
-
-### 路径规范
-
-| 场景        | 路径                 |
-| :-------- | :----------------- |
-| 用户创建项目    | `workspace/<项目名>/` |
-| 未指定路径的单文件 | `workspace/`       |
-| 用户明确说"桌面" | `~/Desktop/`       |
-
-- 所有路径使用绝对路径，禁止 `~` 或 `$HOME`
-
-### 浏览器操作规则
-
-1. **打开网站** — 直接 `new_page`，禁止绕道搜索
-2. **已打开的页面** — 先 `list_pages` 确认，用 `select_page` 切换
-3. **`evaluate_script`** — 必须传 `function` 字段（箭头函数）
-
-### 跨平台 Shell 规范
-
-| 操作  | macOS / Linux         | Windows                               |
-| :-- | :-------------------- | :------------------------------------ |
-| 内存  | `vm_stat` / `free -m` | `systeminfo`                          |
-| CPU | `uptime`              | `wmic cpu get loadpercentage`         |
-| 磁盘  | `df -h`               | `wmic logicaldisk get size,freespace` |
-| 进程  | `ps aux`              | `tasklist`                            |
-
-***
-
-## 文件结构
-
-```
-crabclaw/
-├── server/
-│   ├── handlers/             # 请求处理器（chat、system）
-│   ├── routes/               # API 路由（agent、mcp、config 等）
-│   ├── services/             # 业务服务（MCP、配置、加密等）
-│   ├── shared/               # 共享常量和类型
-│   └── data/                 # 配置文件和技能
-├── frontend/                 # Vue 3 前端
-├── workspace/                # 用户项目默认保存目录
-└── AGENT.md                  # 本文件
-```
-
-***
-
-## 模型配置
-
-在 `server/data/app-config.json` 的 `models` 数组中配置：
-
-```json
-{
-  "id": "my-model",
-  "name": "模型显示名",
-  "provider": "openrouter | bytedance | custom",
-  "modelName": "模型 API 名称",
-  "apiBaseUrl": "https://...",
-  "apiKeyEncrypted": "加密后的 Key"
-}
-```
-
-`settings.activeModelId` 指定当前激活的模型。
+| 级别 | 维度 | 核心检查项 | 违规标准 |
+| :--- | :--- | :--- | :--- |
+| **P0** | 架构与设计 | 单一职责、模块边界、循环依赖 | 文件超 1000 行含多职责，或显式循环依赖 |
+| **P1** | 精简与去重 | 功能重复实现、冗余包装函数、死代码 | 同一功能在 ≥3 个文件中各自实现 |
+| **P2** | 命名一致性 | 同一概念统一命名 | 同一概念有 ≥3 种不同命名 |
+| **P3** | 类型安全 | `@ts-nocheck` 清理、`as any` 消除 | 存在 `@ts-nocheck` 或多个 `as any` |
+| **P4** | 错误处理 | 未捕获 Promise、无兜底逻辑 | 存在未 catch 的异步调用 |
+| **P5** | 性能与安全 | 敏感信息日志、路径穿越 | API Key 输出到日志 |

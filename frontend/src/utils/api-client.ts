@@ -3,14 +3,14 @@
  * 统一处理请求错误、认证失败、重试等
  */
 
-import { errorHandler, ErrorType } from './error-handler'
+import { errorHandler } from './error-handler'
+import { useApiBase } from '../composables/useApiBase'
 
-// 基础配置
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:17871'
 const TIMEOUT = 30000 // 30 秒超时
 
+const { apiBase } = useApiBase()
+
 interface ApiClientOptions {
-  baseURL?: string
   timeout?: number
 }
 
@@ -37,12 +37,10 @@ function fetchWithTimeout(url: string, options: RequestInit = {}, timeout: numbe
  * API 请求类
  */
 export class ApiClient {
-  private baseURL: string
   private token: string | null
   private refreshTokenPromise: Promise<void> | null
 
-  constructor(options: ApiClientOptions = {}) {
-    this.baseURL = options.baseURL || BASE_URL
+  constructor(_options: ApiClientOptions = {}) {
     this.token = null
     this.refreshTokenPromise = null
   }
@@ -62,13 +60,13 @@ export class ApiClient {
   }
 
   /**
-   * 构建完整 URL
+   * 构建完整 URL（实时读取 apiBase，与 useApiBase 保持同步）
    */
   buildURL(endpoint: string): string {
     if (endpoint.startsWith('http')) {
       return endpoint
     }
-    return `${this.baseURL}${endpoint}`
+    return `${apiBase.value}${endpoint}`
   }
 
   /**
@@ -181,7 +179,7 @@ export class ApiClient {
   private async refreshToken(): Promise<void> {
     try {
       const response = await fetchWithTimeout(
-        `${this.baseURL}/api/auth/refresh`,
+        `${apiBase.value}/api/auth/refresh`,
         {
           method: 'POST',
           headers: this.buildHeaders()
