@@ -1,14 +1,14 @@
 [
   {
-    "id": "lmem-5cebf88c-a29f-488d-bf3b-a24a1b43a526",
-    "content": "{\"location\":\"做什么\",\"name\":\"否有大文件\"}",
+    "id": "lmem-131f0618-a003-4d74-9d09-e32c0a93c159",
+    "content": "{\"location\":\"运行的所有进程，找出\",\"name\":\"否被占用，是哪个程序\"}",
     "type": "long",
-    "createdAt": 1779083068035,
-    "lastAccessedAt": 1779083068035,
+    "createdAt": 1779179972273,
+    "lastAccessedAt": 1779179972273,
     "accessCount": 0,
     "metadata": {
       "type": "user_profile",
-      "updatedAt": 1779083068035
+      "updatedAt": 1779179972273
     }
   }
 ]

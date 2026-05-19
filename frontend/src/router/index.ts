@@ -35,6 +35,11 @@ const router = createRouter({
       component: () => import('../views/TasksView.vue')
     },
     {
+      path: '/integrations',
+      name: 'integrations',
+      component: () => import('../views/IntegrationsView.vue')
+    },
+    {
       path: '/control',
       name: 'control',
       component: () => import('../views/ControlView.vue')

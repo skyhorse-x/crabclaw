@@ -2,12 +2,15 @@
   <div class="settings-page">
       <el-tabs v-model="activeSettingTab">
         <el-tab-pane :label="t('basicSettings')" name="basic">
-          <el-form label-position="top">
+          <el-form label-position="top" @submit.prevent>
             <el-form-item :label="t('backendAddress')">
               <el-input v-model="config.settings.backendPort" :placeholder="String(__BACKEND_PORT__)" />
             </el-form-item>
             <el-form-item :label="t('skillsDir')">
-              <el-input v-model="config.settings.skillsDir" :placeholder="t('skillsDirPlaceholder')" />
+              <div class="dir-row">
+                <el-input v-model="config.settings.skillsDir" :placeholder="t('skillsDirPlaceholder')" readonly />
+                <el-button @click="selectSkillsDir">{{ t('changeDirectory') }}</el-button>
+              </div>
             </el-form-item>
             <el-form-item :label="t('themeSetting')">
               <el-select v-model="config.settings.theme">
@@ -23,10 +26,10 @@
               </el-select>
             </el-form-item>
             <el-form-item :label="t('dataDirectory')">
-              <el-input v-model="chatStorageConfig.currentUserDataDir" />
-              <el-button style="margin-top: 8px" @click="saveChatStorageDirectory">
-                {{ t('saveDataDirectory') }}
-              </el-button>
+              <div class="dir-row">
+                <el-input v-model="chatStorageConfig.currentUserDataDir" readonly />
+                <el-button @click="selectDataDir">{{ t('changeDirectory') }}</el-button>
+              </div>
             </el-form-item>
             <el-form-item>
               <el-button type="primary" @click="persistConfig">{{ t('saveSettings') }}</el-button>
@@ -114,7 +117,7 @@
         </el-tab-pane>
 
         <el-tab-pane :label="t('settingsProxy')" name="proxy">
-          <el-form label-position="top">
+          <el-form label-position="top" @submit.prevent>
             <el-form-item :label="t('settingsProxyEnable')">
               <el-switch v-model="config.settings.proxy!.enabled" />
             </el-form-item>
@@ -164,7 +167,7 @@
         :title="modelDialogMode === 'add' ? t('addModel') : t('edit')"
         width="600px"
       >
-        <el-form :model="currentModel" label-width="120px" v-if="currentModel">
+        <el-form :model="currentModel" label-width="120px" v-if="currentModel" @submit.prevent>
           <el-form-item :label="t('modelName')">
             <el-input v-model="currentModel.name" :placeholder="t('enterModelName')" />
           </el-form-item>
@@ -239,6 +242,10 @@ const locales = {
     skillsDirPlaceholder: '例如：/Users/xxx/server/data/skills',
     dataDirectory: '用户数据目录',
     saveDataDirectory: '保存目录',
+    changeDirectory: '更换目录',
+    selectSkillsDir: '选择技能目录',
+    selectDataDir: '选择用户数据目录',
+    directoryPickerUnavailable: '目录选择仅在桌面应用中可用',
     saveSettings: '保存设置',
     themeSetting: '主题设置',
     languageSetting: '语言',
@@ -298,6 +305,10 @@ const locales = {
     skillsDirPlaceholder: 'e.g. /Users/xxx/server/data/skills',
     dataDirectory: 'User data directory',
     saveDataDirectory: 'Save directory',
+    changeDirectory: 'Change',
+    selectSkillsDir: 'Select skills directory',
+    selectDataDir: 'Select user data directory',
+    directoryPickerUnavailable: 'Directory picker is only available in the desktop app',
     saveSettings: 'Save',
     themeSetting: 'Theme',
     languageSetting: 'Language',
@@ -530,9 +541,10 @@ async function loadTokenStats() {
   }
 }
 
-async function saveChatStorageDirectory() {
+async function saveChatStorageDirectory(dir?: string) {
   try {
-    const response = await apiClient.put('/api/chat-history/config', { userDataDir: chatStorageConfig.currentUserDataDir }) as any
+    const target = dir ?? chatStorageConfig.currentUserDataDir
+    const response = await apiClient.put('/api/chat-history/config', { userDataDir: target }) as any
     const data = response?.data || {}
     chatStorageConfig.platform = String(data.platform || chatStorageConfig.platform || '')
     chatStorageConfig.defaultUserDataDir = String(data.defaultUserDataDir || chatStorageConfig.defaultUserDataDir || '')
@@ -541,6 +553,43 @@ async function saveChatStorageDirectory() {
     ElMessage.success(t('dataDirectorySaved'))
   } catch (error: any) {
     ElMessage.error(String(error.message || error))
+  }
+}
+
+async function pickFolder(title: string): Promise<string | null> {
+  const Neutralino = (window as any).Neutralino
+  if (!Neutralino?.os?.showFolderDialog) {
+    ElMessage.warning(t('directoryPickerUnavailable'))
+    return null
+  }
+  try {
+    const raw = await Neutralino.os.showFolderDialog(title)
+    console.log('[pickFolder] raw result:', raw)
+    // 兼容字符串和对象两种返回格式
+    const path = typeof raw === 'string' ? raw : (raw?.selectedEntry ?? raw?.path ?? null)
+    return path || null
+  } catch (err: any) {
+    // 用户取消时 Neutralino 会 reject，code NE_OS_UNLTOUP 表示取消
+    if (err?.code !== 'NE_OS_UNLTOUP') {
+      console.error('[pickFolder] error:', err)
+      ElMessage.error(String(err?.message || err))
+    }
+    return null
+  }
+}
+
+async function selectSkillsDir() {
+  const path = await pickFolder(t('selectSkillsDir'))
+  if (path) {
+    config.value.settings.skillsDir = path
+    await persistConfig()
+  }
+}
+
+async function selectDataDir() {
+  const path = await pickFolder(t('selectDataDir'))
+  if (path) {
+    await saveChatStorageDirectory(path)
   }
 }
 
@@ -697,6 +746,21 @@ async function loadChatStorageConfig() {
   padding: 24px;
   height: 100%;
   overflow-y: auto;
+}
+
+.dir-row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.dir-row .el-input {
+  flex: 1;
+}
+
+.dir-row .el-button {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 /* 模型配置样式 */

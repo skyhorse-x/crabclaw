@@ -72,7 +72,9 @@
                 @click.stop="currentConversationId = conv.id"
                 @contextmenu.prevent="showConversationMenu($event, conv)"
               >
-                <el-icon v-if="conv.id.startsWith('remote-')" class="remote-icon"><Cellphone /></el-icon>
+                <el-icon v-if="conv.id.startsWith('remote-') && remoteLoadingConvIds.has(conv.id)" class="conv-loading-icon"><LoadingIcon /></el-icon>
+                <el-icon v-else-if="currentConversationId === conv.id && loading.chat" class="conv-loading-icon"><LoadingIcon /></el-icon>
+                <el-icon v-else-if="conv.id.startsWith('remote-')" class="remote-icon"><Cellphone /></el-icon>
                 <el-icon v-else><ChatLineRound /></el-icon>
                 <span class="history-title">{{ conv.title }}</span>
                 <el-icon class="context-menu-trigger" @click.stop="showConversationMenu($event, conv)"><More /></el-icon>
@@ -193,7 +195,7 @@
                       @click="toggleTraceInline(message)"
                     >
                       <span class="ai-result-trace-icon">
-                        <el-icon style="font-size:16px;color:#6366f1"><Tools /></el-icon>
+                        <el-icon style="font-size:16px;color:var(--accent-primary)"><Tools /></el-icon>
                       </span>
                       <span class="ai-result-trace-label">执行记录</span>
                       <span class="ai-result-trace-count" v-if="groupedTraceDetails(message).length > 0">
@@ -210,7 +212,7 @@
                         class="ai-trace-running"
                       >
                         <div class="ai-trace-running-icon">
-                          <el-icon style="font-size:17px;color:#6366f1"><LoadingIcon /></el-icon>
+                          <el-icon style="font-size:17px;color:var(--accent-primary)"><LoadingIcon /></el-icon>
                         </div>
                         <span class="ai-trace-running-label">{{ traceRunningCalls(message)[0] }}</span>
                         <span class="ai-trace-running-badge">
@@ -750,7 +752,7 @@
     <div v-if="wechatMessages.length > 0" class="wechat-msg-panel" :class="{ collapsed: !wechatPanelOpen }">
       <div class="wechat-msg-header">
         <span class="wechat-msg-header-label">
-          <el-icon style="font-size:14px;margin-right:4px;color:#6366f1"><ChatLineRound /></el-icon>
+          <el-icon style="font-size:14px;margin-right:4px;color:var(--accent-primary)"><ChatLineRound /></el-icon>
           微信消息
           <span class="wechat-msg-badge">{{ wechatMessages.length }}</span>
         </span>
@@ -828,6 +830,7 @@ import { ArrowDown,
   Calendar,
   ChatDotSquare,
   WarningFilled,
+  Link,
 } from "@element-plus/icons-vue"
 
 const { apiBase, discoverBackend } = useApiBase()
@@ -843,6 +846,7 @@ function getNavPath(id: string): string {
     mcp: '/mcp',
     skills: '/skills',
     tasks: '/tasks',
+    integrations: '/integrations',
     control: '/control',
     settings: '/settings'
   }
@@ -862,6 +866,8 @@ const loading = reactive({
   config: false,
   chat: false
 })
+
+const remoteLoadingConvIds = ref<Set<string>>(new Set())
 
 const isChatPaused = ref(false)
 let chatAbortController: AbortController | null = null
@@ -1262,6 +1268,7 @@ const locales = {
     navMcp: "MCP",
     navSkills: "技能",
     navTasks: "任务",
+    navIntegrations: "集成",
     navControl: "远控端",
     navSettings: "设置",
     taskPanelTitle: "任务中心",
@@ -1538,6 +1545,7 @@ const locales = {
     navMcp: "MCP",
     navSkills: "Skills",
     navTasks: "Tasks",
+    navIntegrations: "Integrations",
     navControl: "Control",
     navSettings: "Settings",
     taskPanelTitle: "Task Center",
@@ -1809,7 +1817,7 @@ const t = (key: string) => {
   return localeData?.[key as keyof typeof localeData] || key
 }
 
-type NavKey = "chat" | "agents" | "pipeline" | "mcp" | "skills" | "tasks" | "control" | "settings"
+type NavKey = "chat" | "agents" | "pipeline" | "mcp" | "skills" | "tasks" | "integrations" | "control" | "settings"
 interface NavigationItem {
   id: NavKey
   icon: any
@@ -1824,6 +1832,7 @@ const navigationItems = computed<NavigationItem[]>(() => [
   { id: "mcp", icon: Connection, labelKey: "navMcp" },
   { id: "skills", icon: Star, labelKey: "navSkills", showInToolbar: true },
   { id: "tasks", icon: Timer, labelKey: "navTasks", showInToolbar: true },
+  { id: "integrations", icon: Link, labelKey: "navIntegrations", showInToolbar: true },
   { id: "control", icon: Promotion, labelKey: "navControl", showInToolbar: true },
   { id: "settings", icon: Setting, labelKey: "navSettings", showInToolbar: true }
 ])
@@ -3688,14 +3697,14 @@ function buildApiUrl(path: string): string {
 async function bootstrap() {
   loading.bootstrap = true
   try {
+    // 只等核心数据，MCP/技能市场后台加载不阻塞首屏
     await Promise.all([
       loadConfig(),
       loadState(),
-      fetchMcpServers(),
-      fetchSkillMarket(1)
     ])
+    Promise.allSettled([fetchMcpServers(), fetchSkillMarket(1)])
     await nextTick()
-    await replayPersistedAssistantAnimation()
+    replayPersistedAssistantAnimation()
     const activeModel = config.value?.models?.find(m => m.id === config.value.settings.activeModelId)
     if (activeModel) {
       selectedChatModel.value = activeModel.id
@@ -4868,7 +4877,13 @@ onMounted(async () => {
     })
     if (targetConv.messages.length > 200) targetConv.messages = targetConv.messages.slice(-200)
 
-
+    if (ev.role === 'user') {
+      remoteLoadingConvIds.value = new Set([...remoteLoadingConvIds.value, convId])
+    } else {
+      const next = new Set(remoteLoadingConvIds.value)
+      next.delete(convId)
+      remoteLoadingConvIds.value = next
+    }
 
     scheduleSaveChatHistory()
   })
@@ -5138,16 +5153,16 @@ function deleteModel(modelId: string) {
 .three-column-layout {
   display: flex;
   height: 100vh;
-  background: #f0f4fa;
+  background: var(--bg-primary);
 }
 
 /* 第一列：导航侧边栏 */
 .nav-sidebar {
   width: 200px;
-  background: #ffffff;
+  background: #FFFFFF;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid #e8e8e8;
+  border-right: 1px solid #EBEBEB;
   transition: width 0.3s ease;
   flex-shrink: 0;
 }
@@ -5165,7 +5180,7 @@ function deleteModel(modelId: string) {
   align-items: center;
   justify-content: space-between;
   padding: 12px;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid #EBEBEB;
   min-height: 56px;
 }
 
@@ -5182,7 +5197,7 @@ function deleteModel(modelId: string) {
 }
 
 .nav-sidebar.collapsed .logo {
-  justify-content: center;
+  display: none;
 }
 
 .nav-sidebar .logo-icon {
@@ -5201,6 +5216,7 @@ function deleteModel(modelId: string) {
 .nav-sidebar .logo-text h1 {
   font-size: 14px;
   font-weight: 600;
+  color: #1A1A1A;
   margin: 0;
 }
 
@@ -5209,18 +5225,19 @@ function deleteModel(modelId: string) {
   padding: 8px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
 .nav-sidebar .nav-item {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 12px;
-  border-radius: 8px;
+  padding: 12px 12px;
+  border-radius: 6px;
   cursor: pointer;
-  color: #475569;
-  transition: all 0.2s;
+  color: #595959;
+  font-size: 13px;
+  transition: all 0.15s;
   overflow: hidden;
 }
 
@@ -5234,18 +5251,21 @@ function deleteModel(modelId: string) {
 }
 
 .nav-sidebar .nav-item:hover {
-  background: #f1f5f9;
+  background: #F5F5F5;
+  color: #1A1A1A;
 }
 
 .nav-sidebar .nav-item.active {
-  color: #475569;
+  background: #F0F0F0;
+  color: #1A1A1A;
+  font-weight: 500;
 }
 
 /* 第二列：代理侧边栏 */
 .agent-sidebar {
-  width: 240px;
-  background: #ffffff;
-  border-right: 1px solid #e2e8f0;
+  width: 220px;
+  background: #FFFFFF;
+  border-right: 1px solid #EBEBEB;
   display: flex;
   flex-direction: column;
 }
@@ -5255,24 +5275,24 @@ function deleteModel(modelId: string) {
   align-items: center;
   justify-content: space-between;
   padding: 14px 16px;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid #EBEBEB;
 }
 
 .agent-sidebar-title {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
-  color: #1e293b;
+  color: #1A1A1A;
 }
 
 .agent-list {
   flex: 1;
   overflow-y: auto;
-  padding: 8px;
+  padding: 6px;
 }
 
 .agent-item {
-  margin-bottom: 4px;
-  border-radius: 8px;
+  margin-bottom: 2px;
+  border-radius: 6px;
   overflow: hidden;
 }
 
@@ -5280,42 +5300,44 @@ function deleteModel(modelId: string) {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 12px;
+  padding: 9px 10px;
   cursor: pointer;
-  transition: background 0.2s;
+  border-radius: 6px;
+  transition: background 0.15s;
 }
 
 .agent-header:hover {
-  background: #f8fafc;
+  background: #F5F5F5;
 }
 
 .agent-item.active .agent-header {
-  background: #f1f5f9;
+  background: #F0F0F0;
 }
 
 .agent-icon {
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #4a90d9, #357abd);
+  background: #1A1A1A;
   display: flex;
   align-items: center;
   justify-content: center;
   color: #fff;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
+  flex-shrink: 0;
 }
 
 .agent-name {
   flex: 1;
   font-size: 13px;
   font-weight: 500;
-  color: #334155;
+  color: #1A1A1A;
 }
 
 .agent-expand-icon {
-  font-size: 14px;
-  color: #94a3b8;
+  font-size: 12px;
+  color: #BFBFBF;
   transition: transform 0.2s;
 }
 
@@ -5324,41 +5346,39 @@ function deleteModel(modelId: string) {
 }
 
 .agent-history {
-  background: #fafafa;
-  padding: 4px 0;
+  background: #FAFAFA;
+  padding: 2px 0;
 }
 
 .agent-history-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px 8px 40px;
+  padding: 7px 10px 7px 38px;
   cursor: pointer;
   font-size: 12px;
-  color: #64748b;
-  transition: background 0.2s;
+  color: #8C8C8C;
+  border-radius: 4px;
+  transition: background 0.15s;
 }
 
 .agent-history-item:hover {
-  background: #f1f5f9;
+  background: #F5F5F5;
+  color: #1A1A1A;
 }
 
 .agent-history-item.active {
-  background: #f1f5f9;
-  color: #475569;
+  background: #F0F0F0;
+  color: #1A1A1A;
 }
 
-.agent-history-item.remote-control {
-  background: linear-gradient(90deg, rgba(100, 116, 139, 0.05) 0%, transparent 100%);
-  border-left: 2px solid #64748b;
-}
 
 .agent-history-item .context-menu-trigger {
   margin-left: auto;
   opacity: 0;
-  transition: opacity 0.2s;
-  font-size: 16px;
-  color: #94a3b8;
+  transition: opacity 0.15s;
+  font-size: 14px;
+  color: #BFBFBF;
   cursor: pointer;
 }
 
@@ -5377,10 +5397,10 @@ function deleteModel(modelId: string) {
 
 .conversation-context-menu {
   position: fixed;
-  background: #ffffff;
-  border: 1px solid #e8e8e8;
+  background: #FFFFFF;
+  border: 1px solid #EBEBEB;
   border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
   padding: 4px;
   z-index: 9999;
   min-width: 140px;
@@ -5393,21 +5413,21 @@ function deleteModel(modelId: string) {
   padding: 8px 12px;
   cursor: pointer;
   font-size: 13px;
-  color: #334155;
+  color: #1A1A1A;
   border-radius: 4px;
-  transition: background 0.2s;
+  transition: background 0.15s;
 }
 
 .context-menu-item:hover {
-  background: #f1f5f9;
+  background: #F5F5F5;
 }
 
 .context-menu-item.danger {
-  color: #ef4444;
+  color: #CA3214;
 }
 
 .context-menu-item.danger:hover {
-  background: #fef2f2;
+  background: #FFF1EE;
 }
 
 .agent-history-item .history-title {
@@ -5418,9 +5438,19 @@ function deleteModel(modelId: string) {
 }
 
 .agent-history-empty {
-  padding: 12px 12px 12px 40px;
+  padding: 10px 10px 10px 38px;
   font-size: 12px;
-  color: #94a3b8;
+  color: #BFBFBF;
+}
+
+.conv-loading-icon {
+  animation: conv-spin 0.8s linear infinite;
+  color: #1A1A1A;
+}
+
+@keyframes conv-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
 }
 
 /* 第三列：主内容 */

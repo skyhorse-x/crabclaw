@@ -20,7 +20,7 @@ export function useApiBase() {
     return `${apiBase.value}${normalizedPath}`
   }
 
-  // 探活实际后端端口（处理端口被占用后自动换端口的情况）
+  // 并发探活所有候选端口，第一个响应的胜出
   async function discoverBackend(): Promise<void> {
     const port = parseInt(window.location.port)
     if ([4173, 5173].includes(port)) return
@@ -29,18 +29,15 @@ export function useApiBase() {
     const ports: number[] = Array.from(new Set([backendPort, 17870]))
     const candidates = ports.map(p => `http://127.0.0.1:${p}`)
 
-    for (const base of candidates) {
-      try {
-        const res = await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(2000) })
-        if (res.ok) {
-          apiBase.value = base
-          return
-        }
-      } catch {
-        // 继续下一个
-      }
+    const race = candidates.map(base =>
+      fetch(`${base}/api/health`, { signal: AbortSignal.timeout(800) })
+        .then(res => res.ok ? base : Promise.reject())
+    )
+    try {
+      apiBase.value = await Promise.any(race)
+    } catch {
+      // 兜底保持当前值不变
     }
-    // 兜底保持当前值不变
   }
 
   return { apiBase, buildApiUrl, discoverBackend }

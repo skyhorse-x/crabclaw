@@ -42,7 +42,7 @@
               <span>{{ t('controlEnable') }}</span>
               <el-switch v-model="remoteControlConfig.telegram.enabled" />
             </div>
-            <el-form label-width="100px" label-position="left">
+            <el-form label-width="100px" label-position="left" @submit.prevent>
               <el-form-item :label="t('controlBotToken')">
                 <el-input v-model="remoteControlConfig.telegram.botToken" type="password" show-password />
               </el-form-item>
@@ -73,7 +73,7 @@
               <span>{{ t('controlEnable') }}</span>
               <el-switch v-model="remoteControlConfig.qq.enabled" />
             </div>
-            <el-form label-width="100px" label-position="left">
+            <el-form label-width="100px" label-position="left" @submit.prevent>
               <el-form-item :label="t('controlBotId')">
                 <el-input v-model="remoteControlConfig.qq.botId" />
               </el-form-item>
@@ -99,7 +99,7 @@
               <span>{{ t('controlEnable') }}</span>
               <el-switch v-model="remoteControlConfig.wechat.enabled" />
             </div>
-            <el-form label-width="100px" label-position="left">
+            <el-form label-width="100px" label-position="left" @submit.prevent>
               <el-form-item :label="t('controlWebhook')">
                 <el-input v-model="remoteControlConfig.wechat.webhook" />
               </el-form-item>
@@ -173,7 +173,7 @@
 
             <el-divider />
 
-            <el-form label-width="100px" label-position="left">
+            <el-form label-width="100px" label-position="left" @submit.prevent>
               <el-form-item :label="t('controlTestMessage')">
                 <el-input v-model="wechatTestMessage" :placeholder="t('controlTestMessagePlaceholder') || '输入要发送给自己的消息'" />
               </el-form-item>
@@ -198,7 +198,7 @@
               <span>{{ t('controlEnable') }}</span>
               <el-switch v-model="remoteControlConfig.feishu.enabled" />
             </div>
-            <el-form label-width="100px" label-position="left">
+            <el-form label-width="100px" label-position="left" @submit.prevent>
               <el-form-item :label="t('controlAppId')">
                 <el-input v-model="remoteControlConfig.feishu.appId" />
               </el-form-item>
@@ -224,7 +224,7 @@
               <span>{{ t('controlEnable') }}</span>
               <el-switch v-model="remoteControlConfig.discord.enabled" />
             </div>
-            <el-form label-width="100px" label-position="left">
+            <el-form label-width="100px" label-position="left" @submit.prevent>
               <el-form-item :label="t('controlBotToken')">
                 <el-input v-model="remoteControlConfig.discord.botToken" type="password" show-password />
               </el-form-item>
@@ -247,7 +247,7 @@
               <span>{{ t('controlEnable') }}</span>
               <el-switch v-model="remoteControlConfig.slack.enabled" />
             </div>
-            <el-form label-width="100px" label-position="left">
+            <el-form label-width="100px" label-position="left" @submit.prevent>
               <el-form-item :label="t('controlBotToken')">
                 <el-input v-model="remoteControlConfig.slack.botToken" type="password" show-password />
               </el-form-item>
@@ -270,7 +270,7 @@
               <span>{{ t('controlEnable') }}</span>
               <el-switch v-model="remoteControlConfig.teams.enabled" />
             </div>
-            <el-form label-width="100px" label-position="left">
+            <el-form label-width="100px" label-position="left" @submit.prevent>
               <el-form-item :label="t('controlAppId')">
                 <el-input v-model="remoteControlConfig.teams.appId" />
               </el-form-item>
@@ -296,7 +296,7 @@
               <span>{{ t('controlEnable') }}</span>
               <el-switch v-model="remoteControlConfig.whatsapp.enabled" />
             </div>
-            <el-form label-width="120px" label-position="left">
+            <el-form label-width="120px" label-position="left" @submit.prevent>
               <el-form-item :label="t('controlTwilioSid')">
                 <el-input v-model="remoteControlConfig.whatsapp.accountSid" />
               </el-form-item>

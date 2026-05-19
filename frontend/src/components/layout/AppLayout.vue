@@ -32,6 +32,10 @@
           <el-icon><Timer /></el-icon>
           <span v-if="!sidebarCollapsed">{{ t('navTasks') }}</span>
         </div>
+        <div class="nav-item" :class="{ active: $route.path === '/integrations' }" @click="router.push('/integrations')">
+          <el-icon><Link /></el-icon>
+          <span v-if="!sidebarCollapsed">{{ t('navIntegrations') }}</span>
+        </div>
         <div class="nav-item" :class="{ active: $route.path === '/control' }" @click="router.push('/control')">
           <el-icon><Monitor /></el-icon>
           <span v-if="!sidebarCollapsed">{{ t('navControl') }}</span>
@@ -56,7 +60,7 @@
 import { ref, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { Fold, ChatDotRound, User, Connection, Star, Timer, Monitor, Setting } from '@element-plus/icons-vue'
+import { Fold, ChatDotRound, User, Connection, Star, Timer, Monitor, Setting, Link } from '@element-plus/icons-vue'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -69,6 +73,7 @@ const routeTitleMap: Record<string, string> = {
   '/mcp': 'navMcp',
   '/skills': 'navSkills',
   '/tasks': 'navTasks',
+  '/integrations': 'navIntegrations',
   '/control': 'controlPanelTitle',
   '/settings': 'navSettings'
 }
@@ -87,12 +92,12 @@ function toggleSidebar() {
 .layout-container {
   display: flex;
   height: 100vh;
-  background: #f0f4fa; /* 替代 var(--bg-primary) */
+  background: var(--bg-primary);
 }
 
 .sidebar {
   width: 220px;
-  background: #f8fafd;
+  background: var(--bg-tertiary);
   display: flex;
   flex-direction: column;
   transition: width 0.3s ease;
@@ -107,7 +112,7 @@ function toggleSidebar() {
   align-items: center;
   justify-content: space-between;
   padding: 16px;
-  border-bottom: 1px solid #e2e8f0; /* 替代 var(--border-color) */
+  border-bottom: 1px solid var(--border-color);
 }
 
 .logo {
@@ -119,7 +124,6 @@ function toggleSidebar() {
 .logo-icon {
   width: 36px;
   height: 36px;
-  background: linear-gradient(135deg, #667eea, #764ba2);
   border-radius: 10px;
   display: flex;
   align-items: center;
@@ -148,19 +152,20 @@ function toggleSidebar() {
   align-items: center;
   gap: 12px;
   padding: 12px 16px;
-  border-radius: 10px;
+  border-radius: 8px;
   cursor: pointer;
-  color: #475569; /* 替代 var(--text-secondary) */
+  color: var(--text-secondary);
   transition: all 0.2s;
 }
 
 .nav-item:hover {
-  background: #f1f5f9; /* 替代 var(--bg-hover) */
+  background: var(--bg-hover);
 }
 
 .nav-item.active {
-  background: #e8eaf6;
-  color: #667eea;
+  background: var(--accent-light);
+  color: var(--accent-primary);
+  font-weight: 500;
 }
 
 .main-content {
