@@ -79,6 +79,14 @@
           <input v-model="form.description" class="pd-input" placeholder="简要描述这条流水线的用途" />
         </div>
 
+        <div class="pd-form-row">
+          <label>全局模型 <span class="pd-form-hint">（覆盖各步骤 Agent 的默认模型）</span></label>
+          <select v-model="form.modelId" class="pd-select">
+            <option value="">不覆盖，使用各 Agent 自身模型</option>
+            <option v-for="m in models" :key="m.id" :value="m.id">{{ m.name }}</option>
+          </select>
+        </div>
+
         <div class="pd-steps-editor">
           <div class="pd-steps-editor-header">
             <span>执行步骤</span>
@@ -138,6 +146,18 @@
     >
       <div v-if="detailPipeline" class="pd-detail">
 
+        <!-- 模型选择 -->
+        <div class="pd-detail-model" v-if="detailPipeline.status !== 'running'">
+          <label class="pd-detail-label">运行模型</label>
+          <select v-model="runModelId" class="pd-select">
+            <option value="">不覆盖，使用各 Agent 自身模型</option>
+            <option v-for="m in models" :key="m.id" :value="m.id">{{ m.name }}</option>
+          </select>
+          <span v-if="detailPipeline.modelId && !runModelId" class="pd-model-saved-hint">
+            已保存模型：{{ modelName(detailPipeline.modelId) }}
+          </span>
+        </div>
+
         <!-- 输入区 -->
         <div class="pd-detail-input" v-if="detailPipeline.status !== 'running'">
           <label class="pd-detail-label">初始输入（将作为第一个 Agent 的任务内容）</label>
@@ -165,6 +185,10 @@
               <div class="pd-detail-step-output" v-if="getStepOutput(detailPipeline, idx)">
                 <pre>{{ getStepOutput(detailPipeline, idx) }}</pre>
               </div>
+              <div class="pd-detail-step-error" v-if="getStepError(detailPipeline, idx)">
+                <div class="pd-detail-step-error-label">错误信息</div>
+                <pre>{{ getStepError(detailPipeline, idx) }}</pre>
+              </div>
               <!-- 审批按钮 -->
               <div v-if="detailPipeline.status === 'paused' && detailPipeline.currentStepIndex === idx && step.waitForApproval" class="pd-approval-actions">
                 <button class="pd-create-btn" @click="approve(detailPipeline.id)">批准并继续</button>
@@ -176,12 +200,34 @@
 
         <!-- 运行日志 -->
         <div class="pd-logs" v-if="runLogs.length > 0">
-          <div class="pd-logs-title">运行日志</div>
+          <div class="pd-logs-title">
+            运行日志
+            <span class="pd-logs-count">{{ runLogs.length }} 条</span>
+          </div>
           <div class="pd-logs-body">
-            <div v-for="(log, i) in runLogs" :key="i" class="pd-log-row" :class="`log-${log.status}`">
-              <span class="pd-log-agent">{{ log.agent_name }}</span>
-              <span class="pd-log-status">{{ log.status }}</span>
-              <span class="pd-log-time">{{ formatTime(log.started_at) }}</span>
+            <div
+              v-for="(log, i) in runLogs"
+              :key="i"
+              class="pd-log-row"
+              :class="`log-${log.status}`"
+              @click="toggleLogExpand(i)"
+            >
+              <div class="pd-log-main">
+                <span class="pd-log-agent">{{ log.agent_name }}</span>
+                <span class="pd-log-status-badge" :class="`badge-${log.status}`">{{ logStatusLabel(log.status) }}</span>
+                <span class="pd-log-time">{{ formatTime(log.started_at) }}</span>
+                <span v-if="log.error" class="pd-log-expand-icon">{{ expandedLog === i ? '▲' : '▼' }}</span>
+              </div>
+              <!-- 错误详情展开 -->
+              <div v-if="log.error && expandedLog === i" class="pd-log-error">
+                <div class="pd-log-error-label">错误信息</div>
+                <pre class="pd-log-error-msg">{{ log.error }}</pre>
+              </div>
+              <!-- 输出展开 -->
+              <div v-if="log.output && expandedLog === i" class="pd-log-output">
+                <div class="pd-log-output-label">输出内容</div>
+                <pre class="pd-log-output-msg">{{ log.output }}</pre>
+              </div>
             </div>
           </div>
         </div>
@@ -227,6 +273,7 @@ interface Pipeline {
   id: string
   name: string
   description: string
+  modelId?: string
   steps: PipelineStep[]
   status: 'idle' | 'running' | 'done' | 'error' | 'paused'
   currentStepIndex: number
@@ -236,6 +283,11 @@ interface Pipeline {
 }
 
 interface AgentOption {
+  id: string
+  name: string
+}
+
+interface ModelOption {
   id: string
   name: string
 }
@@ -254,6 +306,7 @@ interface RunLog {
 
 const pipelines = ref<Pipeline[]>([])
 const agents = ref<AgentOption[]>([])
+const models = ref<ModelOption[]>([])
 const loading = ref(false)
 const saving = ref(false)
 const running = ref(false)
@@ -264,10 +317,13 @@ const editingPipeline = ref<Pipeline | null>(null)
 const detailPipeline = ref<Pipeline | null>(null)
 const runLogs = ref<RunLog[]>([])
 const runInput = ref('')
+const runModelId = ref('')
+const expandedLog = ref<number | null>(null)
 
 const form = ref({
   name: '',
   description: '',
+  modelId: '',
   steps: [] as PipelineStep[]
 })
 
@@ -287,6 +343,18 @@ async function fetchAgents() {
     const data = await apiClient.get('/api/agents') as any
     agents.value = Array.isArray(data) ? data.map((a: any) => ({ id: a.id, name: a.name })) : []
   } catch { /* ignore */ }
+}
+
+async function fetchModels() {
+  try {
+    const data = await apiClient.get('/api/config') as any
+    const list = data?.models || data?.data?.models || []
+    models.value = list.filter((m: any) => m.isActive).map((m: any) => ({ id: m.id, name: m.name }))
+  } catch { /* ignore */ }
+}
+
+function modelName(id: string): string {
+  return models.value.find(m => m.id === id)?.name || id
 }
 
 async function fetchLogs(pipelineId: string) {
@@ -323,13 +391,30 @@ function getStepOutput(pl: Pipeline, idx: number): string {
   return pl.context?.[`step_${idx}`] || ''
 }
 
+function getStepError(pl: Pipeline, idx: number): string {
+  if (pl.status !== 'error' || idx !== pl.currentStepIndex) return ''
+  const log = [...runLogs.value].reverse().find(l => l.status === 'error')
+  return log?.error || ''
+}
+
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString('zh-CN', { hour12: false })
 }
 
+function logStatusLabel(status: string): string {
+  const map: Record<string, string> = {
+    pending: '待执行', running: '运行中', done: '完成', error: '出错', waiting_approval: '待审批'
+  }
+  return map[status] || status
+}
+
+function toggleLogExpand(i: number) {
+  expandedLog.value = expandedLog.value === i ? null : i
+}
+
 function openCreate() {
   editingPipeline.value = null
-  form.value = { name: '', description: '', steps: [] }
+  form.value = { name: '', description: '', modelId: '', steps: [] }
   showForm.value = true
 }
 
@@ -338,6 +423,7 @@ function openEdit(pl: Pipeline) {
   form.value = {
     name: pl.name,
     description: pl.description,
+    modelId: pl.modelId || '',
     steps: pl.steps.map(s => ({ ...s }))
   }
   showForm.value = true
@@ -346,6 +432,7 @@ function openEdit(pl: Pipeline) {
 function openDetail(pl: Pipeline) {
   detailPipeline.value = { ...pl }
   runInput.value = ''
+  runModelId.value = pl.modelId || ''
   runLogs.value = []
   showDetail.value = true
 }
@@ -387,6 +474,7 @@ async function saveForm() {
     const body = {
       name: form.value.name,
       description: form.value.description,
+      modelId: form.value.modelId,
       steps: form.value.steps.map((s, i) => ({ ...s, order: i }))
     }
     if (editingPipeline.value) {
@@ -408,6 +496,15 @@ async function saveForm() {
 async function runPipeline(id: string) {
   running.value = true
   try {
+    // 如果用户在详情页选了模型，先保存到流水线配置
+    if (runModelId.value !== (detailPipeline.value?.modelId || '')) {
+      await apiClient.put(`/api/pipelines/${id}`, {
+        name: detailPipeline.value?.name,
+        description: detailPipeline.value?.description,
+        modelId: runModelId.value,
+        steps: detailPipeline.value?.steps
+      })
+    }
     await apiClient.post(`/api/pipelines/${id}/run`, { input: runInput.value })
     ElMessage.success('流水线已启动')
     await fetchPipelines()
@@ -467,6 +564,7 @@ function startPoll() {
 onMounted(() => {
   fetchPipelines()
   fetchAgents()
+  fetchModels()
 })
 
 onUnmounted(() => {
@@ -729,8 +827,12 @@ onUnmounted(() => {
 
 .pd-steps-empty { font-size: 13px; color: #bbb; text-align: center; padding: 20px; }
 
+.pd-form-hint { font-size: 11px; color: #bbb; font-weight: 400; }
+
 /* 详情 */
 .pd-detail { display: flex; flex-direction: column; gap: 16px; }
+.pd-detail-model { display: flex; flex-direction: column; gap: 6px; }
+.pd-model-saved-hint { font-size: 11px; color: #999; margin-top: 2px; }
 
 .pd-detail-label { font-size: 13px; font-weight: 500; color: #555; margin-bottom: 6px; display: block; }
 
@@ -788,22 +890,63 @@ onUnmounted(() => {
 
 /* 日志 */
 .pd-logs { display: flex; flex-direction: column; gap: 8px; }
-.pd-logs-title { font-size: 13px; font-weight: 500; color: #555; }
+.pd-logs-title {
+  font-size: 13px; font-weight: 500; color: #555;
+  display: flex; align-items: center; gap: 8px;
+}
+.pd-logs-count { font-size: 11px; color: #bbb; font-weight: 400; }
 .pd-logs-body {
   background: #f9f9f9; border-radius: 8px; border: 1px solid #efefef;
-  max-height: 120px; overflow-y: auto;
+  max-height: 260px; overflow-y: auto;
 }
 .pd-log-row {
-  display: flex; align-items: center; gap: 12px;
+  display: flex; flex-direction: column;
   padding: 6px 12px; font-size: 12px; border-bottom: 1px solid #f0f0f0;
+  cursor: pointer; transition: background 0.1s;
 }
+.pd-log-row:hover { background: #f3f3f3; }
 .pd-log-row:last-child { border-bottom: none; }
+.pd-log-main { display: flex; align-items: center; gap: 10px; }
 .pd-log-agent { font-weight: 500; color: #1a1a1a; flex-shrink: 0; }
-.pd-log-status { color: #999; flex: 1; }
-.pd-log-row.log-done .pd-log-status { color: #16a34a; }
-.pd-log-row.log-error .pd-log-status { color: #dc2626; }
-.pd-log-row.log-running .pd-log-status { color: #a16207; }
-.pd-log-time { color: #bbb; flex-shrink: 0; }
+.pd-log-status-badge {
+  font-size: 11px; padding: 1px 7px; border-radius: 10px; flex-shrink: 0;
+}
+.badge-done { background: #dcfce7; color: #16a34a; }
+.badge-error { background: #fee2e2; color: #dc2626; }
+.badge-running { background: #fef9c3; color: #a16207; }
+.badge-pending { background: #f0f0f0; color: #888; }
+.badge-waiting_approval { background: #ebe9fe; color: #6d28d9; }
+.pd-log-time { color: #bbb; margin-left: auto; flex-shrink: 0; }
+.pd-log-expand-icon { color: #bbb; font-size: 10px; flex-shrink: 0; }
+.pd-log-error {
+  margin-top: 6px; padding: 8px 10px;
+  background: #fff5f5; border-radius: 6px; border: 1px solid #fecaca;
+}
+.pd-log-error-label { font-size: 11px; color: #dc2626; font-weight: 500; margin-bottom: 4px; }
+.pd-log-error-msg {
+  font-size: 11px; color: #b91c1c; white-space: pre-wrap; word-break: break-word;
+  margin: 0; max-height: 120px; overflow-y: auto; font-family: monospace;
+}
+.pd-log-output {
+  margin-top: 6px; padding: 8px 10px;
+  background: #f9f9f9; border-radius: 6px; border: 1px solid #efefef;
+}
+.pd-log-output-label { font-size: 11px; color: #555; font-weight: 500; margin-bottom: 4px; }
+.pd-log-output-msg {
+  font-size: 11px; color: #555; white-space: pre-wrap; word-break: break-word;
+  margin: 0; max-height: 120px; overflow-y: auto; font-family: inherit; line-height: 1.5;
+}
+
+/* 步骤错误 */
+.pd-detail-step-error {
+  background: #fff5f5; border-radius: 8px; padding: 10px 12px;
+  border: 1px solid #fecaca;
+}
+.pd-detail-step-error-label { font-size: 11px; color: #dc2626; font-weight: 500; margin-bottom: 4px; }
+.pd-detail-step-error pre {
+  font-size: 12px; color: #b91c1c; white-space: pre-wrap; word-break: break-word;
+  margin: 0; max-height: 120px; overflow-y: auto; font-family: monospace; line-height: 1.5;
+}
 
 /* 详情底部 */
 .pd-detail-footer {

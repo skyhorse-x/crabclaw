@@ -46,6 +46,7 @@ export interface PipelineRecord {
   id: string
   name: string
   description: string
+  modelId?: string  // 全局覆盖模型，留空则用各 Agent 自身模型
   steps: PipelineStep[]
   status: 'idle' | 'running' | 'done' | 'error' | 'paused'
   currentStepIndex: number
@@ -67,7 +68,7 @@ export interface PipelineRunLog {
 }
 
 class PipelineDatabase {
-  private db: Database
+  db: any
 
   constructor() {
     this.db = new Database(getUnifiedDbPath())
@@ -80,6 +81,7 @@ class PipelineDatabase {
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         description TEXT DEFAULT '',
+        model_id TEXT DEFAULT '',
         steps TEXT NOT NULL DEFAULT '[]',
         status TEXT NOT NULL DEFAULT 'idle',
         current_step_index INTEGER NOT NULL DEFAULT 0,
@@ -102,6 +104,8 @@ class PipelineDatabase {
         FOREIGN KEY(pipeline_id) REFERENCES pipelines(id) ON DELETE CASCADE
       );
     `)
+    // 迁移：为已存在的表补加 model_id 列
+    try { this.db.exec(`ALTER TABLE pipelines ADD COLUMN model_id TEXT DEFAULT ''`) } catch {}
   }
 
   private rowToRecord(row: any): PipelineRecord {
@@ -109,6 +113,7 @@ class PipelineDatabase {
       id: row.id,
       name: row.name,
       description: row.description || '',
+      modelId: row.model_id || '',
       steps: JSON.parse(row.steps || '[]'),
       status: row.status,
       currentStepIndex: row.current_step_index,
@@ -119,41 +124,42 @@ class PipelineDatabase {
   }
 
   list(): PipelineRecord[] {
-    const rows = (this.db as any).prepare('SELECT * FROM pipelines ORDER BY updated_at DESC').all()
+    const rows = this.db.prepare('SELECT * FROM pipelines ORDER BY updated_at DESC').all()
     return rows.map((r: any) => this.rowToRecord(r))
   }
 
   get(id: string): PipelineRecord | null {
-    const row = (this.db as any).prepare('SELECT * FROM pipelines WHERE id = ?').get(id) as any
+    const row = this.db.prepare('SELECT * FROM pipelines WHERE id = ?').get(id)
     return row ? this.rowToRecord(row) : null
   }
 
   create(data: Omit<PipelineRecord, 'createdAt' | 'updatedAt'>): PipelineRecord {
-    const timestamp: number = getNow()
-    (this.db as any).prepare(`
-      INSERT INTO pipelines (id, name, description, steps, status, current_step_index, context, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(data.id, data.name, data.description, JSON.stringify(data.steps), data.status, data.currentStepIndex, JSON.stringify(data.context), timestamp, timestamp)
+    const ts = getNow()
+    this.db.prepare(`
+      INSERT INTO pipelines (id, name, description, model_id, steps, status, current_step_index, context, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(data.id, data.name, data.description, data.modelId || '', JSON.stringify(data.steps), data.status, data.currentStepIndex, JSON.stringify(data.context), ts, ts)
     return this.get(data.id)!
   }
 
   update(id: string, patch: Partial<PipelineRecord>): PipelineRecord | null {
     const existing = this.get(id)
     if (!existing) return null
-    const updatedRecord: PipelineRecord = { ...existing, ...patch, updatedAt: getNow() }
-    (this.db as any).prepare(`
-      UPDATE pipelines SET name=?, description=?, steps=?, status=?, current_step_index=?, context=?, updated_at=? WHERE id=?
-    `).run(updatedRecord.name, updatedRecord.description, JSON.stringify(updatedRecord.steps), updatedRecord.status, updatedRecord.currentStepIndex, JSON.stringify(updatedRecord.context), updatedRecord.updatedAt, id)
+    const now = getNow()
+    const merged = { ...existing, ...patch }
+    this.db.prepare(`
+      UPDATE pipelines SET name=?, description=?, model_id=?, steps=?, status=?, current_step_index=?, context=?, updated_at=? WHERE id=?
+    `).run(merged.name, merged.description, merged.modelId || '', JSON.stringify(merged.steps), merged.status, merged.currentStepIndex, JSON.stringify(merged.context), now, id)
     return this.get(id)
   }
 
   delete(id: string): boolean {
-    const changes = ((this.db as any).prepare('DELETE FROM pipelines WHERE id = ?').run(id) as any).changes
-    return changes > 0
+    const result = this.db.prepare('DELETE FROM pipelines WHERE id = ?').run(id)
+    return result.changes > 0
   }
 
   addLog(log: Omit<PipelineRunLog, never>): void {
-    (this.db as any).prepare(`
+    this.db.prepare(`
       INSERT INTO pipeline_run_logs (pipeline_id, step_id, agent_name, input, output, status, started_at, finished_at, error)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(log.pipelineId, log.stepId, log.agentName, log.input, log.output, log.status, log.startedAt, log.finishedAt ?? null, log.error ?? null)
@@ -167,12 +173,12 @@ class PipelineDatabase {
     if (patch.finishedAt !== undefined) { sets.push('finished_at=?'); vals.push(patch.finishedAt) }
     if (patch.error !== undefined) { sets.push('error=?'); vals.push(patch.error) }
     if (sets.length === 0) return
-    vals.push(pipelineId, stepId)
-    (this.db as any).prepare(`UPDATE pipeline_run_logs SET ${sets.join(',')} WHERE pipeline_id=? AND step_id=? AND id=(SELECT MAX(id) FROM pipeline_run_logs WHERE pipeline_id=? AND step_id=?)`).run(...vals, pipelineId, stepId)
+    vals.push(pipelineId, stepId, pipelineId, stepId)
+    this.db.prepare(`UPDATE pipeline_run_logs SET ${sets.join(',')} WHERE pipeline_id=? AND step_id=? AND id=(SELECT MAX(id) FROM pipeline_run_logs WHERE pipeline_id=? AND step_id=?)`).run(...vals)
   }
 
   getLogs(pipelineId: string): PipelineRunLog[] {
-    return (this.db as any).prepare('SELECT * FROM pipeline_run_logs WHERE pipeline_id=? ORDER BY started_at ASC').all(pipelineId) as any[]
+    return this.db.prepare('SELECT * FROM pipeline_run_logs WHERE pipeline_id=? ORDER BY started_at ASC').all(pipelineId)
   }
 }
 
@@ -221,8 +227,10 @@ async function runPipeline(pipelineId: string, controller: AbortController) {
 
     const agent = agentDb.getAgent(step.agentId)
     const input = interpolate(step.promptTemplate || '{{output}}', context)
+    // 全局模型覆盖：流水线设置的 modelId 优先于 Agent 自身的 modelId
+    const effectiveModelId = pipeline.modelId || agent?.modelId
 
-    logger.info('[Pipeline] Running step', { pipelineId, step: step.agentName, order: i })
+    logger.info('[Pipeline] Running step', { pipelineId, step: step.agentName, order: i, model: effectiveModelId })
 
     pipelineDb.addLog({
       pipelineId, stepId: step.id, agentName: step.agentName,
@@ -234,7 +242,7 @@ async function runPipeline(pipelineId: string, controller: AbortController) {
 
     try {
       for await (const chunk of handleChatStream(input, {
-        model: agent?.modelId,
+        model: effectiveModelId,
         selectedSkillId: agent?.skillId,
         executionMode: agent?.executionMode || 'auto',
         promptInstruction: agent?.prompt || '',
@@ -245,12 +253,15 @@ async function runPipeline(pipelineId: string, controller: AbortController) {
         if (chunk.type === 'reply' && chunk.reply) {
           output += chunk.reply
         } else if (chunk.type === 'error') {
-          stepError = String(chunk.error || '执行失败')
+          const err = chunk.error
+          if (err instanceof Error) stepError = err.message
+          else if (err && typeof err === 'object') stepError = (err as any).message || JSON.stringify(err)
+          else stepError = String(err || '执行失败')
           break
         }
       }
     } catch (e) {
-      stepError = e instanceof Error ? e.message : String(e)
+      stepError = e instanceof Error ? e.message : (e && typeof e === 'object' ? JSON.stringify(e) : String(e))
     }
 
     if (stepError) {
@@ -298,6 +309,7 @@ export async function handlePipelineRoute(pathname: string, request: Request): P
       id: generateId(),
       name: String(body.name),
       description: String(body.description || ''),
+      modelId: String(body.modelId || ''),
       steps: Array.isArray(body.steps) ? body.steps : [],
       status: 'idle',
       currentStepIndex: 0,
@@ -318,6 +330,7 @@ export async function handlePipelineRoute(pathname: string, request: Request): P
     const updatedPipeline = pipelineDb.update(singleMatch[1], {
       name: body.name,
       description: body.description,
+      modelId: String(body.modelId || ''),
       steps: body.steps
     })
     return updatedPipeline ? jsonResponse(updatedPipeline) : jsonResponse({ error: 'Not found' }, 404)
