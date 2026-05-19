@@ -225,6 +225,9 @@ export class ConfigValidator {
         theme: config.settings.theme ? String(config.settings.theme) : DEFAULTS.THEME,
         language: config.settings.language ? String(config.settings.language) : DEFAULTS.LANGUAGE,
         activeModelId: config.settings.activeModelId ? String(config.settings.activeModelId) : undefined,
+        activeSkillIds: Array.isArray(config.settings.activeSkillIds)
+          ? config.settings.activeSkillIds.map(String).filter(Boolean)
+          : [],
         userDataDir: config.settings.userDataDir ? String(config.settings.userDataDir) : undefined,
         skillsDir: config.settings.skillsDir ? String(config.settings.skillsDir) : PATHS.SKILLS_DIR,
         proxy

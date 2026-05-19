@@ -41,6 +41,7 @@ export interface AppSettings {
   theme: string
   language?: string
   activeModelId?: string
+  activeSkillIds?: string[]
   userDataDir?: string
   skillsDir?: string
   proxy?: ProxyConfig

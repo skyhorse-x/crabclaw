@@ -96,14 +96,7 @@
           </div>
           <div class="toolbar-right">
             <div class="toolbar-actions">
-              <button
-                class="monitor-toggle-btn"
-                type="button"
-                @click="toggleMonitorPanel"
-              >
-                {{ monitorPanelVisible ? t('monitorHide') : t('monitorShow') }}
-              </button>
-  
+
               <!-- 代理开关 -->
               <div class="toolbar-proxy-toggle" v-if="config.settings.proxy">
                 <span class="proxy-label" :class="{ active: config.settings.proxy.enabled }">代理</span>
@@ -154,10 +147,19 @@
                   class="message-bubble user"
                   @contextmenu.prevent="showMessageContextMenu($event, message.text)"
                 >
-                  <div class="message-text" v-html="renderMessageText(message.text)"></div>
+                  <div v-if="message.text" class="message-text" v-html="renderMessageText(message.text)"></div>
+                  <div v-if="message.imageUrl" class="msg-media-block">
+                    <img :src="message.imageUrl" class="msg-image-preview" @click="openImagePreview(message.imageUrl)" />
+                  </div>
+                  <div v-if="message.fileUrl" class="msg-file-block">
+                    <a :href="message.fileUrl" target="_blank" class="msg-file-link">
+                      <span class="msg-file-icon">{{ getFileIcon(message.fileMime) }}</span>
+                      <span class="msg-file-name">{{ message.fileName || '附件' }}</span>
+                    </a>
+                  </div>
                   <div v-if="message.meta?.attachments?.length" class="msg-image-attachments">
                     <template v-for="(att, i) in message.meta.attachments" :key="i">
-                      <img v-if="att.dataUrl" :src="att.dataUrl" :alt="att.name" class="msg-image-thumb" />
+                      <img v-if="att.dataUrl" :src="att.dataUrl" :alt="att.name" class="msg-image-thumb" @click="openImagePreview(att.dataUrl)" />
                       <span v-else class="msg-file-chip">📎 {{ att.name }}</span>
                     </template>
                   </div>
@@ -256,6 +258,16 @@
                   >
                     <div class="message-text" v-html="renderMessageText(message.text)"></div>
                     <span v-if="message.typing" class="print-cursor">|</span>
+                  </div>
+                  <!-- 媒体附件（图片/文件） -->
+                  <div v-if="message.imageUrl" class="msg-media-block">
+                    <img :src="message.imageUrl" class="msg-image-preview" @click="openImagePreview(message.imageUrl)" />
+                  </div>
+                  <div v-if="message.fileUrl" class="msg-file-block">
+                    <a :href="message.fileUrl" target="_blank" class="msg-file-link">
+                      <span class="msg-file-icon">{{ getFileIcon(message.fileMime) }}</span>
+                      <span class="msg-file-name">{{ message.fileName || '附件' }}</span>
+                    </a>
                   </div>
                   <div v-else-if="message.typing && !message.text" class="ai-result-body ai-result-body--thinking">
                     <span class="typing-indicator" aria-label="AI 正在思考">
@@ -392,14 +404,40 @@
                         </div>
                       </div>
                     </el-popover>
-                    <button class="option-btn" @click="openSkillsDialog">
-                      <span class="option-text">{{ selectedSkillName }}</span>
-                      <el-icon class="option-arrow"><ArrowDown /></el-icon>
-                    </button>
-                    <button class="option-btn" @click="openInspirationDialog">
-                      <span class="option-text">虾灵感</span>
-                      <el-icon class="option-arrow"><ArrowDown /></el-icon>
-                    </button>
+                    <el-popover
+                      v-model:visible="skillSelectorVisible"
+                      placement="top-start"
+                      :width="220"
+                      trigger="click"
+                      popper-class="model-selector-popover"
+                    >
+                      <template #reference>
+                        <button class="option-btn">
+                          <span class="option-text">{{ selectedSkillName }}</span>
+                          <el-icon class="option-arrow"><ArrowDown /></el-icon>
+                        </button>
+                      </template>
+                      <div class="model-selector-list">
+                        <div
+                          v-for="skill in installedChatSkills"
+                          :key="skill.id"
+                          class="model-selector-item"
+                          :class="{ active: selectedChatSkillIds.includes(skill.id) }"
+                          @click="toggleSkillSelection(skill.id)"
+                        >
+                          <span class="model-selector-name">{{ skill.name }}</span>
+                          <el-icon v-if="selectedChatSkillIds.includes(skill.id)" class="model-selector-check"><Check /></el-icon>
+                        </div>
+                        <div v-if="installedChatSkills.length === 0" class="model-selector-empty">
+                          暂无已安装技能
+                        </div>
+                        <div v-if="selectedChatSkillIds.length > 0" class="model-selector-divider"></div>
+                        <div v-if="selectedChatSkillIds.length > 0" class="model-selector-add" @click="clearSkillSelection">
+                          <el-icon><Delete /></el-icon>
+                          <span>清除选择</span>
+                        </div>
+                      </div>
+                    </el-popover>
                   </div>
                   <div class="input-actions">
                     <el-button
@@ -714,6 +752,11 @@
       <AgentOffice3D :agents="officeAgents" />
     </el-dialog>
 
+    <!-- 图片预览 -->
+    <el-dialog v-model="imagePreviewVisible" :title="''" width="auto" class="image-preview-dialog" align-center>
+      <img :src="imagePreviewUrl" class="image-preview-full" />
+    </el-dialog>
+
     <!-- 输入框/消息右键菜单 -->
     <Teleport to="body">
       <div
@@ -868,6 +911,27 @@ const loading = reactive({
 })
 
 const remoteLoadingConvIds = ref<Set<string>>(new Set())
+
+const imagePreviewUrl = ref('')
+const imagePreviewVisible = ref(false)
+
+function openImagePreview(url?: string) {
+  if (!url) return
+  imagePreviewUrl.value = url
+  imagePreviewVisible.value = true
+}
+
+function getFileIcon(mime?: string): string {
+  if (!mime) return '📎'
+  if (mime.startsWith('image/')) return '🖼️'
+  if (mime.startsWith('video/')) return '🎬'
+  if (mime.startsWith('audio/')) return '🎵'
+  if (mime.includes('pdf')) return '📄'
+  if (mime.includes('zip') || mime.includes('rar') || mime.includes('7z')) return '🗜️'
+  if (mime.includes('word') || mime.includes('document')) return '📝'
+  if (mime.includes('excel') || mime.includes('spreadsheet')) return '📊'
+  return '📎'
+}
 
 const isChatPaused = ref(false)
 let chatAbortController: AbortController | null = null
@@ -1044,6 +1108,7 @@ interface AppConfig {
     theme: string
     language: string
     activeModelId: string
+    activeSkillIds?: string[]
     userDataDir?: string
     skillsDir?: string
     username?: string
@@ -1090,6 +1155,10 @@ interface Conversation {
     typing?: boolean
     error?: boolean
     isReading?: boolean
+    imageUrl?: string
+    fileUrl?: string
+    fileName?: string
+    fileMime?: string
     pendingConfirm?: {
       server: string
       tool: string
@@ -1262,6 +1331,7 @@ const locales = {
     initializing: "小螃蟹启动中",
     sidebarFold: "折叠侧边栏",
     newChat: "新建对话",
+    noConversation: "暂无对话",
     navChat: "对话",
     navAgents: "代理",
     navPipeline: "流水线",
@@ -1289,6 +1359,11 @@ const locales = {
     enabled: "已启用",
     disabled: "已停用",
     delete: "删除",
+    rename: "重命名",
+    clearMessages: "清空消息",
+    days: "天",
+    hours: "小时",
+    minutes: "分钟",
     viewLogs: "查看日志",
     taskLogsTitle: "执行日志",
     taskLogsEmpty: "暂无执行日志",
@@ -1565,6 +1640,11 @@ const locales = {
     refresh: "Refresh",
     enabled: "Enabled",
     disabled: "Disabled",
+    rename: "Rename",
+    clearMessages: "Clear Messages",
+    days: "days",
+    hours: "hours",
+    minutes: "minutes",
     viewLogs: "View Logs",
     taskLogsTitle: "Execution Logs",
     taskLogsEmpty: "No execution logs",
@@ -1760,6 +1840,7 @@ const locales = {
     apiBaseUrl: "API Base URL",
     activeStatus: "Active Status",
     cancel: "Cancel",
+    delete: "Delete",
     add: "Add",
     save: "Save",
     confirmDelete: "Confirm Delete",
@@ -1903,12 +1984,12 @@ const userAvatarText = computed(() => {
 })
 
 const selectedSkillName = computed(() => {
-  if (selectedChatSkillIds.value.length === 0) return '技能'
+  if (selectedChatSkillIds.value.length === 0) return t('navSkills')
   if (selectedChatSkillIds.value.length === 1) {
-    const skill = config.value.skills.find(s => s.id === selectedChatSkillIds.value[0])
-    return skill?.name || '技能'
+    const skill = installedChatSkills.value.find((s: any) => s.id === selectedChatSkillIds.value[0])
+    return skill?.name || t('navSkills')
   }
-  return `技能 (${selectedChatSkillIds.value.length})`
+  return `${t('navSkills')} (${selectedChatSkillIds.value.length})`
 })
 
 // 选项按钮点击处理
@@ -1934,6 +2015,14 @@ function openSkillsDialog() {
   skillSelectorVisible.value = true
 }
 
+function saveSkillSelection() {
+  config.value.settings.activeSkillIds = [...selectedChatSkillIds.value]
+  request("/api/config", {
+    method: "PUT",
+    body: JSON.stringify(config.value)
+  }).catch(() => {})
+}
+
 function toggleSkillSelection(skillId: string) {
   const idx = selectedChatSkillIds.value.indexOf(skillId)
   if (idx === -1) {
@@ -1941,6 +2030,7 @@ function toggleSkillSelection(skillId: string) {
   } else {
     selectedChatSkillIds.value = selectedChatSkillIds.value.filter(id => id !== skillId)
   }
+  saveSkillSelection()
 }
 
 function confirmSkillSelection() {
@@ -1949,6 +2039,7 @@ function confirmSkillSelection() {
 
 function clearSkillSelection() {
   selectedChatSkillIds.value = []
+  saveSkillSelection()
 }
 
 function selectSkill(skillId: string) {
@@ -1956,9 +2047,7 @@ function selectSkill(skillId: string) {
   skillSelectorVisible.value = false
 }
 
-function openInspirationDialog() {
-  ElMessage.info('灵感功能开发中')
-}
+
 
 function openUserMenu() {
   router.push('/settings')
@@ -2735,6 +2824,7 @@ const mcpInstalling = ref(false)
 const mcpServers = ref<any[]>([])
 const mcpLoading = ref(false)
 const skillMarket = ref<any[]>([])
+const installedChatSkills = computed(() => skillMarket.value.filter(s => s.installed))
 const skillLoading = ref(false)
 const skillCurrentPage = ref(1)
 const skillPageSize = ref(10)
@@ -3727,12 +3817,17 @@ async function loadConfig() {
         theme: data?.settings?.theme ?? "light",
         language: data?.settings?.language ?? "zh-CN",
         activeModelId: data?.settings?.activeModelId ?? "",
+        activeSkillIds: Array.isArray(data?.settings?.activeSkillIds) ? data.settings.activeSkillIds : [],
         userDataDir: data?.settings?.userDataDir ?? "",
         skillsDir: data?.settings?.skillsDir ?? "",
         proxy: data?.settings?.proxy ?? { enabled: false, protocol: 'http', host: '', port: 0, username: '', password: '' }
       },
       models: Array.isArray(data?.models) && data.models.length > 0 ? data.models : [],
       skills: Array.isArray(data?.skills) ? data.skills : []
+    }
+    // 恢复已保存的技能选择
+    if (Array.isArray(data?.settings?.activeSkillIds) && data.settings.activeSkillIds.length > 0) {
+      selectedChatSkillIds.value = data.settings.activeSkillIds
     }
   } catch (error) {
     console.error("加载配置失败:", error)
@@ -4815,7 +4910,7 @@ onMounted(async () => {
 
   // 注册事件监听（不依赖后台任务完成）
   chatWs.on('remote_message', (payload: any) => {
-    const msg = payload as { platform: string; text: string; sender: string; timestamp: number; msgType?: string }
+    const msg = payload as { platform: string; text: string; sender: string; timestamp: number; msgType?: string; imageUrl?: string; fileUrl?: string; fileName?: string; fileMime?: string }
     if (msg.platform === 'wechat') {
       pushWechatMessage({
         sender: msg.sender,
@@ -4823,6 +4918,28 @@ onMounted(async () => {
         timestamp: msg.timestamp || Date.now(),
         msgType: msg.msgType,
       })
+    }
+    // 非文本媒体消息（图片/文件）直接插入远控对话，不经过 agent
+    if (msg.imageUrl || msg.fileUrl) {
+      const platform = msg.platform.toLowerCase()
+      const convId = `remote-${platform}`
+      const platformNames: Record<string, string> = { wechat: '微信', telegram: 'Telegram', qq: 'QQ', feishu: '飞书', discord: 'Discord', slack: 'Slack', teams: 'Teams', whatsapp: 'WhatsApp' }
+      const platformCNName = platformNames[platform] || msg.platform.toUpperCase()
+      let conv = conversations.value.find(c => c.id === convId)
+      if (!conv) {
+        conv = { id: convId, title: `${platformCNName}Bot`, agentId: 'builtin-bot', messages: [] }
+        conversations.value.unshift(conv)
+      }
+      conv.messages.push({
+        role: 'user',
+        text: msg.text || '',
+        agentName: msg.sender,
+        imageUrl: msg.imageUrl,
+        fileUrl: msg.fileUrl,
+        fileName: msg.fileName,
+        fileMime: msg.fileMime,
+      })
+      scheduleSaveChatHistory()
     }
   })
 
@@ -6350,5 +6467,98 @@ function deleteModel(modelId: string) {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
+}
+
+/* 媒体消息 */
+.msg-media-block {
+  margin-top: 6px;
+}
+
+.msg-image-preview {
+  max-width: 280px;
+  max-height: 280px;
+  border-radius: 8px;
+  cursor: zoom-in;
+  display: block;
+  object-fit: contain;
+  border: 1px solid var(--border-color);
+}
+
+.msg-image-thumb {
+  max-width: 120px;
+  max-height: 120px;
+  border-radius: 6px;
+  cursor: zoom-in;
+  object-fit: cover;
+  border: 1px solid var(--border-color);
+}
+
+.msg-image-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.msg-file-block {
+  margin-top: 6px;
+}
+
+.msg-file-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  text-decoration: none;
+  color: var(--text-primary);
+  font-size: 13px;
+  max-width: 260px;
+  transition: background 0.15s;
+}
+
+.msg-file-link:hover {
+  background: #E8E8E8;
+}
+
+.msg-file-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.msg-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.msg-file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* 图片预览弹窗 */
+.image-preview-dialog .el-dialog__body {
+  padding: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: #000;
+}
+
+.image-preview-full {
+  max-width: 90vw;
+  max-height: 85vh;
+  object-fit: contain;
+  display: block;
 }
 </style>

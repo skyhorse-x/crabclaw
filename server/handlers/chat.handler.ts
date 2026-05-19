@@ -1,4 +1,5 @@
 import { getConfigService } from '../services/config.service'
+import { skillRegistry } from '../skills/skill-registry'
 import { getEncryptionService } from '../services/encryption.service'
 import { getMcpTools, callMcpTool } from '../services/mcp.service'
 import { builtinTools } from '../services/builtin-tools.service'
@@ -2259,7 +2260,19 @@ export async function* handleChatStream(
     throwIfAborted(abortSignal)
     const configService = getConfigService()
     const config = await configService.getConfig()
-    const skills = config.skills || []
+    // 合并 config.skills（自定义技能）与 skillRegistry（已安装的市场技能）
+    const installedSkills: SkillConfig[] = skillRegistry.getAllSkills().map(s => ({
+      id: s.id,
+      name: s.name,
+      description: s.description || '',
+      category: (s.category || 'custom') as any,
+      tags: [],
+      triggerPhrases: [],
+      delayMs: 0,
+      steps: []
+    }))
+    const configSkillIds = new Set((config.skills || []).map((s: SkillConfig) => s.id))
+    const skills: SkillConfig[] = [...(config.skills || []), ...installedSkills.filter(s => !configSkillIds.has(s.id))]
 
     // 获取当前激活的模型（支持前端传入 model 优先）
     const activeModelId = config.settings?.activeModelId
@@ -2319,9 +2332,10 @@ export async function* handleChatStream(
     const builtinToolsDesc = builtinTools.getToolDescriptions()
     const allToolsDesc = mcpToolsDesc + (builtinToolsDesc ? '\n' + builtinToolsDesc : '')
 
+    const configActiveSkillIds: string[] = Array.isArray(config.settings?.activeSkillIds) ? config.settings.activeSkillIds : []
     const effectiveSkillIds = (options.selectedSkillIds && options.selectedSkillIds.length > 0)
       ? options.selectedSkillIds
-      : (options.selectedSkillId ? [options.selectedSkillId] : [])
+      : (options.selectedSkillId ? [options.selectedSkillId] : configActiveSkillIds)
 
     const selectedSkills = effectiveSkillIds
       .map(id => skills.find(s => s.id === id))

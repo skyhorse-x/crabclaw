@@ -257,6 +257,10 @@ function broadcastToClients(message: {
   sender: string
   timestamp: number
   chatId?: string
+  imageUrl?: string
+  fileName?: string
+  fileUrl?: string
+  fileMime?: string
 }) {
   wsService.broadcastAll({ type: 'remote_message', payload: message })
   remoteControlLogService.info('message_broadcast', message.platform, `收到远控消息: ${message.text.slice(0, 100)}`, `sender=${message.sender}`, message.sender)
@@ -354,35 +358,57 @@ async function fetchTelegramUpdates(offset?: number): Promise<void> {
     let nextOffset = 0
 
     for (const update of data.result) {
-      if (update.message && update.message.text) {
-        const chatId = String(update.message.chat.id)
-        const chatType = update.message.chat.type
-        const text = update.message.text
-        const username = update.message.from?.username || update.message.from?.first_name || 'Unknown'
+      const msg = update.message
+      if (msg) {
+        const chatId = String(msg.chat.id)
+        const chatType = msg.chat.type
+        const username = msg.from?.username || msg.from?.first_name || 'Unknown'
 
         // 群组消息：检查 chatId 白名单；私聊消息：直接放行
         const isGroup = chatType === 'group' || chatType === 'supergroup' || chatType === 'channel'
         if (isGroup && remoteConfig.telegram.chatId && chatId !== remoteConfig.telegram.chatId) {
-          remoteControlLogService.info('message_ignored', 'telegram', `忽略非授权群组消息: ${text.slice(0, 50)}`, `chatId=${chatId}`, `@${username}`)
+          remoteControlLogService.info('message_ignored', 'telegram', `忽略非授权群组消息`, `chatId=${chatId}`, `@${username}`)
+          nextOffset = update.update_id + 1
           continue
         }
 
-        // 前缀处理：有前缀则去掉前缀，没有前缀直接取全文
         const prefix = remoteConfig.commandPrefix || ''
-        const command = (prefix && text.startsWith(prefix))
-          ? text.slice(prefix.length).trim()
-          : text.trim()
 
-        if (command) {
-          remoteControlLogService.info('message_received', 'telegram', `收到消息: ${command.slice(0, 100)}`, `chatId=${chatId}`, `@${username}`)
-          broadcastToClients({
-            type: 'remote_message',
-            platform: 'telegram',
-            text: command,
-            sender: `@${username}`,
-            chatId,
-            timestamp: Date.now()
-          })
+        if (msg.text) {
+          // 纯文本消息
+          const command = (prefix && msg.text.startsWith(prefix))
+            ? msg.text.slice(prefix.length).trim()
+            : msg.text.trim()
+
+          if (command) {
+            remoteControlLogService.info('message_received', 'telegram', `收到消息: ${command.slice(0, 100)}`, `chatId=${chatId}`, `@${username}`)
+            broadcastToClients({ type: 'remote_message', platform: 'telegram', text: command, sender: `@${username}`, chatId, timestamp: Date.now() })
+          }
+        } else if (msg.photo) {
+          // 图片消息（取最高分辨率）
+          const largest = msg.photo.reduce((a, b) => (b.file_size || 0) > (a.file_size || 0) ? b : a)
+          const imageUrl = await getTelegramFileUrl(largest.file_id)
+          const caption = msg.caption || '[图片]'
+          remoteControlLogService.info('message_received', 'telegram', `收到图片消息`, `chatId=${chatId}`, `@${username}`)
+          broadcastToClients({ type: 'remote_message', platform: 'telegram', text: caption, sender: `@${username}`, chatId, timestamp: Date.now(), imageUrl: imageUrl || undefined })
+        } else if (msg.document) {
+          // 文件/文档消息
+          const fileUrl = await getTelegramFileUrl(msg.document.file_id)
+          const caption = msg.caption || msg.document.file_name || '[文件]'
+          remoteControlLogService.info('message_received', 'telegram', `收到文件消息: ${msg.document.file_name || ''}`, `chatId=${chatId}`, `@${username}`)
+          broadcastToClients({ type: 'remote_message', platform: 'telegram', text: caption, sender: `@${username}`, chatId, timestamp: Date.now(), fileUrl: fileUrl || undefined, fileName: msg.document.file_name, fileMime: msg.document.mime_type })
+        } else if (msg.sticker) {
+          remoteControlLogService.info('message_received', 'telegram', `收到贴纸 ${msg.sticker.emoji || ''}`, `chatId=${chatId}`, `@${username}`)
+          broadcastToClients({ type: 'remote_message', platform: 'telegram', text: `[贴纸 ${msg.sticker.emoji || ''}]`, sender: `@${username}`, chatId, timestamp: Date.now() })
+        } else if (msg.voice) {
+          const fileUrl = await getTelegramFileUrl(msg.voice.file_id)
+          remoteControlLogService.info('message_received', 'telegram', `收到语音消息`, `chatId=${chatId}`, `@${username}`)
+          broadcastToClients({ type: 'remote_message', platform: 'telegram', text: '[语音消息]', sender: `@${username}`, chatId, timestamp: Date.now(), fileUrl: fileUrl || undefined, fileMime: msg.voice.mime_type })
+        } else if (msg.video) {
+          const fileUrl = await getTelegramFileUrl(msg.video.file_id)
+          const caption = msg.caption || msg.video.file_name || '[视频]'
+          remoteControlLogService.info('message_received', 'telegram', `收到视频消息`, `chatId=${chatId}`, `@${username}`)
+          broadcastToClients({ type: 'remote_message', platform: 'telegram', text: caption, sender: `@${username}`, chatId, timestamp: Date.now(), fileUrl: fileUrl || undefined, fileMime: msg.video.mime_type })
         }
       }
 
@@ -438,6 +464,22 @@ function scheduleNextPolling(hasError: boolean = false, nextOffset?: number): vo
   telegramPollingTimer = setTimeout(() => fetchTelegramUpdates(nextOffset), delay)
 }
 
+interface TelegramPhotoSize {
+  file_id: string
+  file_unique_id: string
+  width: number
+  height: number
+  file_size?: number
+}
+
+interface TelegramDocument {
+  file_id: string
+  file_unique_id: string
+  file_name?: string
+  mime_type?: string
+  file_size?: number
+}
+
 interface TelegramUpdate {
   update_id: number
   message?: {
@@ -445,6 +487,30 @@ interface TelegramUpdate {
     chat: { id: number; type: string }
     from?: { id: number; username?: string; first_name?: string }
     text?: string
+    caption?: string
+    photo?: TelegramPhotoSize[]
+    document?: TelegramDocument
+    sticker?: { file_id: string; emoji?: string }
+    video?: { file_id: string; mime_type?: string; file_name?: string }
+    audio?: { file_id: string; mime_type?: string; file_name?: string; title?: string }
+    voice?: { file_id: string; mime_type?: string }
+  }
+}
+
+async function getTelegramFileUrl(fileId: string): Promise<string | null> {
+  const token = remoteConfig.telegram?.botToken
+  if (!token) return null
+  try {
+    const res = await fetchWithProxy(
+      `https://api.telegram.org/bot${token}/getFile?file_id=${fileId}`,
+      {}, remoteConfig.telegram.proxyEnabled, 10000
+    )
+    if (!res.ok) return null
+    const data = await res.json() as { ok: boolean; result?: { file_path?: string } }
+    if (!data.ok || !data.result?.file_path) return null
+    return `https://api.telegram.org/file/bot${token}/${data.result.file_path}`
+  } catch {
+    return null
   }
 }
 
