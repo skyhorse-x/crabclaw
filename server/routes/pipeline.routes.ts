@@ -40,6 +40,8 @@ export interface PipelineStep {
   order: number
   promptTemplate: string  // 支持 {{output}} 引用上一步输出
   waitForApproval: boolean
+  maxRetries?: number      // 失败自动重试次数，默认 0
+  workDir?: string         // 步骤工作目录，注入到 system prompt
 }
 
 export interface PipelineRecord {
@@ -190,8 +192,78 @@ const runningPipelines = new Map<string, AbortController>()
 
 // ===== 流水线执行引擎 =====
 
+// 输出超过此字符数时，只保留摘要传给下一步，避免 token 爆炸
+const OUTPUT_SUMMARY_THRESHOLD = 4000
+const OUTPUT_PASS_MAX = 6000
+
 function interpolate(template: string, context: Record<string, string>): string {
   return template.replace(/\{\{(\w+)\}\}/g, (_, key) => context[key] ?? '')
+}
+
+// 将上一步输出裁剪到安全长度：超长时只保留首尾 + 中间省略提示
+function trimOutput(output: string): string {
+  if (output.length <= OUTPUT_PASS_MAX) return output
+  const head = output.slice(0, OUTPUT_SUMMARY_THRESHOLD)
+  const tail = output.slice(-1000)
+  return `${head}\n\n…（内容已裁剪，共 ${output.length} 字符）…\n\n${tail}`
+}
+
+// 构建步骤级 system prompt 追加内容（工作目录 + 文件操作规范）
+function buildStepSystemAppend(step: PipelineStep, stepIndex: number, totalSteps: number, workDir?: string): string {
+  const lines: string[] = []
+  lines.push(`\n\n【流水线上下文】`)
+  lines.push(`- 当前步骤：第 ${stepIndex + 1} 步 / 共 ${totalSteps} 步（${step.agentName}）`)
+  if (workDir) {
+    lines.push(`- 工作目录：${workDir}`)
+    lines.push(`- 所有文件操作必须在此目录下进行，使用绝对路径`)
+  }
+  lines.push(`\n【输出规范】`)
+  lines.push(`- 完成后必须输出一个简短的【交付物摘要】，格式：`)
+  lines.push(`  DELIVERABLES:`)
+  lines.push(`  - 文件：/path/to/file（简述内容）`)
+  lines.push(`  - 说明：关键决策或注意事项`)
+  lines.push(`- 摘要放在回复最后，供下一步 Agent 使用`)
+  return lines.join('\n')
+}
+
+// 从输出中提取交付物摘要（DELIVERABLES 块），没有则截取末尾
+function extractSummary(output: string): string {
+  const match = output.match(/DELIVERABLES:[\s\S]*$/i)
+  if (match) return match[0].trim()
+  // 没有结构化摘要，取最后 800 字作为上下文摘要
+  return output.length > 800 ? `…${output.slice(-800)}` : output
+}
+
+async function runStepOnce(
+  input: string,
+  options: {
+    model?: string
+    selectedSkillId?: string
+    executionMode?: 'auto' | 'manual'
+    promptInstruction?: string
+    allowedMcpServers?: string[]
+    signal?: AbortSignal
+  }
+): Promise<{ output: string; error: string }> {
+  let output = ''
+  let stepError = ''
+  try {
+    for await (const chunk of handleChatStream(input, options, [])) {
+      if (options.signal?.aborted) break
+      if (chunk.type === 'reply' && chunk.reply) {
+        output += chunk.reply
+      } else if (chunk.type === 'error') {
+        const err = chunk.error
+        if (err instanceof Error) stepError = err.message
+        else if (err && typeof err === 'object') stepError = (err as any).message || JSON.stringify(err)
+        else stepError = String(err || '执行失败')
+        break
+      }
+    }
+  } catch (e) {
+    stepError = e instanceof Error ? e.message : (e && typeof e === 'object' ? JSON.stringify(e) : String(e))
+  }
+  return { output, error: stepError }
 }
 
 async function runPipeline(pipelineId: string, controller: AbortController) {
@@ -201,6 +273,9 @@ async function runPipeline(pipelineId: string, controller: AbortController) {
   const steps = pipeline.steps
   const context: Record<string, string> = { ...pipeline.context }
   let i = pipeline.currentStepIndex
+
+  // 推导工作目录：pipeline context 里有 workDir 则用，否则默认桌面临时目录
+  const pipelineWorkDir = context['workDir'] || ''
 
   pipelineDb.update(pipelineId, { status: 'running', context })
 
@@ -226,54 +301,79 @@ async function runPipeline(pipelineId: string, controller: AbortController) {
     }
 
     const agent = agentDb.getAgent(step.agentId)
-    const input = interpolate(step.promptTemplate || '{{output}}', context)
-    // 全局模型覆盖：流水线设置的 modelId 优先于 Agent 自身的 modelId
+    // 全局模型覆盖
     const effectiveModelId = pipeline.modelId || agent?.modelId
 
-    logger.info('[Pipeline] Running step', { pipelineId, step: step.agentName, order: i, model: effectiveModelId })
+    // 工作目录：步骤级 > 流水线级
+    const effectiveWorkDir = step.workDir || pipelineWorkDir
+
+    // 构建输入：模板插值 + 上下文裁剪
+    const rawInput = interpolate(step.promptTemplate || '{{output}}', context)
+
+    // 组装 system prompt 追加（工作目录规范 + 交付物格式要求）
+    const stepSystemAppend = buildStepSystemAppend(step, i, steps.length, effectiveWorkDir)
+    const agentPrompt = (agent?.prompt || '') + stepSystemAppend
+
+    logger.info('[Pipeline] Running step', { pipelineId, step: step.agentName, order: i, model: effectiveModelId, workDir: effectiveWorkDir })
 
     pipelineDb.addLog({
       pipelineId, stepId: step.id, agentName: step.agentName,
-      input, output: '', status: 'running', startedAt: getNow()
+      input: rawInput, output: '', status: 'running', startedAt: getNow()
     })
 
+    const maxRetries = typeof step.maxRetries === 'number' ? Math.min(step.maxRetries, 3) : 0
     let output = ''
     let stepError = ''
+    let attempt = 0
 
-    try {
-      for await (const chunk of handleChatStream(input, {
-        model: effectiveModelId,
-        selectedSkillId: agent?.skillId,
-        executionMode: agent?.executionMode || 'auto',
-        promptInstruction: agent?.prompt || '',
-        allowedMcpServers: Array.isArray(agent?.mcpServers) ? agent.mcpServers : [],
-        signal: controller.signal
-      }, [])) {
-        if (controller.signal.aborted) break
-        if (chunk.type === 'reply' && chunk.reply) {
-          output += chunk.reply
-        } else if (chunk.type === 'error') {
-          const err = chunk.error
-          if (err instanceof Error) stepError = err.message
-          else if (err && typeof err === 'object') stepError = (err as any).message || JSON.stringify(err)
-          else stepError = String(err || '执行失败')
-          break
-        }
+    // 重试循环
+    while (attempt <= maxRetries) {
+      if (controller.signal.aborted) break
+      if (attempt > 0) {
+        logger.warn('[Pipeline] Retrying step', { pipelineId, step: step.agentName, attempt, error: stepError })
+        // 重试时在输入里附带上次错误信息，让 Agent 感知并修正
+        const retryInput = `${rawInput}\n\n【注意】上次执行出现错误，请修正后重新完成：${stepError}`
+        const result = await runStepOnce(retryInput, {
+          model: effectiveModelId,
+          selectedSkillId: agent?.skillId,
+          executionMode: agent?.executionMode || 'auto',
+          promptInstruction: agentPrompt,
+          allowedMcpServers: Array.isArray(agent?.mcpServers) ? agent.mcpServers : [],
+          signal: controller.signal
+        })
+        output = result.output
+        stepError = result.error
+      } else {
+        const result = await runStepOnce(rawInput, {
+          model: effectiveModelId,
+          selectedSkillId: agent?.skillId,
+          executionMode: agent?.executionMode || 'auto',
+          promptInstruction: agentPrompt,
+          allowedMcpServers: Array.isArray(agent?.mcpServers) ? agent.mcpServers : [],
+          signal: controller.signal
+        })
+        output = result.output
+        stepError = result.error
       }
-    } catch (e) {
-      stepError = e instanceof Error ? e.message : (e && typeof e === 'object' ? JSON.stringify(e) : String(e))
+
+      if (!stepError) break
+      attempt++
     }
 
     if (stepError) {
-      pipelineDb.updateLog(pipelineId, step.id, { output, status: 'error', error: stepError, finishedAt: getNow() })
+      pipelineDb.updateLog(pipelineId, step.id, { output, status: 'error', error: `（共尝试 ${attempt} 次）${stepError}`, finishedAt: getNow() })
       pipelineDb.update(pipelineId, { status: 'error', context })
       runningPipelines.delete(pipelineId)
       return
     }
 
+    // 存完整输出到 context（用 step_N 键），传给下一步的是裁剪后的摘要
     context[`step_${i}`] = output
-    context['output'] = output  // 最新输出始终可用 {{output}}
     context[`${step.agentName}`] = output
+    // {{output}} 传摘要，避免 token 超限
+    context['output'] = trimOutput(extractSummary(output))
+    // {{output_full}} 保留完整（给有需要的步骤显式引用）
+    context['output_full'] = trimOutput(output)
 
     pipelineDb.updateLog(pipelineId, step.id, { output, status: 'done', finishedAt: getNow() })
     pipelineDb.update(pipelineId, { context, currentStepIndex: i + 1 })
@@ -349,13 +449,17 @@ export async function handlePipelineRoute(pathname: string, request: Request): P
     if (!pipeline) return jsonResponse({ error: 'Not found' }, 404)
     if (runningPipelines.has(id)) return jsonResponse({ error: 'Already running' }, 409)
     const body = await parseBody(request)
-    // 支持传入初始输入
     const initialInput = String(body?.input || '')
+    const initialWorkDir = String(body?.workDir || '')
+    const initContext: Record<string, string> = {}
     if (initialInput) {
-      pipelineDb.update(id, { context: { ...pipeline.context, input: initialInput, output: initialInput }, status: 'idle', currentStepIndex: 0 })
-    } else {
-      pipelineDb.update(id, { status: 'idle', currentStepIndex: 0, context: {} })
+      initContext['input'] = initialInput
+      initContext['output'] = initialInput
     }
+    if (initialWorkDir) {
+      initContext['workDir'] = initialWorkDir
+    }
+    pipelineDb.update(id, { status: 'idle', currentStepIndex: 0, context: initContext })
     const controller = new AbortController()
     runningPipelines.set(id, controller)
     runPipeline(id, controller).catch(e => logger.error('[Pipeline] Run error', { e }))

@@ -10,17 +10,24 @@ import { handleApiRequest } from '../api/routes'
 import { PATHS } from '../shared/constants'
 import fs from 'fs'
 
-const CORS_HEADERS: Record<string, string> = {
+const CORS_BASE_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Allow-Credentials': 'true',
 }
 
-// 始终允许所有来源，打包后 Neutralino/Electron 从随机端口访问需要通配
-CORS_HEADERS['Access-Control-Allow-Origin'] = '*'
+// 反射请求的 Origin（不能用通配符 * 同时携带 credentials）
+// Neutralino 打包后 webview origin 通常是 null 或 http://localhost
+function getAllowOrigin(request: Request): string {
+  const origin = request.headers.get('origin')
+  if (!origin || origin === 'null') return 'http://localhost'
+  return origin
+}
 
-function withCors(response: Response): Response {
+function withCors(response: Response, request: Request): Response {
   const headers = new Headers(response.headers)
-  for (const [key, value] of Object.entries(CORS_HEADERS)) {
+  headers.set('Access-Control-Allow-Origin', getAllowOrigin(request))
+  for (const [key, value] of Object.entries(CORS_BASE_HEADERS)) {
     headers.set(key, value)
   }
   return new Response(response.body, {
@@ -31,15 +38,12 @@ function withCors(response: Response): Response {
 }
 
 /**
- * 创建 JSON 响应
+ * 创建 JSON 响应（不含 CORS，由 withCors 统一注入）
  */
 export function json(data: unknown, status: number = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: {
-      'content-type': 'application/json; charset=utf-8',
-      ...CORS_HEADERS
-    }
+    headers: { 'content-type': 'application/json; charset=utf-8' }
   })
 }
 
@@ -68,25 +72,26 @@ async function handleRequest(request: Request): Promise<Response> {
   if (method === 'OPTIONS') {
     return new Response(null, {
       status: 204,
-      headers: CORS_HEADERS
+      headers: {
+        'Access-Control-Allow-Origin': getAllowOrigin(request),
+        ...CORS_BASE_HEADERS,
+      }
     })
   }
 
   try {
     logger.debug('Request received', { method, pathname })
 
-    // 尝试使用 API 路由处理器
     const apiResponse = await handleApiRequest(pathname, request)
     if (apiResponse) {
-      return withCors(apiResponse)
+      return withCors(apiResponse, request)
     }
 
-    // 404
     logger.debug('Route not found', { method, pathname })
-    return withCors(apiErrorResponse('Not found', 404))
+    return withCors(apiErrorResponse('Not found', 404), request)
   } catch (error) {
     logger.error('Request handler error', error, { method, pathname })
-    return withCors(apiErrorResponse(error instanceof Error ? error.message : 'Internal error', 500))
+    return withCors(apiErrorResponse(error instanceof Error ? error.message : 'Internal error', 500), request)
   }
 }
 

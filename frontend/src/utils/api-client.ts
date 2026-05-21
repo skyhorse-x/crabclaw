@@ -220,7 +220,7 @@ export class ApiClient {
     const fetchOptions: RequestInit = {
       method,
       headers: requestHeaders,
-      credentials: 'include'
+      // 不携带 credentials：本地后端不需要跨域 cookie，且 credentials:'include' 与 CORS 通配符不兼容
     }
 
     // 设置请求体

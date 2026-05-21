@@ -57,25 +57,31 @@ export async function readJsonBody(request: Request): Promise<any> {
 }
 
 /**
- * 创建 CORS 预检响应
+ * 创建 CORS 预检响应（反射 Origin，不用通配符）
  */
-export function corsPreflight(): Response {
+export function corsPreflight(request?: Request): Response {
+  const origin = request?.headers.get('origin')
+  const allowOrigin = (!origin || origin === 'null') ? 'http://localhost' : origin
   return new Response(null, {
     status: 204,
     headers: {
-      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Origin': allowOrigin,
       'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type'
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Access-Control-Allow-Credentials': 'true',
     }
   })
 }
 
 /**
- * 添加 CORS 头到响应
+ * 添加 CORS 头到响应（反射 Origin，不用通配符）
  */
-export function withCors(response: Response): Response {
+export function withCors(response: Response, request?: Request): Response {
+  const origin = request?.headers.get('origin')
+  const allowOrigin = (!origin || origin === 'null') ? 'http://localhost' : origin
   const newHeaders = new Headers(response.headers)
-  newHeaders.set('Access-Control-Allow-Origin', '*')
+  newHeaders.set('Access-Control-Allow-Origin', allowOrigin)
+  newHeaders.set('Access-Control-Allow-Credentials', 'true')
   return new Response(response.body, {
     status: response.status,
     headers: newHeaders

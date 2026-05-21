@@ -12,12 +12,43 @@ function getBackendPort() {
   }
 }
 
+const neutralinoDevPlugin = () => ({
+  name: 'neutralino-dev-script',
+  transformIndexHtml: {
+    order: 'pre',
+    handler(html, ctx) {
+      if (ctx.server) {
+        return html.replace(
+          '<script src="./neutralino.js"></script>',
+          '<script src="http://localhost:53979/neutralino.js"></script>'
+        )
+      }
+      return html
+    }
+  }
+})
+
+// Clean only Vite-generated files, preserving neutralino runtime files
+const cleanViteOutputPlugin = () => ({
+  name: 'clean-vite-output',
+  buildStart() {
+    const outDir = path.resolve(__dirname, '../resources')
+    const toRemove = ['assets', 'index.html', 'app.js', 'styles.css']
+    for (const name of toRemove) {
+      const target = path.join(outDir, name)
+      if (fs.existsSync(target)) {
+        fs.rmSync(target, { recursive: true, force: true })
+      }
+    }
+  }
+})
+
 export default defineConfig(() => {
   const backendPort = getBackendPort()
 
   return {
     root: path.resolve(__dirname),
-    plugins: [vue()],
+    plugins: [vue(), neutralinoDevPlugin(), cleanViteOutputPlugin()],
     base: "./",
     define: {
       __BACKEND_PORT__: backendPort

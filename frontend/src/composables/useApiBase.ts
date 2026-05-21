@@ -1,17 +1,20 @@
 import { ref } from 'vue'
 
-// 在模块加载时立即确定 apiBase，避免组件 onMounted 时 apiBase 还是空字符串
-// dev 模式（Vite proxy，port 5173/4173）：相对路径，保持空字符串
-// 打包模式（Neutralino 内嵌 webview，port 既不是 5173 也不是 4173）：必须用绝对地址
-function getInitialApiBase(): string {
-  if (typeof window === 'undefined') return ''
-  const port = parseInt(window.location.port)
-  if ([4173, 5173].includes(port)) return ''
-  // 打包模式：直接用默认端口，discoverBackend() 之后会修正
-  return `http://127.0.0.1:${__BACKEND_PORT__}`
+const DEV_PORTS = [4173, 5173]
+
+declare const __BACKEND_PORT__: number
+
+function isDevMode(): boolean {
+  if (typeof window === 'undefined') return false
+  return DEV_PORTS.includes(parseInt(window.location.port))
 }
 
-// 全局单例：所有组件共享同一个 apiBase
+function getInitialApiBase(): string {
+  if (typeof window === 'undefined') return ''
+  if (isDevMode()) return ''
+  return `http://127.0.0.1:${__BACKEND_PORT__ || 17870}`
+}
+
 const apiBase = ref(getInitialApiBase())
 
 export function useApiBase() {
@@ -20,25 +23,48 @@ export function useApiBase() {
     return `${apiBase.value}${normalizedPath}`
   }
 
-  // 并发探活所有候选端口，第一个响应的胜出
-  async function discoverBackend(): Promise<void> {
-    const port = parseInt(window.location.port)
-    if ([4173, 5173].includes(port)) return
+  function getWsBase(): string {
+    if (isDevMode()) return ''
+    return apiBase.value.replace(/^http/, 'ws')
+  }
 
-    const backendPort = __BACKEND_PORT__ || 17870
-    const ports: number[] = Array.from(new Set([backendPort, 17870]))
-    const candidates = ports.map(p => `http://127.0.0.1:${p}`)
-
-    const race = candidates.map(base =>
-      fetch(`${base}/api/health`, { signal: AbortSignal.timeout(800) })
-        .then(res => res.ok ? base : Promise.reject())
-    )
+  // 探活单个地址，超时内返回 true/false
+  async function probe(base: string, timeout: number): Promise<boolean> {
     try {
-      apiBase.value = await Promise.any(race)
+      const res = await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(timeout) })
+      return res.ok
     } catch {
-      // 兜底保持当前值不变
+      return false
     }
   }
 
-  return { apiBase, buildApiUrl, discoverBackend }
+  // 并发探活候选端口，带重试，最多等待 backendStartupMs 毫秒
+  async function discoverBackend(): Promise<void> {
+    if (isDevMode()) return
+
+    const compiledPort = __BACKEND_PORT__ || 17870
+    const candidatePorts = Array.from(new Set([compiledPort, 17870, 17871, 17872, 17873]))
+    const candidates = candidatePorts.map(p => `http://127.0.0.1:${p}`)
+
+    const maxWaitMs = 15000   // 最多等后端启动 15 秒
+    const retryIntervalMs = 500
+    const probeTimeout = 800
+    const deadline = Date.now() + maxWaitMs
+
+    while (Date.now() < deadline) {
+      const results = await Promise.all(candidates.map(base => probe(base, probeTimeout).then(ok => ok ? base : null)))
+      const found = results.find(r => r !== null)
+      if (found) {
+        apiBase.value = found
+        return
+      }
+      // 后端还没就绪，等一会再试
+      await new Promise(resolve => setTimeout(resolve, retryIntervalMs))
+    }
+
+    // 超时仍未发现：保持初始值，请求会失败并提示用户
+    console.warn('[useApiBase] Backend not found after 15s, using default:', apiBase.value)
+  }
+
+  return { apiBase, buildApiUrl, getWsBase, discoverBackend }
 }

@@ -2,13 +2,13 @@
   "accounts": [
     {
       "baseUrl": "https://ilinkai.weixin.qq.com",
-      "token": "e656b3fe54b53df9189cb0e364877af1:321a6371f0a0c146c42e06b5fa749c8253013aa0bb1988baa780fba2841bc36648ee2769461a83ec39d7d3740835dd576d05171995178db90d49249ce6c79883",
+      "token": "d0e965fef1d2ebf29e08a7cf5fcaf8f9:4c4ffe9ef14d42955e2498413d2af237f0044f2f7573a4bc6fbed72b0a1d2a30f393d79bb4a419c8e895d809eb9805f302c1df0baa2221c4c5276180ac2559f1",
       "wxid": "b290a74e38ea@im.bot",
       "userId": "o9cq802S84WTFlyF0ia015U7si1Q@im.wechat",
       "nickname": "o9cq802S84WTFlyF0ia015U7si1Q@im.wechat",
-      "getUpdatesBuf": "ChAIFBDryLj84zMY2vbj+uMzEjpiMjkwYTc0ZTM4ZWFAaW0uYm90OjA2MDAwMDA1YWY5NWJhMzQ4YzM3NjNjNThjMDVkZjc3ODQwNzA5",
+      "getUpdatesBuf": "ChAINRCPoZqa5DMY2vbj+uMzEjpiMjkwYTc0ZTM4ZWFAaW0uYm90OjA2MDAwMDA1YWY5NWJhMzQ4YzM3NjNjNThjMDVkZjc3ODQwNzA5",
       "contextTokens": {
-        "o9cq802S84WTFlyF0ia015U7si1Q@im.wechat": "AARzJWAFAAABAAAAAAD4+DuPgWjiJe9rlCwMaiAAAAB+9905Q6UiugPBawU3n3cyzQX+LkN8ofRzsCZYN0mt7mNDNejGa2W9tF7sIyZSn4CZvkXNYDjy8qxnl+7WJhuiOxy41x2h"
+        "o9cq802S84WTFlyF0ia015U7si1Q@im.wechat": "AARzJWAFAAABAAAAAACok7JXhZYvkXFpZiANaiAAAAB+9905Q6UiugPBawU3n3cyzQX+LkN8ofRzsCZYN0mt7nxycTtZr53hAJg0WlMRYN2XmKCC0tPsUJFsdwd94Ti2w2NIQXs0"
       },
       "loggedInAt": 1779179248116
     }

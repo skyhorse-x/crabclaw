@@ -876,7 +876,7 @@ import { ArrowDown,
   Link,
 } from "@element-plus/icons-vue"
 
-const { apiBase, discoverBackend } = useApiBase()
+const { apiBase, discoverBackend, getWsBase } = useApiBase()
 
 const router = useRouter()
 const route = useRoute()
@@ -966,9 +966,8 @@ function closeFileEditor() {
 }
 
 function buildFileApiUrl(path: string): string {
-  const backendPort = config.value.settings.backendPort || 17870
-  const port = location.port === '4173' ? backendPort : location.port
-  return `http://${location.hostname}:${port}${path}`
+  const base = apiBase.value || ''
+  return `${base}${path}`
 }
 
 async function handleChatClick(event: MouseEvent) {
@@ -3946,7 +3945,7 @@ async function sendChat(
       .map(m => ({ role: m.role, text: m.text }))
     
     if (!chatWs.isConnected.value) {
-      chatWs.connect(`ws://${window.location.hostname}:${config.value.settings.backendPort || 17870}/ws`)
+      chatWs.connect(`${getWsBase()}/ws`)
       await new Promise(resolve => setTimeout(resolve, 1000))
     }
 
@@ -4902,8 +4901,8 @@ onMounted(async () => {
     loadAgentData(),
     loadRemoteControlConfig()
   ]).then(() => {
-    // 所有后台任务完成后，建立 WebSocket 连接
-    chatWs.connect(`ws://${window.location.hostname}:${config.value.settings.backendPort || 17870}/ws`)
+    // 所有后台任务完成后，建立 WebSocket 连接（port 统一从 apiBase 派生，避免多套来源不一致）
+    chatWs.connect(`${getWsBase()}/ws`)
   }).catch(() => {
     // WebSocket 连接失败不影响主界面
   })
@@ -4939,6 +4938,9 @@ onMounted(async () => {
         fileName: msg.fileName,
         fileMime: msg.fileMime,
       })
+      // 自动切换到该平台对话
+      if (route.path !== '/') router.push('/')
+      currentConversationId.value = convId
       scheduleSaveChatHistory()
     }
   })
@@ -5001,6 +5003,10 @@ onMounted(async () => {
       next.delete(convId)
       remoteLoadingConvIds.value = next
     }
+
+    // 自动切换到该平台对话
+    if (route.path !== '/') router.push('/')
+    currentConversationId.value = convId
 
     scheduleSaveChatHistory()
   })
