@@ -17,6 +17,9 @@ const MCP_CONNECT_TIMEOUT_MS = 30000
 const MCP_LIST_TOOLS_TIMEOUT_MS = 15000
 const mcpClients = new Map<string, McpClientType>()
 
+const TOOLS_CACHE_TTL_MS = 30000
+let toolsCache: { value: Record<string, McpTool[]>; expiresAt: number } | null = null
+
 function hasChromeIsolationArgs(args: string[] = []): boolean {
   return args.some((arg) =>
     arg === '--isolated' ||
@@ -273,6 +276,7 @@ export class McpService {
       logger.warn(`[MCP] Failed to close existing ${serverId} client`, { error })
     } finally {
       mcpClients.delete(serverId)
+      toolsCache = null
     }
   }
 
@@ -368,18 +372,26 @@ export class McpService {
    * 获取所有 MCP 工具
    */
   async getTools(): Promise<Record<string, McpTool[]>> {
+    const now = Date.now()
+    if (toolsCache && toolsCache.expiresAt > now) {
+      return toolsCache.value
+    }
+
     const config = await loadMcpConfigFile()
+    const serverIds = Object.keys(config.mcpServers)
     const result: Record<string, McpTool[]> = {}
 
-    for (const serverId of Object.keys(config.mcpServers)) {
+    await Promise.all(serverIds.map(async (serverId) => {
       const mcpClient = await ensureMcpConnection(serverId)
       if (mcpClient) {
         result[serverId] = mcpClient.tools
       }
-    }
+    }))
 
-    logger.debug('[MCP] Retrieved tools', { 
-      serversCount: Object.keys(result).length 
+    toolsCache = { value: result, expiresAt: now + TOOLS_CACHE_TTL_MS }
+
+    logger.debug('[MCP] Retrieved tools', {
+      serversCount: Object.keys(result).length
     })
 
     return result

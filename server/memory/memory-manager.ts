@@ -177,6 +177,18 @@ export class MemoryManager {
     }
   }
 
+  async getLongByType(type: string, limit: number = 10): Promise<MemoryEntry[]> {
+    return this.longMemory.getByType(type, limit)
+  }
+
+  async getByType(type: string, limit: number = 10): Promise<MemoryEntry[]> {
+    return this.getLongByType(type, limit)
+  }
+
+  async getByUser(userId: string, limit: number = 100): Promise<MemoryEntry[]> {
+    return this.longMemory.getByUser(userId, limit)
+  }
+
   /**
    * 导出所有记忆
    */

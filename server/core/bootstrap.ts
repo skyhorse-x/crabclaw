@@ -11,6 +11,7 @@ import { taskScheduler } from '../services/task-scheduler.service'
 import { proxyService } from '../services/proxy.service'
 import { PATHS } from '../shared/constants'
 import { initPlugins } from '../plugins/plugin-loader'
+import { createAgentRuntime } from '../agent-runtime/runtime'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -53,7 +54,21 @@ export async function bootstrap() {
     logger.debug('Initializing MCP connections...')
     // MCP 连接会在首次调用时自动建立
 
-    // 5. 应用任务调度
+    // 5. 初始化多Agent运行时
+    logger.debug('Initializing Multi-Agent runtime...')
+    try {
+      const agentRuntime = createAgentRuntime()
+      const agentStats = agentRuntime.getStats()
+      logger.info('Multi-Agent runtime initialized', {
+        registeredTypes: agentStats.registeredTypes,
+        activeAgents: agentStats.activeAgents
+      })
+    } catch (err) {
+      logger.error('Failed to initialize Multi-Agent runtime', err)
+      throw err
+    }
+
+    // 6. 应用任务调度
     logger.debug('Applying task schedules...')
     applyTaskSchedules(config)
 

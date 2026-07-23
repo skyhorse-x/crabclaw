@@ -4,7 +4,6 @@
 
 import * as path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import * as os from 'node:os'
 
 // 路径解析：兼容源码模式和 Bun 编译二进制模式
 // Bun 编译模式下 import.meta.url 解析到 /$bunfs/ 虚拟文件系统，需回退到 process.execPath
@@ -47,7 +46,7 @@ export const PATHS = {
  * 默认配置
  */
 export const DEFAULTS = {
-  PORT: 17870,
+  PORT: 17883,
   THEME: 'light',
   LANGUAGE: 'zh-CN',
   MODEL_PROVIDER: 'openai',
@@ -57,7 +56,7 @@ export const DEFAULTS = {
 
 export const DEFAULT_CONFIG = {
   settings: {
-    backendPort: 17870,
+    backendPort: 17883,
     theme: 'light',
     language: 'zh-CN',
     activeModelId: '',

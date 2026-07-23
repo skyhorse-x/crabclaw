@@ -2,13 +2,23 @@
 
 import { spawn, execSync } from 'child_process'
 import net from 'net'
+import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 
-const PORTS = { BACKEND: 17870, FRONTEND: 5173 }
+const PORTS = { FRONTEND: 5173 }
+function getBackendPort() {
+  try {
+    const portFile = path.resolve(ROOT, 'server/.port')
+    const port = parseInt(fs.readFileSync(portFile, 'utf-8').trim(), 10)
+    return Number.isInteger(port) && port > 0 ? port : 17870
+  } catch {
+    return 17870
+  }
+}
 let actualFrontendPort = PORTS.FRONTEND
 const TIMEOUT = 20000 // 20秒足够
 const isWin = process.platform === 'win32'
@@ -114,7 +124,8 @@ async function main() {
   process.on('SIGTERM', cleanup)
   
   // 快速检查后端是否已运行
-  if (await isPortOpen(PORTS.BACKEND)) {
+  const backendPort = getBackendPort()
+  if (await isPortOpen(backendPort)) {
     log.info('Backend already running')
     const frontend = start('npm', ['run', 'frontend:dev'], 'Frontend')
     procs = [frontend]
@@ -134,7 +145,7 @@ async function main() {
   
   // 清理端口
   log.info('Cleaning ports...')
-  freePort(PORTS.BACKEND)
+  freePort(backendPort)
   freePort(PORTS.FRONTEND)
   
   // 并行启动前后端
@@ -146,7 +157,7 @@ async function main() {
   // 等待两者就绪（前端先等 5173，若 Vite 换端口由 stdout 解析更新）
   const [frontendReady, backendReady] = await Promise.all([
     waitForPort(PORTS.FRONTEND),
-    waitForPort(PORTS.BACKEND)
+    waitForPort(backendPort)
   ])
 
   if (!frontendReady) log.err('Frontend timeout')

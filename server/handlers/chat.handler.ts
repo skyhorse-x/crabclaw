@@ -5,6 +5,8 @@ import { getMcpTools, callMcpTool } from '../services/mcp.service'
 import { builtinTools } from '../services/builtin-tools.service'
 import { logger } from '../services/logger.service'
 import { getChatHistoryService } from '../services/chat-history.service'
+import { needTool } from '../services/intent-analyzer.service'
+import { shouldUseMultiAgent } from '../agent-runtime/runtime'
 import { randomUUID } from 'node:crypto'
 import os from 'os'
 import path from 'path'
@@ -19,6 +21,8 @@ import { sanitizeJson, tryRepairJsonText } from '../agent'
 const sharedMemoryManager = memoryManager
 
 let memoryInitialized = false
+let userProfileCache: { value: UserProfile | null; expiresAt: number } | null = null
+const USER_PROFILE_CACHE_TTL_MS = 30000
 
 async function ensureMemoryInitialized() {
   if (!memoryInitialized) {
@@ -105,10 +109,8 @@ async function extractAndStoreUserInfo(
   }
 
   if (Object.keys(foundInfo).length > 0) {
-    const allMemories = await sharedMemoryManager.export()
-    const userProfileMemory = allMemories.find(
-      (m) => m.metadata?.type === 'user_profile'
-    )
+    const profileMemories = await sharedMemoryManager.getByType('user_profile', 1)
+    const userProfileMemory = profileMemories?.[0] || null
 
     let profile: UserProfile = {}
     if (userProfileMemory?.content) {
@@ -121,7 +123,7 @@ async function extractAndStoreUserInfo(
 
     Object.assign(profile, foundInfo)
 
-    if (userProfileMemory) {
+    if (userProfileMemory?.id) {
       await sharedMemoryManager.deleteLong(userProfileMemory.id)
     }
 
@@ -130,32 +132,44 @@ async function extractAndStoreUserInfo(
       updatedAt: Date.now()
     })
 
+    invalidateUserProfileCache()
+
     logger.info('[Chat] User profile updated', profile)
   }
 }
 
 async function getUserProfile(): Promise<UserProfile | null> {
+  const now = Date.now()
+  if (userProfileCache && userProfileCache.expiresAt > now) {
+    return userProfileCache.value
+  }
+
   await ensureMemoryInitialized()
 
-  const allMemories = await sharedMemoryManager.export()
-  const userProfileMemory = allMemories.find(
-    (m) => m.metadata?.type === 'user_profile'
-  )
-
-  if (!userProfileMemory?.content) {
-    return null
+  const profileMemories = await sharedMemoryManager.getByType('user_profile', 1)
+  const profileContent = profileMemories?.[0]?.content
+  let profile: UserProfile | null = null
+  if (profileContent) {
+    try {
+      profile = JSON.parse(profileContent)
+    } catch {
+      profile = null
+    }
   }
 
-  try {
-    return JSON.parse(userProfileMemory.content)
-  } catch {
-    return null
-  }
+  userProfileCache = { value: profile, expiresAt: now + USER_PROFILE_CACHE_TTL_MS }
+  return profile
+}
+
+function invalidateUserProfileCache() {
+  userProfileCache = null
 }
 
 async function buildUserContextPrompt(): Promise<string> {
-  const profile = await getUserProfile()
-  const recentContext = await buildRecentConversationContext()
+  const [profile, recentContext] = await Promise.all([
+    getUserProfile(),
+    buildRecentConversationContext()
+  ])
   
   if (!profile && !recentContext) {
     return ''
@@ -298,7 +312,8 @@ interface ProgressDetail {
 
 // 流式响应类型
 interface StreamChunk {
-  type: 'plan' | 'reply' | 'error' | 'done' | 'detail' | 'mcp' | 'confirm' | 'task' | 'step' | 'reasoning' | 'learning'
+  type: 'plan' | 'reply' | 'error' | 'done' | 'detail' | 'mcp' | 'confirm' | 'task' | 'step' | 'reasoning' | 'learning' | 'multi_agent'
+  multiAgent?: import('../agent-runtime/types').ExecutionEvent
   plan?: SimpleStep[]
   reply?: string
   delta?: boolean
@@ -878,6 +893,212 @@ function* streamReplyChunks(reply: string, chunkSize = 60): Generator<StreamChun
   }
 }
 
+type ModelStreamEvent =
+  | { type: 'chunk'; delta: string }
+  | { type: 'done'; reply: string; usage: { promptTokens: number; completionTokens: number; totalTokens: number } }
+
+async function* requestModelReplyStream(
+  apiBaseUrl: string,
+  apiKey: string,
+  modelName: string,
+  systemPrompt: string,
+  userMessage: string,
+  conversationHistory?: Array<{ role: string; text: string }>,
+  signal?: AbortSignal,
+  images?: ImageAttachment[],
+  maxTokens?: number
+): AsyncGenerator<ModelStreamEvent> {
+  throwIfAborted(signal)
+  const isAnthropicFormat = (apiBaseUrl.includes('/v1/messages') || apiBaseUrl.includes('/v1beta/messages'))
+  if (isAnthropicFormat) {
+    const result = await requestModelReply(
+      apiBaseUrl, apiKey, modelName, systemPrompt, userMessage,
+      conversationHistory, signal, images, maxTokens
+    )
+    if (result.reply) {
+      yield { type: 'chunk', delta: result.reply }
+    }
+    yield { type: 'done', reply: result.reply, usage: result.usage }
+    return
+  }
+
+  const safeSystemPrompt = compactText(systemPrompt, HTTP.MAX_SYSTEM_PROMPT_CHARS)
+  const safeUserMessage = compactText(userMessage, HTTP.MAX_USER_MESSAGE_CHARS)
+  const historyWindow = Array.isArray(conversationHistory) ? conversationHistory.slice(-10) : []
+  const safeImages = Array.isArray(images) ? images : []
+
+  const input: Array<{ role: string; content: any }> = [
+    { role: 'system', content: safeSystemPrompt }
+  ]
+
+  for (const msg of historyWindow) {
+    if (msg.role === 'user' || msg.role === 'assistant') {
+      input.push({ role: msg.role, content: msg.text })
+    }
+  }
+
+  if (safeImages.length === 0) {
+    input.push({ role: 'user', content: safeUserMessage })
+  } else {
+    const userContent: Array<Record<string, unknown>> = [{ type: 'text', text: safeUserMessage }]
+    for (const img of safeImages) {
+      const base64 = img.dataUrl.split(',')[1]
+      if (base64) {
+        userContent.push({
+          type: 'image_url',
+          image_url: { url: `data:${img.type};base64,${base64}` }
+        })
+      }
+    }
+    input.push({ role: 'user', content: userContent })
+  }
+
+  const resolvedMaxTokens = maxTokens ?? 4096
+  const requestPayload = {
+    model: modelName,
+    messages: input,
+    max_tokens: resolvedMaxTokens,
+    stream: true,
+    stream_options: { include_usage: true }
+  }
+
+  const timeoutMs = HTTP.TIMEOUT_MS
+  const maxAttempts = 2
+  let lastError: unknown = null
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const abortRunner = new AbortController()
+    const detachAbort = attachAbortSignal(signal, abortRunner)
+    const timeout = setTimeout(() => abortRunner.abort(), timeoutMs)
+
+    try {
+      const response = await fetch(apiBaseUrl, {
+        method: 'POST',
+        signal: abortRunner.signal,
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          Accept: 'text/event-stream'
+        },
+        body: JSON.stringify(requestPayload)
+      })
+
+      if (!response.ok || !response.body) {
+        const errText = await response.text().catch(() => '')
+        throw new Error(`HTTP ${response.status}: ${errText.slice(0, 300)}`)
+      }
+
+      const reader = (response.body as ReadableStream<Uint8Array>).getReader()
+      const decoder = new TextDecoder('utf-8')
+      let buffer = ''
+      let reply = ''
+      let promptTokens = 0
+      let completionTokens = 0
+      let totalTokens = 0
+
+      while (true) {
+        const { value, done } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+
+        for (const rawLine of lines) {
+          const line = rawLine.trim()
+          if (!line) continue
+          if (!line.startsWith('data:')) continue
+          const data = line.slice(5).trim()
+          if (data === '[DONE]') {
+            buffer = ''
+            break
+          }
+          if (!data) continue
+
+          let parsed: any
+          try {
+            parsed = JSON.parse(data)
+          } catch {
+            continue
+          }
+
+          const usage = parsed?.usage || parsed?.choices?.[0]?.usage
+          if (usage) {
+            promptTokens = Number(usage.prompt_tokens || usage.input_tokens || 0)
+            completionTokens = Number(usage.completion_tokens || usage.output_tokens || 0)
+            totalTokens = Number(usage.total_tokens || (promptTokens + completionTokens))
+          }
+
+          const choice = parsed?.choices?.[0]
+          const delta = choice?.delta?.content ?? choice?.message?.content
+          if (typeof delta === 'string' && delta.length > 0) {
+            reply += delta
+            yield { type: 'chunk', delta }
+          }
+        }
+      }
+
+      const tail = buffer.trim()
+      if (tail.startsWith('data:') && tail !== 'data: [DONE]') {
+        const data = tail.slice(5).trim()
+        if (data && data !== '[DONE]') {
+          try {
+            const parsed = JSON.parse(data)
+            const usage = parsed?.usage
+            if (usage) {
+              promptTokens = Number(usage.prompt_tokens || usage.input_tokens || 0)
+              completionTokens = Number(usage.completion_tokens || usage.output_tokens || 0)
+              totalTokens = Number(usage.total_tokens || (promptTokens + completionTokens))
+            }
+            const delta = parsed?.choices?.[0]?.delta?.content
+            if (typeof delta === 'string' && delta.length > 0) {
+              reply += delta
+              yield { type: 'chunk', delta }
+            }
+          } catch {
+            // ignore partial tail
+          }
+        }
+      }
+
+      const finalReply = reply || 'AI 未返回有效内容'
+      const usageOut = { promptTokens, completionTokens, totalTokens }
+
+      if (totalTokens > 0) {
+        try {
+          const configService = getConfigService()
+          const config = await configService.getConfig()
+          const historyService = getChatHistoryService(config.settings?.userDataDir)
+          historyService.recordTokenUsage(modelName, promptTokens, completionTokens, totalTokens)
+        } catch (e) {
+          void logger.warn('[AI] Failed to record token usage', e)
+        }
+      }
+
+      yield { type: 'done', reply: finalReply, usage: usageOut }
+      return
+    } catch (error: unknown) {
+      lastError = error
+      if (signal?.aborted) {
+        const abortError = new Error('The user aborted a request')
+        ;(abortError as Error).name = 'AbortError'
+        throw abortError
+      }
+      const isAbort = (error as Error)?.name === 'AbortError' || String((error as Error)?.message || '').includes('aborted')
+      if (isAbort && attempt < maxAttempts) {
+        void logger.warn('[AI] LLM stream aborted, retrying', { attempt, nextAttempt: attempt + 1, timeoutMs })
+        continue
+      }
+      throw error
+    } finally {
+      clearTimeout(timeout)
+      detachAbort()
+    }
+  }
+
+  throw lastError || new Error('LLM stream request failed')
+}
+
 function buildDetail(stage: string, text: string): StreamChunk {
   return {
     type: 'detail',
@@ -1357,9 +1578,9 @@ ${skills.map(s => `- ${s.id}`).join('\n')}
 ==============================
 [MCP工具] 可用 MCP 工具（按平台分组）
 ==============================
-${mcpToolsDesc}
+${mcpToolsDesc || '无可用工具。直接回答用户问题，不要尝试调用任何工具。'}
 
-【重要】调用任何工具前必须先判断当前平台：
+${mcpToolsDesc ? `【重要】调用任何工具前必须先判断当前平台：
 - process.platform 返回值：'darwin'(macOS), 'linux', 'win32'
 - 根据平台选择对应的工具和命令
 
@@ -1372,7 +1593,7 @@ ${mcpToolsDesc}
 - 格式：server/tool（斜杠分隔）
 - 示例：shell/shell_execute, fetch/fetch_readable, filesystem/read_file, chrome-devtools/navigate_page
 - X 禁止：不要使用下划线连接（如 fetch_readable）
-- X 禁止：不要使用重复前缀（如 fetch_fetch_readable）
+- X 禁止：不要使用重复前缀（如 fetch_fetch_readable）` : ''}
 
 ==============================
 [额外提示] 额外提示
@@ -2312,7 +2533,23 @@ export async function* handleChatStream(
     const apiKey = apiKeyResult.apiKey
     const { apiBaseUrl, modelName } = resolveModelRuntime(activeModel, config)
 
-    const rawMcpToolsMap = (await getMcpTools()) as Record<string, Array<{ name: string; inputSchema?: Record<string, unknown> }>>
+    // Multi-Agent 模式判断
+    if (shouldUseMultiAgent(message, options)) {
+      yield* handleMultiAgentStream(message, options, taskId)
+      return
+    }
+
+    const shouldLoadTool = needTool(message) && !options.selectedSkillId && !options.selectedSkillIds?.length
+
+    let rawMcpToolsMap: Record<string, Array<{ name: string; inputSchema?: Record<string, unknown> }>>
+    if (shouldLoadTool) {
+      yield buildDetail('mcp', '正在加载 MCP 工具列表...')
+      rawMcpToolsMap = (await getMcpTools()) as Record<string, Array<{ name: string; inputSchema?: Record<string, unknown> }>>
+      yield buildDetail('mcp', `已加载 ${Object.keys(rawMcpToolsMap).length} 个 MCP 服务器`)
+    } else {
+      rawMcpToolsMap = {}
+      yield buildDetail('mcp', '普通对话，跳过 MCP 工具加载')
+    }
     const allowedMcpServers = Array.isArray(options.allowedMcpServers)
       ? options.allowedMcpServers.map(v => String(v || '').trim()).filter(Boolean)
       : null
@@ -2371,8 +2608,23 @@ export async function* handleChatStream(
 
     const inferStep = openStep('模型推理')
     yield buildTaskEvent(taskId, 'running', { stepId: inferStep.stepId, stepStatus: 'running', title: inferStep.title })
-    const llmResult = await callModel(apiBaseUrl, apiKey, modelName, finalSystemPrompt, message, conversationHistory, abortSignal, options.images, activeModel.maxTokens)
-    const reply = llmResult.reply
+    let reply = ''
+    for await (const ev of requestModelReplyStream(
+      apiBaseUrl, apiKey, modelName, finalSystemPrompt, message,
+      conversationHistory, abortSignal, options.images, activeModel.maxTokens
+    )) {
+      if (ev.type === 'chunk') {
+        reply += ev.delta
+
+      } else if (ev.type === 'done') {
+        if (!accumulatedUsage) {
+          accumulatedUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 }
+        }
+        accumulatedUsage.promptTokens += ev.usage.promptTokens
+        accumulatedUsage.completionTokens += ev.usage.completionTokens
+        accumulatedUsage.totalTokens += ev.usage.totalTokens
+      }
+    }
     yield buildTaskEvent(taskId, 'running', { stepId: inferStep.stepId, stepStatus: 'done', title: inferStep.title })
     void logger.info('[AI] Initial reply received', {
       replyLength: String(reply || '').length
@@ -3464,6 +3716,70 @@ export async function* handleChatStream(
         } as ErrorDetail
       }
     }
+  }
+}
+
+/**
+ * Multi-Agent 流处理
+ * 当任务复杂度较高时，启用多 Agent 协作
+ */
+async function* handleMultiAgentStream(
+  message: string,
+  _options: ChatStreamOptions,
+  _taskId: string
+): AsyncGenerator<StreamChunk> {
+  const { createAgentRuntime } = await import('../agent-runtime/runtime')
+
+  let runtime = createAgentRuntime()
+
+  try {
+    for await (const event of runtime.execute(message)) {
+      // 推送 Multi-Agent 事件到前端面板
+      yield { type: 'multi_agent', multiAgent: event }
+      switch (event.type) {
+        case 'planning_start':
+          yield buildDetail('planning', '正在分析任务复杂度...')
+          break
+        case 'planning_complete':
+          yield buildDetail('planning', `已拆解为 ${event.dag.nodes.length} 个子任务`)
+          break
+        case 'agent_start':
+          yield buildDetail('agent', `${event.agentType} 开始执行: ${event.task}`)
+          break
+        case 'agent_progress':
+          yield buildDetail('agent', `${event.agentType}: ${event.progress}`)
+          break
+        case 'agent_complete':
+          yield buildDetail('agent', `${event.agentType} 完成 (${event.result.elapsedMs}ms)`)
+          break
+        case 'agent_error':
+          yield buildDetail('agent', `${event.agentType} 失败: ${event.error}`)
+          break
+        case 'review_start':
+          yield buildDetail('review', '正在审查代码一致性...')
+          break
+        case 'review_complete':
+          if (event.issues.length > 0) {
+            yield buildDetail('review', `发现 ${event.issues.length} 个问题`)
+          }
+          break
+        case 'merge_complete':
+          yield { type: 'reply', reply: event.result.summary, delta: false }
+          yield {
+            type: 'done',
+            usage: {
+              promptTokens: event.result.stats.totalTokens,
+              completionTokens: 0,
+              totalTokens: event.result.stats.totalTokens
+            }
+          }
+          return
+      }
+    }
+  } catch (error) {
+    yield buildDetail('error', `Multi-Agent 执行失败: ${error instanceof Error ? error.message : String(error)}`)
+    yield { type: 'reply', reply: '任务执行失败，请稍后重试', delta: false }
+    yield { type: 'done' }
   }
 }
 

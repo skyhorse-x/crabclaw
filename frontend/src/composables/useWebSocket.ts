@@ -32,7 +32,7 @@ export interface LearningFeedback {
 }
 
 export interface ChatChunk {
-  type: 'plan' | 'reply' | 'error' | 'done' | 'detail' | 'mcp' | 'confirm' | 'task' | 'step' | 'reasoning' | 'learning'
+  type: 'plan' | 'reply' | 'error' | 'done' | 'detail' | 'mcp' | 'confirm' | 'task' | 'step' | 'reasoning' | 'learning' | 'multi_agent'
   plan?: any[]
   reply?: string
   delta?: boolean
@@ -92,6 +92,47 @@ export interface ChatChunk {
     confidence: number
   }
   learning?: LearningFeedback
+  multiAgent?: MultiAgentEvent
+}
+
+/** Multi-Agent 事件（对齐后端 ExecutionEvent） */
+export interface MultiAgentEvent {
+  type: 'planning_start' | 'planning_complete' | 'agent_start' | 'agent_progress' | 'agent_complete' | 'agent_error' | 'review_start' | 'review_complete' | 'merge_start' | 'merge_complete'
+  agentType?: string
+  taskId?: string
+  task?: string
+  progress?: string
+  error?: string
+  nodes?: MultiAgentNode[]
+  issues?: MultiAgentIssue[]
+  result?: MultiAgentResult
+  dag?: { nodes: MultiAgentNode[]; parallelism: number }
+  agentResult?: { summary: string; status: string }
+}
+
+export interface MultiAgentNode {
+  id: string
+  agentType: string
+  task: string
+  status: 'pending' | 'running' | 'success' | 'failed' | 'skipped'
+  deps: string[]
+}
+
+export interface MultiAgentIssue {
+  severity: 'error' | 'warning' | 'info'
+  message: string
+  file?: string
+}
+
+export interface MultiAgentResult {
+  summary: string
+  files: Array<{ path: string; action: string }>
+  issues: MultiAgentIssue[]
+  stats: {
+    totalTokens: number
+    totalAgents: number
+    totalElapsedMs: number
+  }
 }
 
 const sharedWs = shallowRef<WebSocket | null>(null)

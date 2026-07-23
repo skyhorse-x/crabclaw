@@ -61,7 +61,7 @@ export class ChatHistoryService {
         FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
       );
 
-      CREATE INDEX IF NOT EXISTS idx_messages_conversation_id
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_conversation_id
       ON messages(conversation_id, idx);
 
       CREATE TABLE IF NOT EXISTS token_usage (
@@ -137,39 +137,86 @@ export class ChatHistoryService {
   saveAll(conversations: StoredConversation[]) {
     const now = Date.now()
     const safeConversations = Array.isArray(conversations) ? conversations : []
+    const incomingIds = new Set<string>()
 
-    const deleteMessages = this.db.query('DELETE FROM messages')
-    const deleteConversations = this.db.query('DELETE FROM conversations')
-    const insertConversation = this.db.query(
-      'INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)'
+    for (const conversation of safeConversations) {
+      const id = String(conversation?.id || '').trim()
+      if (id) incomingIds.add(id)
+    }
+
+    const upsertConversation = this.db.query(
+      'INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?) ' +
+      'ON CONFLICT(id) DO UPDATE SET title = excluded.title, updated_at = excluded.updated_at'
     )
-    const insertMessage = this.db.query(
-      'INSERT INTO messages (conversation_id, idx, role, text, meta, error, typing) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    const upsertMessage = this.db.query(
+      'INSERT INTO messages (conversation_id, idx, role, text, meta, error, typing) VALUES (?, ?, ?, ?, ?, ?, ?) ' +
+      'ON CONFLICT(conversation_id, idx) DO UPDATE SET ' +
+      'role = excluded.role, text = excluded.text, meta = excluded.meta, error = excluded.error, typing = excluded.typing'
+    )
+    const existingConvIds = this.db
+      .query('SELECT id FROM conversations')
+      .all() as Array<{ id: string }>
+    const removedConvIds = existingConvIds
+      .map((row) => String(row.id || ''))
+      .filter((id) => id && !incomingIds.has(id))
+    const deleteMessagesByConvFromIdx = this.db.query(
+      'DELETE FROM messages WHERE conversation_id = ? AND idx >= ?'
+    )
+    const deleteStaleMessage = this.db.query(
+      'DELETE FROM messages WHERE conversation_id = ? AND idx = ?'
+    )
+    const deleteRemovedConv = this.db.query('DELETE FROM conversations WHERE id = ?')
+    const selectConvMsgIdxs = this.db.query(
+      'SELECT idx FROM messages WHERE conversation_id = ?'
+    )
+    const maxIdxForConv = this.db.query(
+      'SELECT COALESCE(MAX(idx), -1) AS max_idx FROM messages WHERE conversation_id = ?'
     )
 
     const transaction = this.db.transaction(() => {
-      deleteMessages.run()
-      deleteConversations.run()
-
       for (const conversation of safeConversations) {
-        const id = String(conversation.id || '')
+        const id = String(conversation.id || '').trim()
         if (!id) continue
 
         const title = String(conversation.title || '新对话')
-        insertConversation.run(id, title, now, now)
+        const existingTitle = this.db
+          .query('SELECT created_at FROM conversations WHERE id = ?')
+          .get(id) as { created_at?: number } | undefined
+        const createdAt = Number(existingTitle?.created_at) || now
+        upsertConversation.run(id, title, createdAt, now)
 
         const messages = Array.isArray(conversation.messages) ? conversation.messages : []
-        messages.forEach((msg, index) => {
-          insertMessage.run(
+        const maxIdxRow = maxIdxForConv.get(id) as { max_idx?: number } | undefined
+        const maxIdx = Number(maxIdxRow?.max_idx ?? -1)
+        const incomingMaxIdx = messages.length - 1
+
+        const existingIdxRows = selectConvMsgIdxs.all(id) as Array<{ idx: number }>
+        const existingIdxs = new Set(existingIdxRows.map((row) => Number(row.idx)))
+        for (let i = 0; i < messages.length; i++) {
+          const msg = messages[i]
+          upsertMessage.run(
             id,
-            index,
+            i,
             String(msg.role || 'assistant'),
             String(msg.text || ''),
             msg.meta !== undefined ? JSON.stringify(msg.meta) : null,
             msg.error ? 1 : 0,
             msg.typing ? 1 : 0
           )
-        })
+          existingIdxs.delete(i)
+        }
+
+        for (const staleIdx of existingIdxs) {
+          deleteStaleMessage.run(id, Number(staleIdx))
+        }
+
+        if (incomingMaxIdx < maxIdx) {
+          deleteMessagesByConvFromIdx.run(id, incomingMaxIdx + 1)
+        }
+      }
+
+      for (const removedId of removedConvIds) {
+        deleteRemovedConv.run(removedId)
       }
     })
 

@@ -66,5 +66,14 @@ export function useApiBase() {
     console.warn('[useApiBase] Backend not found after 15s, using default:', apiBase.value)
   }
 
-  return { apiBase, buildApiUrl, getWsBase, discoverBackend }
+  function getWsUrl(): string {
+    const wsBase = getWsBase()
+    if (!wsBase) {
+      // Dev mode: use Vite proxy at same origin
+      return `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`
+    }
+    return `${wsBase}/ws`
+  }
+
+  return { apiBase, buildApiUrl, getWsBase, getWsUrl, discoverBackend }
 }

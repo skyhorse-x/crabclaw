@@ -77,6 +77,14 @@
         </div>
       </div>
 
+      <MultiAgentPanel
+        :isVisible="showMultiAgentPanel"
+        :nodes="multiAgentNodes"
+        :issues="multiAgentIssues"
+        :result="multiAgentResult"
+        @close="showMultiAgentPanel = false"
+      />
+
       <div class="chat-input-area">
         <el-input
           v-model="chatInput"
@@ -97,7 +105,9 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useWebSocket, type ChatChunk, type CausalNode, type ErrorDetail, type LearningFeedback } from '@/composables/useWebSocket'
+import { useWebSocket, type ChatChunk, type CausalNode, type ErrorDetail, type LearningFeedback, type MultiAgentEvent, type MultiAgentNode, type MultiAgentIssue, type MultiAgentResult } from '@/composables/useWebSocket'
+import { getWsUrl } from '@/composables/useApiBase'
+import MultiAgentPanel from '@/components/MultiAgentPanel.vue'
 
 const { t } = useI18n()
 
@@ -131,7 +141,7 @@ interface Conversation {
 
 const chatInput = ref('')
 const chatContainer = ref<HTMLElement | null>(null)
-const conversations = ref<Conversation[]>([])
+const conversations = ref<Conversation[]>([{ id: 'default', title: 'New Chat', messages: [] }])
 const currentConversationId = ref('default')
 const { connect, sendChat, onChatChunk, isConnected } = useWebSocket()
 
@@ -145,10 +155,62 @@ const currentConversation = computed(() => {
 
 let aiMessage: Message | null = null
 
+const multiAgentNodes = ref<MultiAgentNode[]>([])
+const multiAgentIssues = ref<MultiAgentIssue[]>([])
+const multiAgentResult = ref<MultiAgentResult | null>(null)
+const showMultiAgentPanel = ref(false)
+
+function handleMultiAgentEvent(event: MultiAgentEvent) {
+  switch (event.type) {
+    case 'planning_start':
+      multiAgentNodes.value = []
+      multiAgentIssues.value = []
+      multiAgentResult.value = null
+      showMultiAgentPanel.value = true
+      break
+    case 'planning_complete':
+      if (event.dag) multiAgentNodes.value = event.dag.nodes
+      break
+    case 'agent_start':
+      if (event.taskId) {
+        const idx = multiAgentNodes.value.findIndex(n => n.id === event.taskId)
+        if (idx >= 0) {
+          multiAgentNodes.value[idx].status = 'running'
+        } else {
+          multiAgentNodes.value.push({
+            id: event.taskId,
+            agentType: event.agentType || 'backend',
+            task: event.task || '',
+            status: 'running',
+            deps: []
+          })
+        }
+      }
+      break
+    case 'agent_complete':
+      if (event.taskId) {
+        const idx = multiAgentNodes.value.findIndex(n => n.id === event.taskId)
+        if (idx >= 0) multiAgentNodes.value[idx].status = 'success'
+      }
+      break
+    case 'agent_error':
+      if (event.taskId) {
+        const idx = multiAgentNodes.value.findIndex(n => n.id === event.taskId)
+        if (idx >= 0) multiAgentNodes.value[idx].status = 'failed'
+      }
+      break
+    case 'review_complete':
+      multiAgentIssues.value = event.issues || []
+      break
+    case 'merge_complete':
+      multiAgentResult.value = event.result || null
+      break
+  }
+}
+
 onMounted(() => {
   if (!isConnected.value) {
-    const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`
-    connect(wsUrl)
+    connect(getWsUrl())
   }
 
   onChatChunk((chunk: ChatChunk) => {
@@ -222,9 +284,13 @@ function handleChunk(chunk: ChatChunk) {
     case 'done':
       if (aiMessage) {
         aiMessage.thinking = false
-        if (chunk.usage) aiMessage.usage = chunk.usage
+        if (chunk.Usage) aiMessage.usage = chunk.usage
       }
       aiMessage = null
+      break
+
+    case 'multi_agent':
+      if (chunk.multiAgent) handleMultiAgentEvent(chunk.multiAgent)
       break
   }
   nextTick(scrollToBottom)
@@ -361,7 +427,12 @@ async function handleSend() {
     text
   })
 
-  aiMessage = { role: 'assistant', text: '' }
+  showMultiAgentPanel.value = false
+  multiAgentNodes.value = []
+  multiAgentIssues.value = []
+  multiAgentResult.value = null
+
+  aiMessage = { role: 'assistant', text: '', thinking: true }
   currentConversation.value.messages.push(aiMessage)
 
   await nextTick()
@@ -385,6 +456,7 @@ function scrollToBottom() {
 
 <style scoped>
 .chat-container {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;

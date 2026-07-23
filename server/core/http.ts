@@ -16,8 +16,10 @@ export function createHttpServer(
   fetchHandler: (request: Request) => Promise<Response>
 ) {
   const server = http.createServer(async (req: any, res: any) => {
-    // 检查是否是 WebSocket 升级请求，如果是，不处理，让 upgrade 事件处理器处理
+    // 检查是否是 WebSocket 升级请求，让 upgrade 事件处理器处理
+    // 注意：不处理升级请求，但需要确保请求被正确消费
     if (req.headers['upgrade']?.toLowerCase() === 'websocket') {
+      // 不调用 res.end()，让 upgrade 事件处理器接管
       return
     }
 
